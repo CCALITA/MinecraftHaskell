@@ -1,0 +1,32 @@
+packages: .
+
+-- Vulkan requires the Vulkan SDK headers/libs
+-- On macOS: install MoltenVK via Homebrew or Vulkan SDK
+-- On Linux: install vulkan-devel / libvulkan-dev
+
+-- Allow newer versions for compatibility
+allow-newer:
+  vulkan:base
+  , VulkanMemoryAllocator:base
+  , VulkanMemoryAllocator:vulkan
+
+-- Homebrew library/include paths (macOS arm64)
+extra-lib-dirs: /opt/homebrew/lib
+extra-include-dirs: /opt/homebrew/include
+
+-- Vulkan library is in Homebrew Cellar
+package vulkan
+  extra-lib-dirs: /opt/homebrew/lib
+
+package VulkanMemoryAllocator
+  extra-lib-dirs: /opt/homebrew/lib
+  extra-include-dirs: /opt/homebrew/include
+
+-- Fix macOS 15+ build: use Clang for Objective-C blocks support
+-- GHC's default gcc doesn't support -fblocks
+package bindings-GLFW
+  ghc-options: -pgmc=/usr/bin/clang
+
+-- Optimization for release
+package minecraft-haskell
+  optimization: 2

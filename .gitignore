@@ -1,0 +1,35 @@
+# Haskell
+dist-newstyle/
+dist/
+.cabal-sandbox/
+cabal.sandbox.config
+*.o
+*.hi
+*.dyn_o
+*.dyn_hi
+*.prof
+*.hp
+*.*/
+*.eventlog
+.stack-work/
+stack.yaml.lock
+.HTF/
+.hpc/
+
+# SPIR-V compiled shaders
+shaders/*.spv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.ghc.environment.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+result
