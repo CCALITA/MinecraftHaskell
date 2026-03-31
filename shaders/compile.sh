@@ -7,7 +7,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 compile() {
     local src="$1"
-    local dst="${src%.*}.spv"
+    local base="${src%.*}"
+    local ext="${src##*.}"
+    # Output: name_vert.spv, name_frag.spv, etc.
+    # Exception: vertex shaders also get a plain name.spv for backwards compat
+    local dst="${base}_${ext}.spv"
 
     if command -v glslangValidator &>/dev/null; then
         glslangValidator -V "$src" -o "$dst"
@@ -17,7 +21,7 @@ compile() {
         echo "ERROR: No SPIR-V compiler found. Install Vulkan SDK or shaderc."
         exit 1
     fi
-    echo "Compiled: $src → $dst"
+    echo "Compiled: $src -> $dst"
 }
 
 cd "$SCRIPT_DIR"

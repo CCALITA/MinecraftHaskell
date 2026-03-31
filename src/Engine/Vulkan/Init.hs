@@ -59,6 +59,11 @@ deviceExtensions = [Vk.KHR_SWAPCHAIN_EXTENSION_NAME]
 -- | Create the full Vulkan context
 createVulkanContext :: GLFW.Window -> Bool -> IO VulkanContext
 createVulkanContext window enableValidation = do
+  -- Verify GLFW Vulkan support
+  vulkanOK <- GLFW.vulkanSupported
+  unless vulkanOK $
+    throwIO $ userError "GLFW reports Vulkan is not supported. Ensure vulkan-loader and MoltenVK are installed."
+
   inst <- createInstance enableValidation
   debugMessenger <- if enableValidation
     then Just <$> setupDebugMessenger inst
@@ -92,23 +97,37 @@ destroyVulkanContext vc = do
 createInstance :: Bool -> IO Vk.Instance
 createInstance enableValidation = do
   glfwExtensionsCStrs <- GLFW.getRequiredInstanceExtensions
-  glfwExtensionsBSs <- mapM (\cs -> BS.packCString cs) glfwExtensionsCStrs
+  glfwExtensionsBSs <- mapM BS.packCString glfwExtensionsCStrs
+  putStrLn $ "GLFW required extensions: " ++ show glfwExtensionsBSs
+
+  -- Check available instance extensions for portability support (macOS/MoltenVK)
+  (_, availableExts) <- Vk.enumerateInstanceExtensionProperties Nothing
+  let availableExtNames = V.toList $ V.map Vk.extensionName availableExts
+      hasPortabilityEnum = "VK_KHR_portability_enumeration" `elem` availableExtNames
+  putStrLn $ "Portability enumeration available: " ++ show hasPortabilityEnum
+
   let allExtensions = V.fromList glfwExtensionsBSs
         <> (if enableValidation
              then V.singleton Vk.EXT_DEBUG_UTILS_EXTENSION_NAME
              else V.empty)
+        <> (if hasPortabilityEnum
+             then V.singleton "VK_KHR_portability_enumeration"
+             else V.empty)
+  putStrLn $ "Enabling instance extensions: " ++ show (V.toList allExtensions)
 
   let appInfo = Vk.ApplicationInfo
         { Vk.applicationName    = Just "Minecraft Haskell"
         , Vk.applicationVersion = Vk.MAKE_API_VERSION 0 1 0
         , Vk.engineName         = Just "MCH Engine"
         , Vk.engineVersion      = Vk.MAKE_API_VERSION 0 1 0
-        , Vk.apiVersion         = Vk.API_VERSION_1_3
+        , Vk.apiVersion         = Vk.API_VERSION_1_0
         }
 
   let createInfo = Vk.InstanceCreateInfo
         { Vk.next                   = ()
-        , Vk.flags                  = Vk.zero
+        , Vk.flags                  = if hasPortabilityEnum
+                                        then Vk.InstanceCreateFlagBits 0x00000001  -- ENUMERATE_PORTABILITY_BIT_KHR
+                                        else Vk.zero
         , Vk.applicationInfo        = Just appInfo
         , Vk.enabledLayerNames      = if enableValidation then validationLayers else V.empty
         , Vk.enabledExtensionNames  = allExtensions
@@ -212,6 +231,15 @@ findQueueFamilies device surface = do
 -- | Create logical device and retrieve queues
 createLogicalDevice :: Vk.PhysicalDevice -> QueueFamilyIndices -> Bool -> IO (Vk.Device, Vk.Queue, Vk.Queue)
 createLogicalDevice physDevice queueFamilies enableValidation = do
+  -- Check for portability subset (required on macOS/MoltenVK)
+  (_, availableDevExts) <- Vk.enumerateDeviceExtensionProperties physDevice Nothing
+  let availableDevExtNames = V.toList $ V.map Vk.extensionName availableDevExts
+      hasPortabilitySubset = "VK_KHR_portability_subset" `elem` availableDevExtNames
+      allDeviceExtensions = deviceExtensions
+        <> (if hasPortabilitySubset
+              then V.singleton "VK_KHR_portability_subset"
+              else V.empty)
+
   let uniqueFamilies = if qfGraphicsFamily queueFamilies == qfPresentFamily queueFamilies
         then [qfGraphicsFamily queueFamilies]
         else [qfGraphicsFamily queueFamilies, qfPresentFamily queueFamilies]
@@ -233,7 +261,7 @@ createLogicalDevice physDevice queueFamilies enableValidation = do
         , Vk.flags                  = Vk.zero
         , Vk.queueCreateInfos       = Vk.SomeStruct <$> queueCreateInfos
         , Vk.enabledLayerNames      = if enableValidation then validationLayers else V.empty
-        , Vk.enabledExtensionNames  = deviceExtensions
+        , Vk.enabledExtensionNames  = allDeviceExtensions
         , Vk.enabledFeatures        = Just deviceFeatures
         }
 

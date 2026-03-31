@@ -60,14 +60,18 @@ sudo apt install libvulkan-dev libglfw3-dev
 ### Build & Run
 
 ```bash
-# Compile shaders (requires glslc from Vulkan SDK)
+# Compile shaders (requires glslangValidator or glslc from Vulkan SDK)
 cd shaders && bash compile.sh && cd ..
 
 # Build
 cabal build
 
-# Run
+# Run (macOS needs DYLD_LIBRARY_PATH for Vulkan loader)
+# Linux:
 cabal run minecraft
+
+# macOS (Homebrew):
+DYLD_LIBRARY_PATH=/opt/homebrew/lib cabal run minecraft
 ```
 
 ## Project Structure

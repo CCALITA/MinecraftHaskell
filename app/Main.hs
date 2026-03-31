@@ -26,6 +26,7 @@ import Game.DayNight
 
 import Control.Monad (unless, when)
 import Control.Concurrent.STM (readTVarIO)
+import System.IO (hSetBuffering, stdout, BufferMode(..), hFlush)
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as VS
@@ -46,6 +47,7 @@ maxReach = 5.0
 
 main :: IO ()
 main = do
+  hSetBuffering stdout LineBuffering
   let config = defaultEngineConfig
   putStrLn $ "Starting " ++ ecWindowTitle config ++ "..."
 
@@ -87,7 +89,7 @@ main = do
     renderPass <- createRenderPass device (scFormat sc)
     let shaderDir = "shaders"
     pc <- createGraphicsPipeline device renderPass (scExtent sc)
-      (shaderDir </> "triangle.spv")
+      (shaderDir </> "triangle_vert.spv")
       (shaderDir </> "triangle_frag.spv")
     fbRef <- newIORef =<< createFramebuffers device renderPass sc
 

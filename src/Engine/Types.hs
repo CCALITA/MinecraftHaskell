@@ -78,5 +78,5 @@ defaultEngineConfig = EngineConfig
   , ecWindowHeight      = 720
   , ecWindowTitle       = "Minecraft Haskell"
   , ecMaxFramesInFlight = 2
-  , ecEnableValidation  = True
+  , ecEnableValidation  = False
   }

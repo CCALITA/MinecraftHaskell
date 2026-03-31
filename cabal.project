@@ -24,8 +24,11 @@ package VulkanMemoryAllocator
 
 -- Fix macOS 15+ build: use Clang for Objective-C blocks support
 -- GHC's default gcc doesn't support -fblocks
+-- cc-options ensures Vulkan headers are found so GLFW enables Vulkan support
 package bindings-GLFW
   ghc-options: -pgmc=/usr/bin/clang
+  cc-options: -I/opt/homebrew/include
+  extra-lib-dirs: /opt/homebrew/lib
 
 -- Optimization for release
 package minecraft-haskell
