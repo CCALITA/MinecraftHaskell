@@ -103,20 +103,28 @@ generateChunk cfg chunkCoord = do
             Just ore -> MUV.write mvec (blockIndex lx y lz) (blockW8 ore)
             Nothing  -> pure ()
 
-  -- Pass 4: Trees (within chunk bounds to avoid border issues)
+  -- Pass 4: Trees — hash-based scatter to avoid grid artifacts
   forM_ [2..chunkWidth-3] $ \lx ->
     forM_ [2..chunkDepth-3] $ \lz -> do
-      let wx = fromIntegral (cx * chunkWidth + lx) :: Double
-          wz = fromIntegral (cz * chunkDepth + lz) :: Double
-          biome = biomeAt seed wx wz
+      let wx = cx * chunkWidth + lx
+          wz = cz * chunkDepth + lz
+          wxd = fromIntegral wx :: Double
+          wzd = fromIntegral wz :: Double
+          biome = biomeAt seed wxd wzd
           bp = biomeParams biome
-          treeNoise = abs (noise2D (seed + 5000) (wx * 0.5) (wz * 0.5))
-      when (treeNoise < bpTreeDensity bp) $ do
+          -- Hash the world position to get a pseudo-random value in [0, 1)
+          h = hashPos (seed + 5000) wx wz
+          treeRoll = fromIntegral (h `mod` 10000) / 10000.0 :: Double
+      when (treeRoll < bpTreeDensity bp) $ do
         surfY <- findSurface mvec lx lz (chunkHeight - 1)
-        when (surfY > gcSeaLevel cfg) $ do
+        when (surfY > gcSeaLevel cfg && surfY < chunkHeight - 10) $ do
           surfBlock <- MUV.read mvec (blockIndex lx surfY lz)
-          when (surfBlock == blockW8 (bpSurfaceBlock bp)) $
-            placeTree mvec lx surfY lz
+          when (surfBlock == blockW8 (bpSurfaceBlock bp)) $ do
+            -- Vary tree height based on position hash
+            let hTree = hashPos (seed + 6000) wx wz
+                trunkH = 4 + hTree `mod` 3  -- height 4-6
+                canopyR = 1 + hTree `mod` 2  -- radius 1-2
+            placeTree mvec lx surfY lz trunkH canopyR
 
   frozen <- UV.freeze mvec
   writeIORef (chunkBlocks chunk) frozen
@@ -133,31 +141,42 @@ findSurface mvec lx lz y
         then pure y
         else findSurface mvec lx lz (y - 1)
 
--- | Place a simple oak tree at (x, surfY, z)
-placeTree :: MUV.IOVector Word8 -> Int -> Int -> Int -> IO ()
-placeTree mvec x surfY z = do
-  let trunkH = 5
-
+-- | Place a tree at (x, surfY, z) with variable trunk height and canopy radius
+placeTree :: MUV.IOVector Word8 -> Int -> Int -> Int -> Int -> Int -> IO ()
+placeTree mvec x surfY z trunkH canopyR = do
   -- Trunk
   forM_ [1..trunkH] $ \dy -> do
     let y = surfY + dy
     when (y < chunkHeight) $
       MUV.write mvec (blockIndex x y z) (blockW8 OakLog)
 
-  -- Leaf canopy (3x3x2 around trunk top)
+  -- Leaf canopy — spheroid around trunk top
   let topY = surfY + trunkH
-  forM_ [-1..1] $ \dx ->
-    forM_ [-1..1] $ \dz ->
-      forM_ [0..1] $ \dy -> do
+      -- Lower canopy: wider ring at trunk top - 1 and trunk top
+      -- Upper canopy: narrower ring above
+  forM_ [-canopyR..canopyR] $ \dx ->
+    forM_ [-canopyR..canopyR] $ \dz ->
+      forM_ [-1..2] $ \dy -> do
         let lx = x + dx; lz = z + dz; ly = topY + dy
-        when (isInBounds lx ly lz && not (dx == 0 && dz == 0 && dy == 0)) $ do
+            dist2 = dx * dx + dz * dz
+            -- Taper: wider at bottom (dy=-1,0), narrower at top (dy=1,2)
+            maxR2 = case dy of
+              -1 -> canopyR * canopyR + 1
+              0  -> canopyR * canopyR + 1
+              1  -> canopyR * canopyR
+              _  -> if canopyR > 1 then 1 else 0
+            isTrunk = dx == 0 && dz == 0 && dy <= 0
+        when (dist2 <= maxR2 && not isTrunk && isInBounds lx ly lz) $ do
           cur <- MUV.read mvec (blockIndex lx ly lz)
           when (cur == blockW8 Air) $
             MUV.write mvec (blockIndex lx ly lz) (blockW8 OakLeaves)
 
-  -- Crown leaf
-  when (topY + 2 < chunkHeight) $
-    MUV.write mvec (blockIndex x (topY + 2) z) (blockW8 OakLeaves)
+  -- Crown leaf on top
+  let crownY = topY + 3
+  when (crownY < chunkHeight && isInBounds x crownY z) $ do
+    cur <- MUV.read mvec (blockIndex x crownY z)
+    when (cur == blockW8 Air) $
+      MUV.write mvec (blockIndex x crownY z) (blockW8 OakLeaves)
 
 -- | Convert BlockType to Word8
 blockW8 :: BlockType -> Word8
@@ -172,3 +191,11 @@ noiseInt seed x y z =
       h2 = (h1 `xor` (h1 `shiftR` 16)) * 0x45d9f3b
       h3 = h2 `xor` (h2 `shiftR` 16)
   in abs h3 `mod` 5
+
+-- | Position-based hash for scatter placement (returns non-negative Int)
+hashPos :: Seed -> Int -> Int -> Int
+hashPos seed x z =
+  let h0 = seed * 374761393 + x * 668265263 + z * 2147483647
+      h1 = (h0 `xor` (h0 `shiftR` 13)) * 1274126177
+      h2 = h1 `xor` (h1 `shiftR` 16)
+  in abs h2
