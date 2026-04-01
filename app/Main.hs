@@ -28,6 +28,7 @@ import World.Light
 import Entity.ECS
 import Entity.Mob (MobType(..), updateMobAI, AIState(..))
 import Entity.Spawn
+import Game.Save
 
 import Control.Monad (unless, when, forM_)
 import Control.Concurrent.STM (readTVarIO)
@@ -49,6 +50,10 @@ tickRate = 1.0 / 20.0
 -- | Max reach distance for block interaction
 maxReach :: Float
 maxReach = 5.0
+
+-- | Save directory
+saveDir :: FilePath
+saveDir = "saves/world1"
 
 main :: IO ()
 main = do
@@ -109,9 +114,12 @@ main = do
         renderDist = 4
     world <- newWorld genCfg renderDist
 
-    -- Player
+    -- Player (try to load from save, else default)
     let spawnPos = V3 0 80 0
-    playerRef <- newIORef (defaultPlayer spawnPos)
+    mSavedPlayer <- loadPlayer saveDir
+    playerRef <- newIORef (case mSavedPlayer of
+      Just p  -> p
+      Nothing -> defaultPlayer spawnPos)
     inventoryRef <- newIORef emptyInventory
     dayNightRef <- newIORef newDayNightCycle
     fluidState <- newFluidState
@@ -199,7 +207,11 @@ main = do
     -- Key callback for toggle (F = fly, 1-9 = hotbar, ESC = quit)
     GLFW.setKeyCallback (whWindow wh) $ Just $ \_win key _scancode action _mods ->
       when (action == GLFW.KeyState'Pressed) $ case key of
-        GLFW.Key'Escape ->
+        GLFW.Key'Escape -> do
+          player <- readIORef playerRef
+          savePlayer saveDir player
+          saveWorld saveDir world
+          putStrLn "World saved."
           GLFW.setWindowShouldClose (whWindow wh) True
         GLFW.Key'F ->
           modifyIORef' inputRef $ \inp -> inp { piToggleFly = True }
