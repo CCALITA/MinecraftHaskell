@@ -83,8 +83,9 @@ recordCommandBuffer
   -> Vk.Extent2D
   -> [(BufferAllocation, BufferAllocation, Int)]  -- ^ List of (vertBuf, idxBuf, indexCount) per chunk
   -> Vk.DescriptorSet        -- ^ Descriptor set (UBO + texture)
+  -> (Float, Float, Float, Float)  -- ^ Sky clear color (r, g, b, a)
   -> IO ()
-recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent chunkDraws descriptorSet = do
+recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent chunkDraws descriptorSet (skyR, skyG, skyB, skyA) = do
   let beginInfo = Vk.CommandBufferBeginInfo
         { Vk.next            = ()
         , Vk.flags           = Vk.zero
@@ -93,7 +94,7 @@ recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent
 
   Vk.beginCommandBuffer cmdBuf beginInfo
 
-  let clearColor = Vk.Color (Vk.Float32 0.53 0.81 0.92 1.0)  -- Sky blue
+  let clearColor = Vk.Color (Vk.Float32 skyR skyG skyB skyA)
       clearDepth = Vk.DepthStencil (Vk.ClearDepthStencilValue 1.0 0)
 
   let renderPassBegin = Vk.RenderPassBeginInfo
@@ -131,8 +132,9 @@ drawFrame
   -> FrameSyncObjects
   -> [(BufferAllocation, BufferAllocation, Int)]  -- ^ Per-chunk draw data
   -> Vk.DescriptorSet        -- ^ Descriptor set for current frame
+  -> (Float, Float, Float, Float)  -- ^ Sky clear color
   -> IO Bool
-drawFrame vc sc pc framebuffers cmdBuf syncObj chunkDraws descriptorSet = do
+drawFrame vc sc pc framebuffers cmdBuf syncObj chunkDraws descriptorSet skyColor = do
   let device = vcDevice vc
       maxWait = maxBound :: Word64
 
@@ -162,6 +164,7 @@ drawFrame vc sc pc framebuffers cmdBuf syncObj chunkDraws descriptorSet = do
         (scExtent sc)
         chunkDraws
         descriptorSet
+        skyColor
 
       -- Submit command buffer
       let submitInfo = Vk.SubmitInfo

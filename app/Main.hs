@@ -337,8 +337,12 @@ main = do
             meshCache <- readIORef meshCacheRef
             let chunkDraws = HM.elems meshCache
 
+            -- Compute sky color from day/night cycle
+            dayNight <- readIORef dayNightRef
+            let V4 skyR skyG skyB skyA = getSkyColor dayNight
+
             fbs <- readIORef fbRef
-            needsRecreate <- drawFrame vc sc' pc fbs cmdBuf sync chunkDraws ds
+            needsRecreate <- drawFrame vc sc' pc fbs cmdBuf sync chunkDraws ds (skyR, skyG, skyB, skyA)
 
             resized <- readIORef (whResized wh)
             when (needsRecreate || resized) $ do
