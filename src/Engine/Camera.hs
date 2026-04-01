@@ -4,6 +4,9 @@ module Engine.Camera
   , cameraViewMatrix
   , cameraProjectionMatrix
   , updateCamera
+  , Frustum
+  , extractFrustum
+  , isAABBInFrustum
   ) where
 
 import Linear
@@ -61,3 +64,39 @@ updateCamera dx dy cam =
         (sin radPitch)
         (sin radYaw * cos radPitch)
   in cam { camYaw = yaw', camPitch = pitch', camFront = front }
+
+-- | A frustum defined by 6 planes (normal.xyz + distance).
+--   Each V4 (a, b, c, d) represents plane ax + by + cz + d >= 0.
+type Frustum = [V4 Float]
+
+-- | Extract 6 frustum planes from a combined view-projection matrix.
+--   Input should be projection * view (NOT transposed — the raw linear M44).
+extractFrustum :: M44 Float -> Frustum
+extractFrustum m =
+  let V4 r0 r1 r2 r3 = m
+      -- Gribb-Hartmann method: extract planes from rows of the VP matrix
+      left   = r3 ^+^ r0
+      right  = r3 ^-^ r0
+      bottom = r3 ^+^ r1
+      top'   = r3 ^-^ r1
+      near'  = r3 ^+^ r2
+      far'   = r3 ^-^ r2
+  in map normalizePlane [left, right, bottom, top', near', far']
+  where
+    normalizePlane (V4 a b c d) =
+      let len = sqrt (a*a + b*b + c*c)
+      in if len > 0.0001 then V4 (a/len) (b/len) (c/len) (d/len) else V4 0 0 0 0
+
+-- | Test if an axis-aligned bounding box is at least partially inside the frustum.
+--   AABB defined by (min corner, max corner).
+isAABBInFrustum :: Frustum -> V3 Float -> V3 Float -> Bool
+isAABBInFrustum planes (V3 minX minY minZ) (V3 maxX maxY maxZ) =
+  all testPlane planes
+  where
+    -- For each plane, find the corner most in the direction of the normal.
+    -- If that corner is behind the plane, the AABB is fully outside.
+    testPlane (V4 a b c d) =
+      let px = if a >= 0 then maxX else minX
+          py = if b >= 0 then maxY else minY
+          pz = if c >= 0 then maxZ else minZ
+      in a * px + b * py + c * pz + d >= 0

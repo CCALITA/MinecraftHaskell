@@ -335,7 +335,15 @@ main = do
             updateUBO device (uniformBufs V.! currentFrame) ubo
 
             meshCache <- readIORef meshCacheRef
-            let chunkDraws = HM.elems meshCache
+            -- Frustum culling: only draw chunks visible to the camera
+            let vp = cameraProjectionMatrix aspect 0.1 1000 cam !*! cameraViewMatrix cam
+                frustum = extractFrustum vp
+                chunkDraws = [ draw
+                             | (V2 cx cz, draw) <- HM.toList meshCache
+                             , let minCorner = V3 (fromIntegral cx * 16) 0 (fromIntegral cz * 16)
+                                   maxCorner = V3 (fromIntegral (cx + 1) * 16) 256 (fromIntegral (cz + 1) * 16)
+                             , isAABBInFrustum frustum minCorner maxCorner
+                             ]
 
             -- Compute sky color from day/night cycle
             dayNight <- readIORef dayNightRef
