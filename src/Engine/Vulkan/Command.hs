@@ -15,11 +15,12 @@ import qualified Vulkan.CStruct.Extends as Vk
 import Engine.Vulkan.Init (VulkanContext(..))
 import Engine.Vulkan.Swapchain (SwapchainContext(..))
 import Engine.Vulkan.Pipeline (PipelineContext(..))
+import Engine.Vulkan.Memory (BufferAllocation(..))
 
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word32, Word64)
-import Data.Bits ((.|.))
+import Foreign.Ptr (nullPtr)
 
 -- | Per-frame synchronization objects
 data FrameSyncObjects = FrameSyncObjects
@@ -71,15 +72,20 @@ destroySyncObjects device = V.mapM_ $ \fso -> do
   Vk.destroySemaphore device (fsoRenderFinished fso) Nothing
   Vk.destroyFence device (fsoInFlight fso) Nothing
 
--- | Record a command buffer for rendering a frame
+-- | Record a command buffer for rendering a frame with mesh data
 recordCommandBuffer
   :: Vk.CommandBuffer
   -> Vk.RenderPass
   -> Vk.Framebuffer
   -> Vk.Pipeline
+  -> Vk.PipelineLayout
   -> Vk.Extent2D
+  -> Maybe BufferAllocation  -- ^ Vertex buffer
+  -> Maybe BufferAllocation  -- ^ Index buffer
+  -> Int                     -- ^ Index count
+  -> Vk.DescriptorSet        -- ^ Descriptor set (UBO + texture)
   -> IO ()
-recordCommandBuffer cmdBuf renderPass framebuffer pipeline extent = do
+recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent mVertBuf mIdxBuf indexCount descriptorSet = do
   let beginInfo = Vk.CommandBufferBeginInfo
         { Vk.next            = ()
         , Vk.flags           = Vk.zero
@@ -88,19 +94,31 @@ recordCommandBuffer cmdBuf renderPass framebuffer pipeline extent = do
 
   Vk.beginCommandBuffer cmdBuf beginInfo
 
-  let clearColor = Vk.Color (Vk.Float32 0.1 0.1 0.2 1.0)  -- Dark blue-ish
+  let clearColor = Vk.Color (Vk.Float32 0.53 0.81 0.92 1.0)  -- Sky blue
+      clearDepth = Vk.DepthStencil (Vk.ClearDepthStencilValue 1.0 0)
 
   let renderPassBegin = Vk.RenderPassBeginInfo
         { Vk.next           = ()
         , Vk.renderPass     = renderPass
         , Vk.framebuffer    = framebuffer
         , Vk.renderArea     = Vk.Rect2D (Vk.Offset2D 0 0) extent
-        , Vk.clearValues    = V.singleton clearColor
+        , Vk.clearValues    = V.fromList [clearColor, clearDepth]
         }
 
   Vk.cmdBeginRenderPass cmdBuf renderPassBegin Vk.SUBPASS_CONTENTS_INLINE
   Vk.cmdBindPipeline cmdBuf Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
-  Vk.cmdDraw cmdBuf 3 1 0 0  -- 3 vertices, 1 instance (hardcoded triangle)
+
+  -- Bind descriptor set (UBO + texture)
+  Vk.cmdBindDescriptorSets cmdBuf Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 (V.singleton descriptorSet) V.empty
+
+  -- Draw mesh if available
+  case (mVertBuf, mIdxBuf) of
+    (Just vertBuf, Just idxBuf) | indexCount > 0 -> do
+      Vk.cmdBindVertexBuffers cmdBuf 0 (V.singleton (baBuffer vertBuf)) (V.singleton 0)
+      Vk.cmdBindIndexBuffer cmdBuf (baBuffer idxBuf) 0 Vk.INDEX_TYPE_UINT32
+      Vk.cmdDrawIndexed cmdBuf (fromIntegral indexCount) 1 0 0 0
+    _ -> pure ()
+
   Vk.cmdEndRenderPass cmdBuf
   Vk.endCommandBuffer cmdBuf
 
@@ -113,8 +131,12 @@ drawFrame
   -> Vector Vk.Framebuffer
   -> Vk.CommandBuffer
   -> FrameSyncObjects
+  -> Maybe BufferAllocation  -- ^ Vertex buffer
+  -> Maybe BufferAllocation  -- ^ Index buffer
+  -> Int                     -- ^ Index count
+  -> Vk.DescriptorSet        -- ^ Descriptor set for current frame
   -> IO Bool
-drawFrame vc sc pc framebuffers cmdBuf syncObj = do
+drawFrame vc sc pc framebuffers cmdBuf syncObj mVertBuf mIdxBuf indexCount descriptorSet = do
   let device = vcDevice vc
       maxWait = maxBound :: Word64
 
@@ -140,7 +162,12 @@ drawFrame vc sc pc framebuffers cmdBuf syncObj = do
         (pcRenderPass pc)
         (framebuffers V.! fromIntegral imageIndex)
         (pcPipeline pc)
+        (pcPipelineLayout pc)
         (scExtent sc)
+        mVertBuf
+        mIdxBuf
+        indexCount
+        descriptorSet
 
       -- Submit command buffer
       let submitInfo = Vk.SubmitInfo
@@ -164,5 +191,3 @@ drawFrame vc sc pc framebuffers cmdBuf syncObj = do
 
       pure $ presentResult == Vk.ERROR_OUT_OF_DATE_KHR
             || presentResult == Vk.SUBOPTIMAL_KHR
-  where
-    nullPtr = error "unused"  -- PresentInfoKHR results field

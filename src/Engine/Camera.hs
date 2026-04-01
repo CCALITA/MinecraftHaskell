@@ -36,10 +36,18 @@ defaultCamera = Camera
 cameraViewMatrix :: Camera -> M44 Float
 cameraViewMatrix cam = lookAt (camPosition cam) (camPosition cam ^+^ camFront cam) (camUp cam)
 
--- | Compute perspective projection matrix
+-- | Compute perspective projection matrix adjusted for Vulkan clip space.
+--   linear's 'perspective' targets OpenGL (Y-up, depth [-1,1]).
+--   Vulkan needs Y-down, depth [0,1], so we apply a clip correction.
 cameraProjectionMatrix :: Float -> Float -> Float -> Camera -> M44 Float
 cameraProjectionMatrix aspect near far cam =
-  perspective (camFov cam * pi / 180) aspect near far
+  let openglProj = perspective (camFov cam * pi / 180) aspect near far
+      -- Vulkan clip correction: flip Y, remap depth from [-1,1] to [0,1]
+      vulkanClip = V4 (V4 1 0    0   0)
+                      (V4 0 (-1) 0   0)
+                      (V4 0 0    0.5 0.5)
+                      (V4 0 0    0   1)
+  in vulkanClip !*! openglProj
 
 -- | Update camera front vector from yaw/pitch
 updateCamera :: Float -> Float -> Camera -> Camera

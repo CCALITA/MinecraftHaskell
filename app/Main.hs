@@ -82,16 +82,19 @@ main = do
     uniformBufs <- V.replicateM maxFrames $ createUniformBuffer physDevice device uboSize
 
     V.forM_ (V.zip dsSets uniformBufs) $ \(ds, ub) ->
-      updateDescriptorSet device ds ub
+      updateDescriptorSetWithTexture device ds ub (tiImageView texAtlas) (tiSampler texAtlas)
 
-    -- Render pass and pipeline
+    -- Render pass and pipeline (with depth buffer)
     sc <- readIORef scRef
-    renderPass <- createRenderPass device (scFormat sc)
+    depthFormat <- findDepthFormat physDevice
+    renderPass <- createRenderPass device (scFormat sc) depthFormat
+    depthRef <- newIORef =<< createDepthResources physDevice device (scExtent sc)
     let shaderDir = "shaders"
-    pc <- createGraphicsPipeline device renderPass (scExtent sc)
-      (shaderDir </> "triangle_vert.spv")
-      (shaderDir </> "triangle_frag.spv")
-    fbRef <- newIORef =<< createFramebuffers device renderPass sc
+    pc <- createGraphicsPipeline device renderPass (scExtent sc) dsLayout
+      (shaderDir </> "block_vert.spv")
+      (shaderDir </> "block_frag.spv")
+    depth <- readIORef depthRef
+    fbRef <- newIORef =<< createFramebuffers device renderPass sc (drImageView depth)
 
     cmdBuffers <- allocateCommandBuffers device cmdPool maxFrames
     syncObjects <- createSyncObjects device maxFrames
@@ -268,20 +271,25 @@ main = do
             let currentFrame = frameIdx `mod` maxFrames
             let cmdBuf = cmdBuffers V.! currentFrame
             let sync   = syncObjects V.! currentFrame
+            let ds     = dsSets V.! currentFrame
 
             sc' <- readIORef scRef
             let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
             let cam = cameraFromPlayer player
                 aspect = fromIntegral extW / fromIntegral extH
                 ubo = UniformBufferObject
-                  { uboModel      = identity
-                  , uboView       = cameraViewMatrix cam
-                  , uboProjection = cameraProjectionMatrix aspect 0.1 1000 cam
+                  { uboModel      = transpose identity
+                  , uboView       = transpose $ cameraViewMatrix cam
+                  , uboProjection = transpose $ cameraProjectionMatrix aspect 0.1 1000 cam
                   }
             updateUBO device (uniformBufs V.! currentFrame) ubo
 
+            mVertBuf <- readIORef vertBufRef
+            mIdxBuf  <- readIORef idxBufRef
+            ic       <- readIORef idxCountRef
+
             fbs <- readIORef fbRef
-            needsRecreate <- drawFrame vc sc' pc fbs cmdBuf sync
+            needsRecreate <- drawFrame vc sc' pc fbs cmdBuf sync mVertBuf mIdxBuf ic ds
 
             resized <- readIORef (whResized wh)
             when (needsRecreate || resized) $ do
@@ -292,9 +300,15 @@ main = do
                 scOld <- readIORef scRef
                 scNew <- recreateSwapchain vc scOld winSize
                 writeIORef scRef scNew
+                -- Recreate depth buffer for new size
+                oldDepth <- readIORef depthRef
+                destroyDepthResources device oldDepth
+                newDepth <- createDepthResources physDevice device (scExtent scNew)
+                writeIORef depthRef newDepth
+                -- Recreate framebuffers
                 oldFbs <- readIORef fbRef
                 destroyFramebuffers device oldFbs
-                newFbs <- createFramebuffers device renderPass scNew
+                newFbs <- createFramebuffers device renderPass scNew (drImageView newDepth)
                 writeIORef fbRef newFbs
 
             writeIORef frameRef (frameIdx + 1)
@@ -314,6 +328,7 @@ main = do
     Vk.destroyDescriptorSetLayout device dsLayout Nothing
     fbs <- readIORef fbRef
     destroyFramebuffers device fbs
+    readIORef depthRef >>= destroyDepthResources device
     destroyPipelineContext device pc
     scFinal <- readIORef scRef
     destroySwapchain device scFinal

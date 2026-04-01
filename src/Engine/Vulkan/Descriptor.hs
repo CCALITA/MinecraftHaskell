@@ -4,6 +4,7 @@ module Engine.Vulkan.Descriptor
   , createDescriptorPool
   , allocateDescriptorSets
   , updateDescriptorSet
+  , updateDescriptorSetWithTexture
   , destroyDescriptorContext
   ) where
 
@@ -101,7 +102,46 @@ updateDescriptorSet device descriptorSet uniformBuf = do
 
   Vk.updateDescriptorSets device (V.singleton (Vk.SomeStruct writeDescriptor)) V.empty
 
--- | Destroy descriptor resources
+-- | Update a descriptor set with both UBO (binding 0) and texture sampler (binding 1)
+updateDescriptorSetWithTexture :: Vk.Device -> Vk.DescriptorSet -> BufferAllocation -> Vk.ImageView -> Vk.Sampler -> IO ()
+updateDescriptorSetWithTexture device descriptorSet uniformBuf imageView sampler = do
+  let bufferInfo = Vk.DescriptorBufferInfo
+        { Vk.buffer = baBuffer uniformBuf
+        , Vk.offset = 0
+        , Vk.range  = fromIntegral $ sizeOf (undefined :: UniformBufferObject)
+        }
+
+  let uboWrite = Vk.WriteDescriptorSet
+        { Vk.next            = ()
+        , Vk.dstSet          = descriptorSet
+        , Vk.dstBinding      = 0
+        , Vk.dstArrayElement = 0
+        , Vk.descriptorCount = 1
+        , Vk.descriptorType  = Vk.DESCRIPTOR_TYPE_UNIFORM_BUFFER
+        , Vk.bufferInfo      = V.singleton bufferInfo
+        , Vk.imageInfo       = V.empty
+        , Vk.texelBufferView = V.empty
+        }
+
+  let imageInfo = Vk.DescriptorImageInfo
+        { Vk.sampler     = sampler
+        , Vk.imageView   = imageView
+        , Vk.imageLayout = Vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        }
+
+  let samplerWrite = Vk.WriteDescriptorSet
+        { Vk.next            = ()
+        , Vk.dstSet          = descriptorSet
+        , Vk.dstBinding      = 1
+        , Vk.dstArrayElement = 0
+        , Vk.descriptorCount = 1
+        , Vk.descriptorType  = Vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+        , Vk.bufferInfo      = V.empty
+        , Vk.imageInfo       = V.singleton imageInfo
+        , Vk.texelBufferView = V.empty
+        }
+
+  Vk.updateDescriptorSets device (V.fromList [Vk.SomeStruct uboWrite, Vk.SomeStruct samplerWrite]) V.empty
 destroyDescriptorContext :: Vk.Device -> DescriptorContext -> IO ()
 destroyDescriptorContext device dc = do
   Vk.destroyDescriptorPool device (dcPool dc) Nothing

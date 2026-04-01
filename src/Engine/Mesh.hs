@@ -9,7 +9,7 @@ import World.Block
 import World.Chunk
 
 import Linear (V2(..), V3(..))
-import Data.Word (Word32)
+import Data.Word (Word8, Word32)
 import Data.IORef
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Unboxed as UV
@@ -67,8 +67,8 @@ tileUV (V2 tx ty) =
 --   TODO: Upgrade to full greedy meshing (merge coplanar quads) in optimization pass.
 meshChunk :: Chunk -> IO MeshData
 meshChunk chunk = do
-  vertsRef   <- newIORef ([] :: [BlockVertex])
-  indicesRef <- newIORef ([] :: [Word32])
+  vertsRef   <- newIORef ([] :: [[BlockVertex]])   -- list of face groups (O(1) cons)
+  indicesRef <- newIORef ([] :: [[Word32]])
   vertCount  <- newIORef (0 :: Word32)
 
   let addFace :: V3 Float -> BlockFace -> BlockType -> IO ()
@@ -81,11 +81,11 @@ meshChunk chunk = do
             (verts, _normal) = faceVertices bx by bz face u0 v0 u1 v1 ao
         vc <- readIORef vertCount
         let newIndices = [ vc, vc+1, vc+2, vc+2, vc+3, vc ]
-        modifyIORef' vertsRef (++ verts)
-        modifyIORef' indicesRef (++ newIndices)
+        modifyIORef' vertsRef (verts :)       -- O(1) cons
+        modifyIORef' indicesRef (newIndices :)
         writeIORef vertCount (vc + 4)
 
-  -- Iterate over all blocks
+  -- Read blocks once, pass to all lookups
   blocksVec <- readIORef (chunkBlocks chunk)
   let go !x !y !z
         | y >= chunkHeight = pure ()
@@ -100,29 +100,31 @@ meshChunk chunk = do
                     by = fromIntegral y
                     bz = fromIntegral z
                     pos = V3 bx by bz
-                -- Check each face: emit if neighbor is transparent
-                checkFace chunk blocksVec x y z pos FaceTop    bt (x, y+1, z) addFace
-                checkFace chunk blocksVec x y z pos FaceBottom bt (x, y-1, z) addFace
-                checkFace chunk blocksVec x y z pos FaceNorth  bt (x, y, z+1) addFace
-                checkFace chunk blocksVec x y z pos FaceSouth  bt (x, y, z-1) addFace
-                checkFace chunk blocksVec x y z pos FaceEast   bt (x+1, y, z) addFace
-                checkFace chunk blocksVec x y z pos FaceWest   bt (x-1, y, z) addFace
+                -- Check each face: emit if neighbor is transparent (using cached vector)
+                checkFaceVec blocksVec pos FaceTop    bt (x, y+1, z) addFace
+                checkFaceVec blocksVec pos FaceBottom bt (x, y-1, z) addFace
+                checkFaceVec blocksVec pos FaceNorth  bt (x, y, z+1) addFace
+                checkFaceVec blocksVec pos FaceSouth  bt (x, y, z-1) addFace
+                checkFaceVec blocksVec pos FaceEast   bt (x+1, y, z) addFace
+                checkFaceVec blocksVec pos FaceWest   bt (x-1, y, z) addFace
                 go (x + 1) y z
   go 0 0 0
 
-  verts   <- VS.fromList <$> readIORef vertsRef
-  indices <- VS.fromList <$> readIORef indicesRef
+  verts   <- VS.fromList . concat . reverse <$> readIORef vertsRef
+  indices <- VS.fromList . concat . reverse <$> readIORef indicesRef
   pure $ MeshData verts indices
 
--- Inline helper: check if neighbor is transparent, then add face
-checkFace :: Chunk -> a -> Int -> Int -> Int -> V3 Float -> BlockFace -> BlockType
-          -> (Int, Int, Int) -> (V3 Float -> BlockFace -> BlockType -> IO ()) -> IO ()
-checkFace chunk _ _x _y _z pos face bt (nx, ny, nz) addFace = do
-  neighbor <- getBlock chunk nx ny nz
+-- | Check if neighbor is transparent using cached block vector (no IORef re-read)
+checkFaceVec :: UV.Vector Word8 -> V3 Float -> BlockFace -> BlockType
+             -> (Int, Int, Int) -> (V3 Float -> BlockFace -> BlockType -> IO ()) -> IO ()
+checkFaceVec blocksVec pos face bt (nx, ny, nz) addFace = do
+  let neighbor
+        | not (isInBounds nx ny nz) = Air  -- chunk boundary: always emit face
+        | otherwise = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex nx ny nz
   if isTransparent neighbor
     then addFace pos face bt
     else pure ()
-{-# INLINE checkFace #-}
+{-# INLINE checkFaceVec #-}
 
 -- | Generate 4 vertices for a block face
 faceVertices :: Float -> Float -> Float -> BlockFace
