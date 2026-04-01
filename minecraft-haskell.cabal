@@ -128,3 +128,5 @@ test-suite minecraft-test
     , minecraft-haskell
     , hspec            >= 2.11
     , QuickCheck       >= 2.14
+    , linear
+    , vector
