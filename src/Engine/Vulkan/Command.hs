@@ -21,6 +21,7 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word32, Word64)
 import Foreign.Ptr (nullPtr)
+import Control.Monad (when)
 
 -- | Per-frame synchronization objects
 data FrameSyncObjects = FrameSyncObjects
@@ -80,12 +81,10 @@ recordCommandBuffer
   -> Vk.Pipeline
   -> Vk.PipelineLayout
   -> Vk.Extent2D
-  -> Maybe BufferAllocation  -- ^ Vertex buffer
-  -> Maybe BufferAllocation  -- ^ Index buffer
-  -> Int                     -- ^ Index count
+  -> [(BufferAllocation, BufferAllocation, Int)]  -- ^ List of (vertBuf, idxBuf, indexCount) per chunk
   -> Vk.DescriptorSet        -- ^ Descriptor set (UBO + texture)
   -> IO ()
-recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent mVertBuf mIdxBuf indexCount descriptorSet = do
+recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent chunkDraws descriptorSet = do
   let beginInfo = Vk.CommandBufferBeginInfo
         { Vk.next            = ()
         , Vk.flags           = Vk.zero
@@ -108,16 +107,15 @@ recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent
   Vk.cmdBeginRenderPass cmdBuf renderPassBegin Vk.SUBPASS_CONTENTS_INLINE
   Vk.cmdBindPipeline cmdBuf Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
 
-  -- Bind descriptor set (UBO + texture)
+  -- Bind descriptor set (UBO + texture) once
   Vk.cmdBindDescriptorSets cmdBuf Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 (V.singleton descriptorSet) V.empty
 
-  -- Draw mesh if available
-  case (mVertBuf, mIdxBuf) of
-    (Just vertBuf, Just idxBuf) | indexCount > 0 -> do
-      Vk.cmdBindVertexBuffers cmdBuf 0 (V.singleton (baBuffer vertBuf)) (V.singleton 0)
-      Vk.cmdBindIndexBuffer cmdBuf (baBuffer idxBuf) 0 Vk.INDEX_TYPE_UINT32
-      Vk.cmdDrawIndexed cmdBuf (fromIntegral indexCount) 1 0 0 0
-    _ -> pure ()
+  -- Draw each chunk
+  mapM_ (\(vertBuf, idxBuf, ic) -> when (ic > 0) $ do
+    Vk.cmdBindVertexBuffers cmdBuf 0 (V.singleton (baBuffer vertBuf)) (V.singleton 0)
+    Vk.cmdBindIndexBuffer cmdBuf (baBuffer idxBuf) 0 Vk.INDEX_TYPE_UINT32
+    Vk.cmdDrawIndexed cmdBuf (fromIntegral ic) 1 0 0 0
+    ) chunkDraws
 
   Vk.cmdEndRenderPass cmdBuf
   Vk.endCommandBuffer cmdBuf
@@ -131,12 +129,10 @@ drawFrame
   -> Vector Vk.Framebuffer
   -> Vk.CommandBuffer
   -> FrameSyncObjects
-  -> Maybe BufferAllocation  -- ^ Vertex buffer
-  -> Maybe BufferAllocation  -- ^ Index buffer
-  -> Int                     -- ^ Index count
+  -> [(BufferAllocation, BufferAllocation, Int)]  -- ^ Per-chunk draw data
   -> Vk.DescriptorSet        -- ^ Descriptor set for current frame
   -> IO Bool
-drawFrame vc sc pc framebuffers cmdBuf syncObj mVertBuf mIdxBuf indexCount descriptorSet = do
+drawFrame vc sc pc framebuffers cmdBuf syncObj chunkDraws descriptorSet = do
   let device = vcDevice vc
       maxWait = maxBound :: Word64
 
@@ -164,9 +160,7 @@ drawFrame vc sc pc framebuffers cmdBuf syncObj mVertBuf mIdxBuf indexCount descr
         (pcPipeline pc)
         (pcPipelineLayout pc)
         (scExtent sc)
-        mVertBuf
-        mIdxBuf
-        indexCount
+        chunkDraws
         descriptorSet
 
       -- Submit command buffer

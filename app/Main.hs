@@ -26,12 +26,11 @@ import Game.DayNight
 
 import Control.Monad (unless, when)
 import Control.Concurrent.STM (readTVarIO)
-import System.IO (hSetBuffering, stdout, BufferMode(..), hFlush)
+import System.IO (hSetBuffering, stdout, BufferMode(..))
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as VS
 import Data.IORef
-import Data.Word (Word32)
 import Linear
 import Foreign.Ptr (castPtr)
 import Foreign.Storable (sizeOf, poke)
@@ -119,11 +118,9 @@ main = do
     chunkCount <- loadedChunkCount world
     putStrLn $ "Loaded " ++ show chunkCount ++ " initial chunks"
 
-    -- Mesh state
-    vertBufRef <- newIORef Nothing
-    idxBufRef  <- newIORef Nothing
-    idxCountRef <- newIORef (0 :: Int)
-    rebuildMesh world physDevice device cmdPool (vcGraphicsQueue vc) vertBufRef idxBufRef idxCountRef
+    -- Per-chunk mesh cache: ChunkPos -> (vertBuf, idxBuf, indexCount)
+    meshCacheRef <- newIORef (HM.empty :: HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
+    rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
 
     -- Input state
     inputRef <- newIORef noInput
@@ -166,7 +163,7 @@ main = do
                   let (inv', _) = addItem inv brokenType 1
                   writeIORef inventoryRef inv'
                 putStrLn $ "Broke " ++ show brokenType ++ " at " ++ show (V3 bx by bz)
-                rebuildMesh world physDevice device cmdPool (vcGraphicsQueue vc) vertBufRef idxBufRef idxCountRef
+                rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
               GLFW.MouseButton'2 -> do  -- Right click: place from hotbar
                 inv <- readIORef inventoryRef
                 case selectedItem inv of
@@ -179,7 +176,8 @@ main = do
                       writeIORef inventoryRef inv'
                       worldSetBlock world placePos bt
                       putStrLn $ "Placed " ++ show bt ++ " at " ++ show placePos
-                      rebuildMesh world physDevice device cmdPool (vcGraphicsQueue vc) vertBufRef idxBufRef idxCountRef
+                      let V3 px' _ pz' = placePos
+                      rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
               _ -> pure ()
 
     -- Key callback for toggle (F = fly, 1-9 = hotbar, ESC = quit)
@@ -263,8 +261,10 @@ main = do
             when (frameIdx `mod` 60 == 0) $ do
               player <- readIORef playerRef
               newChunks <- updateLoadedChunks world (plPos player)
-              unless (null newChunks) $
-                rebuildMesh world physDevice device cmdPool (vcGraphicsQueue vc) vertBufRef idxBufRef idxCountRef
+              -- Mesh only newly loaded chunks
+              mapM_ (\c -> meshSingleChunk physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef c) newChunks
+              -- Remove meshes for unloaded chunks
+              pruneChunkMeshes world device meshCacheRef
 
             -- Render
             player <- readIORef playerRef
@@ -284,12 +284,11 @@ main = do
                   }
             updateUBO device (uniformBufs V.! currentFrame) ubo
 
-            mVertBuf <- readIORef vertBufRef
-            mIdxBuf  <- readIORef idxBufRef
-            ic       <- readIORef idxCountRef
+            meshCache <- readIORef meshCacheRef
+            let chunkDraws = HM.elems meshCache
 
             fbs <- readIORef fbRef
-            needsRecreate <- drawFrame vc sc' pc fbs cmdBuf sync mVertBuf mIdxBuf ic ds
+            needsRecreate <- drawFrame vc sc' pc fbs cmdBuf sync chunkDraws ds
 
             resized <- readIORef (whResized wh)
             when (needsRecreate || resized) $ do
@@ -320,8 +319,9 @@ main = do
     Vk.deviceWaitIdle device
     destroySyncObjects device syncObjects
     Vk.destroyCommandPool device cmdPool Nothing
-    readIORef vertBufRef >>= mapM_ (destroyBuffer device)
-    readIORef idxBufRef  >>= mapM_ (destroyBuffer device)
+    -- Destroy all chunk meshes
+    meshCache <- readIORef meshCacheRef
+    mapM_ (\(vb, ib, _) -> destroyBuffer device vb >> destroyBuffer device ib) (HM.elems meshCache)
     V.mapM_ (destroyBuffer device) uniformBufs
     destroyTextureImage device texAtlas
     Vk.destroyDescriptorPool device dsPool Nothing
@@ -371,49 +371,71 @@ isKeyDown win key = do
   state <- GLFW.getKey win key
   pure $ state == GLFW.KeyState'Pressed
 
--- | Rebuild the entire world mesh from loaded chunks
-rebuildMesh
+-- | Build GPU meshes for all loaded chunks (initial load)
+rebuildAllChunkMeshes
   :: World -> Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue
-  -> IORef (Maybe BufferAllocation) -> IORef (Maybe BufferAllocation) -> IORef Int
+  -> IORef (HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
   -> IO ()
-rebuildMesh world physDevice device cmdPool queue vertBufRef idxBufRef idxCountRef = do
-  -- Free old
-  readIORef vertBufRef >>= mapM_ (destroyBuffer device)
-  readIORef idxBufRef  >>= mapM_ (destroyBuffer device)
-
+rebuildAllChunkMeshes world physDevice device cmdPool queue cacheRef = do
   chunks <- HM.elems <$> readTVarIO (worldChunks world)
-  meshes <- mapM meshChunk chunks
-  let combined = combineMeshes (zip chunks meshes)
-      ic = VS.length (mdIndices combined)
+  mapM_ (meshSingleChunk physDevice device cmdPool queue cacheRef) chunks
 
-  if VS.null (mdVertices combined)
-    then do
-      writeIORef vertBufRef Nothing
-      writeIORef idxBufRef Nothing
-      writeIORef idxCountRef 0
+-- | Build GPU mesh for a single chunk and insert into cache
+meshSingleChunk
+  :: Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue
+  -> IORef (HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
+  -> Chunk -> IO ()
+meshSingleChunk physDevice device cmdPool queue cacheRef chunk = do
+  mesh <- meshChunk chunk
+  let ic = VS.length (mdIndices mesh)
+      pos = chunkPos chunk
+      V2 cx cz = pos
+      offsetX = fromIntegral cx * fromIntegral chunkWidth
+      offsetZ = fromIntegral cz * fromIntegral chunkDepth
+      -- Offset vertices to world space
+      worldVerts = VS.map (\v ->
+        v { bvPosition = bvPosition v + V3 offsetX 0 offsetZ }
+        ) (mdVertices mesh)
+
+  -- Destroy old mesh for this chunk if it exists
+  cache <- readIORef cacheRef
+  case HM.lookup pos cache of
+    Just (oldVb, oldIb, _) -> do
+      destroyBuffer device oldVb
+      destroyBuffer device oldIb
+    Nothing -> pure ()
+
+  if VS.null worldVerts
+    then modifyIORef' cacheRef (HM.delete pos)
     else do
-      vb <- createVertexBuffer physDevice device cmdPool queue (mdVertices combined)
-      ib <- createIndexBuffer physDevice device cmdPool queue (mdIndices combined)
-      writeIORef vertBufRef (Just vb)
-      writeIORef idxBufRef (Just ib)
-      writeIORef idxCountRef ic
+      vb <- createVertexBuffer physDevice device cmdPool queue worldVerts
+      ib <- createIndexBuffer physDevice device cmdPool queue (mdIndices mesh)
+      modifyIORef' cacheRef (HM.insert pos (vb, ib, ic))
 
--- | Combine meshes from multiple chunks with world-space offsets
-combineMeshes :: [(Chunk, MeshData)] -> MeshData
-combineMeshes chunkMeshes =
-  let (allVerts, allIdxs, _) = foldl addChunkMesh ([], [], 0) chunkMeshes
-  in MeshData (VS.concat $ reverse allVerts) (VS.concat $ reverse allIdxs)
-  where
-    addChunkMesh (vs, is, baseVertex) (chunk, mesh) =
-      let V2 cx cz = chunkPos chunk
-          offsetX = fromIntegral cx * fromIntegral chunkWidth
-          offsetZ = fromIntegral cz * fromIntegral chunkDepth
-          offsetVerts = VS.map (\v ->
-            v { bvPosition = bvPosition v + V3 offsetX 0 offsetZ }
-            ) (mdVertices mesh)
-          numVerts = fromIntegral $ VS.length (mdVertices mesh) :: Word32
-          offsetIdxs = VS.map (+ baseVertex) (mdIndices mesh)
-      in (offsetVerts : vs, offsetIdxs : is, baseVertex + numVerts)
+-- | Rebuild mesh for the chunk containing world coordinates (wx, wz)
+rebuildChunkAt
+  :: World -> Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue
+  -> IORef (HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
+  -> Int -> Int -> IO ()
+rebuildChunkAt world physDevice device cmdPool queue cacheRef wx wz = do
+  let cx = wx `div` chunkWidth
+      cz = wz `div` chunkDepth
+  mChunk <- getChunk world (V2 cx cz)
+  case mChunk of
+    Nothing -> pure ()
+    Just chunk -> meshSingleChunk physDevice device cmdPool queue cacheRef chunk
+
+-- | Remove cached meshes for chunks that are no longer loaded
+pruneChunkMeshes
+  :: World -> Vk.Device
+  -> IORef (HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
+  -> IO ()
+pruneChunkMeshes world device cacheRef = do
+  loadedChunks <- readTVarIO (worldChunks world)
+  cache <- readIORef cacheRef
+  let toRemove = HM.filterWithKey (\k _ -> not (HM.member k loadedChunks)) cache
+  mapM_ (\(vb, ib, _) -> destroyBuffer device vb >> destroyBuffer device ib) (HM.elems toRemove)
+  modifyIORef' cacheRef (\c -> HM.filterWithKey (\k _ -> HM.member k loadedChunks) c)
 
 -- | Write UBO data to mapped uniform buffer
 updateUBO :: Vk.Device -> BufferAllocation -> UniformBufferObject -> IO ()
