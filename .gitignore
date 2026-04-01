@@ -33,3 +33,6 @@ Thumbs.db
 
 # Build artifacts
 result
+
+# Save data
+saves/
