@@ -6,7 +6,7 @@ import qualified Graphics.UI.GLFW as GLFW
 
 import Engine.Window
 import Engine.Camera
-import Engine.Mesh (BlockVertex(..), MeshData(..), meshChunk)
+import Engine.Mesh (BlockVertex(..), MeshData(..), meshChunkWithLight)
 import Engine.Types (defaultEngineConfig, EngineConfig(..), UniformBufferObject(..))
 import Engine.Vulkan.Init
 import Engine.Vulkan.Swapchain
@@ -23,6 +23,8 @@ import Game.Player
 import Game.Physics (BlockQuery)
 import Game.Inventory
 import Game.DayNight
+import World.Fluid
+import World.Light
 
 import Control.Monad (unless, when)
 import Control.Concurrent.STM (readTVarIO)
@@ -108,6 +110,7 @@ main = do
     playerRef <- newIORef (defaultPlayer spawnPos)
     inventoryRef <- newIORef emptyInventory
     dayNightRef <- newIORef newDayNightCycle
+    fluidState <- newFluidState
 
     -- Give player some starting blocks
     let startInv = fst $ addItem (fst $ addItem (fst $ addItem emptyInventory Stone 64) Dirt 64) OakPlanks 64
@@ -157,8 +160,11 @@ main = do
               GLFW.MouseButton'1 -> do  -- Left click: break
                 brokenType <- worldGetBlock world (V3 bx by bz)
                 worldSetBlock world (V3 bx by bz) Air
+                -- Remove fluid if breaking water/lava
+                when (brokenType == Water || brokenType == Lava) $
+                  removeFluid fluidState world (V3 bx by bz)
                 -- Add broken block to inventory
-                when (brokenType /= Air) $ do
+                when (brokenType /= Air && brokenType /= Water && brokenType /= Lava) $ do
                   inv <- readIORef inventoryRef
                   let (inv', _) = addItem inv brokenType 1
                   writeIORef inventoryRef inv'
@@ -255,6 +261,9 @@ main = do
 
             -- Update day/night cycle
             modifyIORef' dayNightRef (updateDayNight dt)
+
+            -- Tick fluid simulation every physics update
+            tickFluids fluidState world
 
             -- Update chunks periodically
             frameIdx <- readIORef frameRef
@@ -386,7 +395,12 @@ meshSingleChunk
   -> IORef (HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
   -> Chunk -> IO ()
 meshSingleChunk physDevice device cmdPool queue cacheRef chunk = do
-  mesh <- meshChunk chunk
+  -- Propagate light for this chunk
+  lm <- newLightMap
+  propagateBlockLight chunk lm
+  propagateSkyLight chunk lm
+  -- Mesh with light data
+  mesh <- meshChunkWithLight chunk lm
   let ic = VS.length (mdIndices mesh)
       pos = chunkPos chunk
       V2 cx cz = pos

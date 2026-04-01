@@ -2,15 +2,18 @@ module Engine.Mesh
   ( MeshData(..)
   , emptyMesh
   , meshChunk
+  , meshChunkWithLight
   , BlockVertex(..)
   ) where
 
 import World.Block
 import World.Chunk
+import World.Light
 
 import Linear (V2(..), V3(..))
 import Data.Word (Word8, Word32)
 import Data.IORef
+import Control.Monad (when)
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Unboxed as UV
 import Foreign.Storable (Storable(..))
@@ -114,7 +117,60 @@ meshChunk chunk = do
   indices <- VS.fromList . concat . reverse <$> readIORef indicesRef
   pure $ MeshData verts indices
 
--- | Check if neighbor is transparent using cached block vector (no IORef re-read)
+-- | Generate mesh for a chunk with light map data.
+--   Light levels are passed through the AO vertex attribute (0.0 = dark, 1.0 = full light).
+meshChunkWithLight :: Chunk -> LightMap -> IO MeshData
+meshChunkWithLight chunk lm = do
+  vertsRef   <- newIORef ([] :: [[BlockVertex]])
+  indicesRef <- newIORef ([] :: [[Word32]])
+  vertCount  <- newIORef (0 :: Word32)
+
+  let addFace :: V3 Float -> BlockFace -> BlockType -> Float -> IO ()
+      addFace (V3 bx by bz) face bt lightVal = do
+        let (uv0, uv1) = tileUV (blockFaceTexCoords bt face)
+            V2 u0 v0 = uv0
+            V2 u1 v1 = uv1
+            (verts, _normal) = faceVertices bx by bz face u0 v0 u1 v1 lightVal
+        vc <- readIORef vertCount
+        let newIndices = [ vc, vc+1, vc+2, vc+2, vc+3, vc ]
+        modifyIORef' vertsRef (verts :)
+        modifyIORef' indicesRef (newIndices :)
+        writeIORef vertCount (vc + 4)
+
+  blocksVec <- readIORef (chunkBlocks chunk)
+  let go !x !y !z
+        | y >= chunkHeight = pure ()
+        | z >= chunkDepth  = go 0 (y + 1) 0
+        | x >= chunkWidth  = go 0 y (z + 1)
+        | otherwise = do
+            let bt = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex x y z
+            if bt == Air
+              then go (x + 1) y z
+              else do
+                let bx = fromIntegral x
+                    by = fromIntegral y
+                    bz = fromIntegral z
+                    pos = V3 bx by bz
+                    checkFaceLight nx ny nz face = do
+                      let neighbor
+                            | not (isInBounds nx ny nz) = Air
+                            | otherwise = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex nx ny nz
+                      when (isTransparent neighbor) $ do
+                        lightLevel <- getTotalLight lm nx ny nz
+                        let lightVal = max 0.1 (fromIntegral lightLevel / 15.0)
+                        addFace pos face bt lightVal
+                checkFaceLight x (y+1) z FaceTop
+                checkFaceLight x (y-1) z FaceBottom
+                checkFaceLight x y (z+1) FaceNorth
+                checkFaceLight x y (z-1) FaceSouth
+                checkFaceLight (x+1) y z FaceEast
+                checkFaceLight (x-1) y z FaceWest
+                go (x + 1) y z
+  go 0 0 0
+
+  verts   <- VS.fromList . concat . reverse <$> readIORef vertsRef
+  indices <- VS.fromList . concat . reverse <$> readIORef indicesRef
+  pure $ MeshData verts indices
 checkFaceVec :: UV.Vector Word8 -> V3 Float -> BlockFace -> BlockType
              -> (Int, Int, Int) -> (V3 Float -> BlockFace -> BlockType -> IO ()) -> IO ()
 checkFaceVec blocksVec pos face bt (nx, ny, nz) addFace = do
