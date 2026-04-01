@@ -123,12 +123,11 @@ createShaderModule device code = do
 createGraphicsPipeline
   :: Vk.Device
   -> Vk.RenderPass
-  -> Vk.Extent2D
   -> Vk.DescriptorSetLayout
   -> FilePath    -- ^ Vertex shader SPIR-V path
   -> FilePath    -- ^ Fragment shader SPIR-V path
   -> IO PipelineContext
-createGraphicsPipeline device renderPass extent dsLayout vertPath fragPath = do
+createGraphicsPipeline device renderPass dsLayout vertPath fragPath = do
   vertCode <- BS.readFile vertPath
   fragCode <- BS.readFile fragPath
 
@@ -200,29 +199,14 @@ createGraphicsPipeline device renderPass extent dsLayout vertPath fragPath = do
         , Vk.primitiveRestartEnable = False
         }
 
-  let Vk.Extent2D{width = extW, height = extH} = extent
-
-  let viewport = Vk.Viewport
-        { Vk.x        = 0
-        , Vk.y        = 0
-        , Vk.width    = fromIntegral extW
-        , Vk.height   = fromIntegral extH
-        , Vk.minDepth = 0
-        , Vk.maxDepth = 1
-        }
-
-  let scissor = Vk.Rect2D
-        { Vk.offset = Vk.Offset2D 0 0
-        , Vk.extent = extent
-        }
-
+  -- Dynamic viewport and scissor (set per-frame via cmdSetViewport/cmdSetScissor)
   let viewportState = Vk.PipelineViewportStateCreateInfo
         { Vk.next      = ()
         , Vk.flags     = Vk.zero
         , Vk.viewportCount = 1
-        , Vk.viewports = V.singleton viewport
+        , Vk.viewports = V.empty  -- dynamic
         , Vk.scissorCount  = 1
-        , Vk.scissors  = V.singleton scissor
+        , Vk.scissors  = V.empty  -- dynamic
         }
 
   let rasterizer = Vk.PipelineRasterizationStateCreateInfo
@@ -298,6 +282,11 @@ createGraphicsPipeline device renderPass extent dsLayout vertPath fragPath = do
 
   pipelineLayout <- Vk.createPipelineLayout device layoutInfo Nothing
 
+  let dynamicState = Vk.PipelineDynamicStateCreateInfo
+        { Vk.flags       = Vk.zero
+        , Vk.dynamicStates = V.fromList [Vk.DYNAMIC_STATE_VIEWPORT, Vk.DYNAMIC_STATE_SCISSOR]
+        }
+
   let pipelineInfo = Vk.GraphicsPipelineCreateInfo
         { Vk.next               = ()
         , Vk.flags              = Vk.zero
@@ -311,7 +300,7 @@ createGraphicsPipeline device renderPass extent dsLayout vertPath fragPath = do
         , Vk.multisampleState   = Just (Vk.SomeStruct multisampling)
         , Vk.depthStencilState  = Just depthStencil
         , Vk.colorBlendState    = Just (Vk.SomeStruct colorBlending)
-        , Vk.dynamicState       = Nothing
+        , Vk.dynamicState       = Just dynamicState
         , Vk.layout             = pipelineLayout
         , Vk.renderPass         = renderPass
         , Vk.subpass            = 0

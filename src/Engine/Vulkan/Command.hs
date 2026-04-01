@@ -108,6 +108,13 @@ recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent
   Vk.cmdBeginRenderPass cmdBuf renderPassBegin Vk.SUBPASS_CONTENTS_INLINE
   Vk.cmdBindPipeline cmdBuf Vk.PIPELINE_BIND_POINT_GRAPHICS pipeline
 
+  -- Set dynamic viewport and scissor
+  let Vk.Extent2D{width = extW, height = extH} = extent
+      viewport = Vk.Viewport 0 0 (fromIntegral extW) (fromIntegral extH) 0 1
+      scissor  = Vk.Rect2D (Vk.Offset2D 0 0) extent
+  Vk.cmdSetViewport cmdBuf 0 (V.singleton viewport)
+  Vk.cmdSetScissor cmdBuf 0 (V.singleton scissor)
+
   -- Bind descriptor set (UBO + texture) once
   Vk.cmdBindDescriptorSets cmdBuf Vk.PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 (V.singleton descriptorSet) V.empty
 

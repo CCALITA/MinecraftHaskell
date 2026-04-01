@@ -100,7 +100,7 @@ main = do
     renderPass <- createRenderPass device (scFormat sc) depthFormat
     depthRef <- newIORef =<< createDepthResources physDevice device (scExtent sc)
     let shaderDir = "shaders"
-    pc <- createGraphicsPipeline device renderPass (scExtent sc) dsLayout
+    pc <- createGraphicsPipeline device renderPass dsLayout
       (shaderDir </> "block_vert.spv")
       (shaderDir </> "block_frag.spv")
     depth <- readIORef depthRef
