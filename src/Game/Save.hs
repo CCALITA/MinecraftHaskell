@@ -9,7 +9,7 @@ module Game.Save
   ) where
 
 import World.Block (BlockType(..))
-import World.Chunk (Chunk(..), ChunkPos, chunkWidth, chunkDepth, chunkHeight, newChunk, blockIndex)
+import World.Chunk (Chunk(..), ChunkPos, chunkWidth, chunkDepth, chunkHeight, newChunk, blockIndex, freezeBlocks)
 import World.World (World(..))
 import Game.Player (Player(..))
 
@@ -64,7 +64,7 @@ saveWorld saveDir world = do
 -- | Save a single chunk
 saveChunk :: FilePath -> ChunkPos -> Chunk -> IO ()
 saveChunk chunkDir (V2 cx cz) chunk = do
-  blocks <- readIORef (chunkBlocks chunk)
+  blocks <- freezeBlocks chunk
   let cs = ChunkSave
         { csPos    = (cx, cz)
         , csBlocks = UV.toList blocks

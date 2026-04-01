@@ -88,8 +88,8 @@ meshChunk chunk = do
         modifyIORef' indicesRef (newIndices :)
         writeIORef vertCount (vc + 4)
 
-  -- Read blocks once, pass to all lookups
-  blocksVec <- readIORef (chunkBlocks chunk)
+  -- Read blocks once (freeze for consistent snapshot during meshing)
+  blocksVec <- freezeBlocks chunk
   let go !x !y !z
         | y >= chunkHeight = pure ()
         | z >= chunkDepth  = go 0 (y + 1) 0
@@ -137,7 +137,7 @@ meshChunkWithLight chunk lm = do
         modifyIORef' indicesRef (newIndices :)
         writeIORef vertCount (vc + 4)
 
-  blocksVec <- readIORef (chunkBlocks chunk)
+  blocksVec <- freezeBlocks chunk
   let go !x !y !z
         | y >= chunkHeight = pure ()
         | z >= chunkDepth  = go 0 (y + 1) 0

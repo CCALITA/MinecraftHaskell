@@ -11,9 +11,8 @@ import World.Noise
 
 import Control.Monad (when, forM_)
 import Data.Bits (xor, shiftR)
-import Data.IORef (readIORef, writeIORef)
+import Data.IORef (writeIORef)
 import Data.Word (Word8)
-import qualified Data.Vector.Unboxed as UV
 import qualified Data.Vector.Unboxed.Mutable as MUV
 import Linear (V2(..))
 
@@ -40,8 +39,7 @@ generateChunk cfg chunkCoord = do
   let V2 cx cz = chunkCoord
       seed = gcSeed cfg
 
-  blocksVec <- readIORef (chunkBlocks chunk)
-  mvec <- UV.thaw blocksVec
+  let mvec = chunkBlocks chunk
 
   -- Pass 1: Terrain heightmap + biome fill
   forM_ [0..chunkWidth-1] $ \lx ->
@@ -126,8 +124,6 @@ generateChunk cfg chunkCoord = do
                 canopyR = 1 + hTree `mod` 2  -- radius 1-2
             placeTree mvec lx surfY lz trunkH canopyR
 
-  frozen <- UV.freeze mvec
-  writeIORef (chunkBlocks chunk) frozen
   writeIORef (chunkDirty chunk) True
   pure chunk
 

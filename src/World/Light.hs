@@ -11,7 +11,7 @@ module World.Light
   ) where
 
 import World.Block (BlockType(..), BlockProperties(..), blockProperties)
-import World.Chunk (Chunk(..), chunkWidth, chunkDepth, chunkHeight, getBlock, blockIndex)
+import World.Chunk (Chunk(..), chunkWidth, chunkDepth, chunkHeight, getBlock, blockIndex, freezeBlocks)
 
 import Data.Word (Word8)
 import Data.IORef
@@ -85,7 +85,7 @@ propagateBlockLight :: Chunk -> LightMap -> IO ()
 propagateBlockLight chunk lm = do
   -- Reset block light
   mv <- MV.replicate chunkSize (0 :: Word8)
-  blocks <- readIORef (chunkBlocks chunk)
+  blocks <- freezeBlocks chunk
 
   -- Find all light-emitting blocks and seed the queue
   let findEmitters !i !queue
@@ -116,7 +116,7 @@ propagateBlockLight chunk lm = do
 propagateSkyLight :: Chunk -> LightMap -> IO ()
 propagateSkyLight chunk lm = do
   mv <- MV.replicate chunkSize (0 :: Word8)
-  blocks <- readIORef (chunkBlocks chunk)
+  blocks <- freezeBlocks chunk
 
   -- Pass 1: vertical sky light. For each (x, z) column, trace downward from y=255
   -- Sky light is 15 until hitting an opaque block
