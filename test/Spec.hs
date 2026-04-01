@@ -6,6 +6,7 @@ import Test.QuickCheck
 import World.Block
 import World.Chunk
 import World.Noise
+import World.World (worldToChunkLocal)
 import Game.Inventory
 import Game.Crafting
 
@@ -19,6 +20,7 @@ main = hspec $ do
   noiseSpec
   inventorySpec
   craftingSpec
+  worldCoordSpec
 
 -- =========================================================================
 -- Block
@@ -230,3 +232,24 @@ craftingSpec = describe "Game.Crafting" $ do
   it "sand produces glass" $ do
     let grid = setCraftingSlot (emptyCraftingGrid 3) 0 0 (Just Sand)
     tryCraft grid `shouldBe` CraftSuccess Glass 1
+
+-- =========================================================================
+-- World coordinate mapping
+-- =========================================================================
+worldCoordSpec :: Spec
+worldCoordSpec = describe "World.World.worldToChunkLocal" $ do
+  it "positive coordinates map correctly" $ do
+    worldToChunkLocal 0 16 `shouldBe` (0, 0)
+    worldToChunkLocal 15 16 `shouldBe` (0, 15)
+    worldToChunkLocal 16 16 `shouldBe` (1, 0)
+    worldToChunkLocal 31 16 `shouldBe` (1, 15)
+
+  it "negative coordinates map correctly" $ do
+    worldToChunkLocal (-1) 16 `shouldBe` (-1, 15)
+    worldToChunkLocal (-16) 16 `shouldBe` (-1, 0)
+    worldToChunkLocal (-17) 16 `shouldBe` (-2, 15)
+
+  it "local offset is always in [0, size)" $
+    property $ \w -> let size = 16
+                         (_, l) = worldToChunkLocal w size
+                     in l >= 0 && l < size

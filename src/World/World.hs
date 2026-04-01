@@ -5,6 +5,7 @@ module World.World
   , updateLoadedChunks
   , worldGetBlock
   , worldSetBlock
+  , worldToChunkLocal
   , loadedChunkCount
   ) where
 
@@ -46,10 +47,8 @@ getChunk world pos = do
 -- | Get block at world coordinates
 worldGetBlock :: World -> V3 Int -> IO BlockType
 worldGetBlock world (V3 wx wy wz) = do
-  let cx = wx `div` chunkWidth
-      cz = wz `div` chunkDepth
-      lx = wx `mod` chunkWidth
-      lz = wz `mod` chunkDepth
+  let (cx, lx) = worldToChunkLocal wx chunkWidth
+      (cz, lz) = worldToChunkLocal wz chunkDepth
   mChunk <- getChunk world (V2 cx cz)
   case mChunk of
     Nothing    -> pure Air
@@ -58,14 +57,19 @@ worldGetBlock world (V3 wx wy wz) = do
 -- | Set block at world coordinates
 worldSetBlock :: World -> V3 Int -> BlockType -> IO ()
 worldSetBlock world (V3 wx wy wz) bt = do
-  let cx = wx `div` chunkWidth
-      cz = wz `div` chunkDepth
-      lx = wx `mod` chunkWidth
-      lz = wz `mod` chunkDepth
+  let (cx, lx) = worldToChunkLocal wx chunkWidth
+      (cz, lz) = worldToChunkLocal wz chunkDepth
   mChunk <- getChunk world (V2 cx cz)
   case mChunk of
     Nothing    -> pure ()
     Just chunk -> setBlock chunk lx wy lz bt
+
+-- | Convert world coordinate to (chunk index, local offset).
+--   Haskell's div/mod already use floor-division for positive divisors,
+--   giving correct results for negative coordinates.
+worldToChunkLocal :: Int -> Int -> (Int, Int)
+worldToChunkLocal w size = w `divMod` size
+{-# INLINE worldToChunkLocal #-}
 
 -- | Update loaded chunks based on player position.
 --   Loads chunks within render distance, unloads those outside.
