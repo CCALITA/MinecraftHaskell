@@ -25,8 +25,11 @@ import Game.Inventory
 import Game.DayNight
 import World.Fluid
 import World.Light
+import Entity.ECS
+import Entity.Mob (MobType(..), updateMobAI, AIState(..))
+import Entity.Spawn
 
-import Control.Monad (unless, when)
+import Control.Monad (unless, when, forM_)
 import Control.Concurrent.STM (readTVarIO)
 import System.IO (hSetBuffering, stdout, BufferMode(..))
 import qualified Data.HashMap.Strict as HM
@@ -37,6 +40,7 @@ import Linear
 import Foreign.Ptr (castPtr)
 import Foreign.Storable (sizeOf, poke)
 import System.FilePath ((</>))
+import qualified System.Random
 
 -- | Fixed timestep for physics (20 ticks per second, like Minecraft)
 tickRate :: Float
@@ -111,6 +115,12 @@ main = do
     inventoryRef <- newIORef emptyInventory
     dayNightRef <- newIORef newDayNightCycle
     fluidState <- newFluidState
+
+    -- Entity system
+    entityWorld <- newEntityWorld
+    spawnRngRef <- newIORef =<< System.Random.newStdGen
+    spawnCooldownRef <- newIORef (0.0 :: Float)
+    aiStatesRef <- newIORef (HM.empty :: HM.HashMap Int AIState)
 
     -- Give player some starting blocks
     let startInv = fst $ addItem (fst $ addItem (fst $ addItem emptyInventory Stone 64) Dirt 64) OakPlanks 64
@@ -265,8 +275,27 @@ main = do
             -- Tick fluid simulation every physics update
             tickFluids fluidState world
 
-            -- Update chunks periodically
+            -- Entity spawning (every ~2 seconds)
             frameIdx <- readIORef frameRef
+            when (frameIdx `mod` 120 == 0) $ do
+              player <- readIORef playerRef
+              dayNight <- readIORef dayNightRef
+              _ <- trySpawnMobs defaultSpawnRules entityWorld dayNight blockQuery (plPos player) spawnRngRef
+              pure ()
+
+            -- Update mob AI (every 3 frames)
+            when (frameIdx `mod` 3 == 0) $ do
+              player <- readIORef playerRef
+              ents <- livingEntities entityWorld
+              aiStates <- readIORef aiStatesRef
+              forM_ ents $ \ent -> do
+                let eid = entId ent
+                    currentAI = HM.lookupDefault (AIIdle 2.0) eid aiStates
+                (ent', newAI) <- updateMobAI dt ent (readMobType (entTag ent)) (plPos player) blockQuery currentAI spawnRngRef
+                updateEntity entityWorld eid (const ent')
+                modifyIORef' aiStatesRef (HM.insert eid newAI)
+
+            -- Update chunks periodically
             when (frameIdx `mod` 60 == 0) $ do
               player <- readIORef playerRef
               newChunks <- updateLoadedChunks world (plPos player)
@@ -457,3 +486,15 @@ updateUBO device buf ubo = do
   ptr <- Vk.mapMemory device (baMemory buf) 0 (fromIntegral $ sizeOf ubo) Vk.zero
   poke (castPtr ptr) ubo
   Vk.unmapMemory device (baMemory buf)
+
+-- | Parse mob type from entity tag string
+readMobType :: String -> MobType
+readMobType "Zombie"   = Zombie
+readMobType "Skeleton" = Skeleton
+readMobType "Creeper"  = Creeper
+readMobType "Spider"   = Spider
+readMobType "Pig"      = Pig
+readMobType "Cow"      = Cow
+readMobType "Sheep"    = Sheep
+readMobType "Chicken"  = Chicken
+readMobType _          = Pig

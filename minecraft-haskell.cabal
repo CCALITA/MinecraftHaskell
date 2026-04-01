@@ -117,6 +117,7 @@ executable minecraft
     , filepath
     , stm
     , unordered-containers
+    , random
 
 test-suite minecraft-test
   import:           common-opts
