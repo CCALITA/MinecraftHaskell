@@ -164,10 +164,16 @@ main = do
           ]) 2  -- select first block slot
     writeIORef inventoryRef startInv
 
-    -- Initial chunk loading
-    _ <- updateLoadedChunks world spawnPos
-    chunkCount <- loadedChunkCount world
-    putStrLn $ "Loaded " ++ show chunkCount ++ " initial chunks"
+    -- Try to load saved world, otherwise generate fresh
+    loaded <- loadWorld saveDir world
+    if loaded
+      then do
+        chunkCount <- loadedChunkCount world
+        putStrLn $ "Loaded " ++ show chunkCount ++ " saved chunks"
+      else do
+        _ <- updateLoadedChunks world spawnPos
+        chunkCount <- loadedChunkCount world
+        putStrLn $ "Generated " ++ show chunkCount ++ " initial chunks"
 
     -- HUD: use a host-visible buffer that's updated each frame with inventory contents
     let hudMaxVerts = 2000  -- enough for inventory/crafting screens
