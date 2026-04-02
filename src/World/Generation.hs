@@ -124,6 +124,22 @@ generateChunk cfg chunkCoord = do
                 canopyR = 1 + hTree `mod` 2  -- radius 1-2
             placeTree mvec lx surfY lz trunkH canopyR
 
+  -- Pass 5: Surface decoration (gravel patches, clay near water)
+  forM_ [0..chunkWidth-1] $ \lx ->
+    forM_ [0..chunkDepth-1] $ \lz -> do
+      let wx = cx * chunkWidth + lx
+          wz = cz * chunkDepth + lz
+          h = hashPos (seed + 7000) wx wz
+          roll = h `mod` 1000
+      surfY <- findSurface mvec lx lz (chunkHeight - 1)
+      surfBlock <- MUV.read mvec (blockIndex lx surfY lz)
+      -- Gravel patches on stone/dirt surfaces
+      when (roll < 15 && (surfBlock == blockW8 Dirt || surfBlock == blockW8 Stone)) $
+        MUV.write mvec (blockIndex lx surfY lz) (blockW8 Gravel)
+      -- Clay near water (1 block below sea level)
+      when (surfY == gcSeaLevel cfg - 1 && surfBlock == blockW8 Sand && roll < 80) $
+        MUV.write mvec (blockIndex lx surfY lz) (blockW8 Clay)
+
   writeIORef (chunkDirty chunk) True
   pure chunk
 
