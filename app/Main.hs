@@ -325,7 +325,13 @@ main = do
                           let drops = blockDrops bt
                           inv' <- readIORef inventoryRef
                           let inv'' = foldl (\i (item, cnt) -> fst $ addItem i item cnt) inv' drops
-                          writeIORef inventoryRef inv''
+                          -- Consume tool durability
+                          let inv''' = case getSlot inv'' (invSelected inv'') of
+                                Just (ItemStack (ToolItem tt tm dur) 1)
+                                  | dur <= 1  -> setSlot inv'' (invSelected inv'') Nothing  -- tool broke
+                                  | otherwise -> setSlot inv'' (invSelected inv'') (Just (ItemStack (ToolItem tt tm (dur - 1)) 1))
+                                _ -> inv''  -- not a tool, no durability change
+                          writeIORef inventoryRef inv'''
                           putStrLn $ "Broke " ++ show bt ++ " at " ++ show blockPos
                           rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
                           writeIORef miningRef Nothing
