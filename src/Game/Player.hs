@@ -159,7 +159,20 @@ updatePlayer dt input isSolidBlock player = do
       let desiredVel = V3 hvx vy' hvz
           displacement = desiredVel ^* dt
 
-      (newPos, resolvedVel) <- resolveCollision isSolidBlock (plPos player) displacement
+      (newPos0, resolvedVel) <- resolveCollision isSolidBlock (plPos player) displacement
+
+      -- Sneak edge-stop: if sneaking and on ground, prevent walking off edges
+      newPos <- if piSneak input && onGround
+        then do
+          hasGround <- isOnGround isSolidBlock newPos0
+          if hasGround
+            then pure newPos0
+            else do
+              -- Keep Y movement but cancel horizontal to stay on edge
+              let V3 _ newY _ = newPos0
+                  V3 oldX _ oldZ = plPos player
+              pure (V3 oldX newY oldZ)
+        else pure newPos0
 
       onGround' <- isOnGround isSolidBlock newPos
       -- Store actual velocity, zeroing axes where collision blocked movement.
