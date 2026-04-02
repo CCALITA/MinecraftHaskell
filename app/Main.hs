@@ -183,10 +183,11 @@ main = do
                 -- Remove fluid if breaking water/lava
                 when (brokenType == Water || brokenType == Lava) $
                   removeFluid fluidState world (V3 bx by bz)
-                -- Add broken block to inventory
+                -- Add dropped items to inventory (using drop table)
                 when (brokenType /= Air && brokenType /= Water && brokenType /= Lava) $ do
                   inv <- readIORef inventoryRef
-                  let (inv', _) = addItem inv (BlockItem brokenType) 1
+                  let drops = blockDrops brokenType
+                      inv' = foldl (\i (item, cnt) -> fst $ addItem i item cnt) inv drops
                   writeIORef inventoryRef inv'
                 putStrLn $ "Broke " ++ show brokenType ++ " at " ++ show (V3 bx by bz)
                 rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
