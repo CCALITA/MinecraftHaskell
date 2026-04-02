@@ -52,7 +52,7 @@ import System.Environment (getArgs)
 import Data.Char (isDigit)
 
 -- | Game UI mode
-data GameMode = Playing | InventoryOpen | CraftingOpen
+data GameMode = MainMenu | Playing | InventoryOpen | CraftingOpen
   deriving stock (Show, Eq)
 
 -- | Fixed timestep for physics (20 ticks per second, like Minecraft)
@@ -85,8 +85,8 @@ main = do
         physDevice = vcPhysicalDevice vc
         qfi = vcQueueFamilies vc
 
-    -- Capture mouse
-    GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
+    -- Start with cursor visible for menu
+    GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
 
     -- Create swapchain
     windowSize <- getWindowSize wh
@@ -140,7 +140,7 @@ main = do
       Just p  -> p
       Nothing -> defaultPlayer spawnPos)
     inventoryRef <- newIORef emptyInventory
-    gameModeRef <- newIORef Playing
+    gameModeRef <- newIORef MainMenu
     cursorItemRef <- newIORef (Nothing :: Maybe ItemStack)  -- item held by mouse cursor
     craftingGridRef <- newIORef (emptyCraftingGrid 3)       -- 3x3 crafting grid state
     dayNightRef <- newIORef newDayNightCycle
@@ -217,6 +217,36 @@ main = do
     GLFW.setMouseButtonCallback (whWindow wh) $ Just $ \_win button action _mods -> do
       mode <- readIORef gameModeRef
       case mode of
+        MainMenu -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
+          (mx, my) <- readIORef mousePosRef
+          sc' <- readIORef scRef
+          let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
+              ndcX = realToFrac mx / fromIntegral extW * 2.0 - 1.0 :: Float
+              ndcY = realToFrac my / fromIntegral extH * 2.0 - 1.0 :: Float
+          -- "New World" button: centered, y = -0.1 to 0.0
+          when (ndcX >= -0.25 && ndcX <= 0.25 && ndcY >= -0.1 && ndcY <= 0.05) $ do
+            writeIORef gameModeRef Playing
+            GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
+            writeIORef lastCursorRef Nothing
+            putStrLn "Starting new world..."
+          -- "Load World" button: centered, y = 0.1 to 0.2
+          when (ndcX >= -0.25 && ndcX <= 0.25 && ndcY >= 0.1 && ndcY <= 0.25) $ do
+            loaded <- loadWorld saveDir world
+            when loaded $ do
+              mPlayer <- loadPlayer saveDir
+              case mPlayer of
+                Just p -> writeIORef playerRef p
+                Nothing -> pure ()
+              -- Rebuild all chunk meshes
+              rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
+              putStrLn "Loaded saved world!"
+            writeIORef gameModeRef Playing
+            GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
+            writeIORef lastCursorRef Nothing
+          -- "Quit" button: centered, y = 0.3 to 0.4
+          when (ndcX >= -0.25 && ndcX <= 0.25 && ndcY >= 0.3 && ndcY <= 0.45) $
+            GLFW.setWindowShouldClose (whWindow wh) True
+
         InventoryOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           -- Click on inventory slot
           (mx, my) <- readIORef mousePosRef
@@ -338,6 +368,9 @@ main = do
       when (action == GLFW.KeyState'Pressed) $ do
         mode <- readIORef gameModeRef
         case mode of
+          MainMenu -> case key of
+            GLFW.Key'Escape -> GLFW.setWindowShouldClose (whWindow wh) True
+            _ -> pure ()
           Playing -> case key of
             GLFW.Key'Escape -> do
               player <- readIORef playerRef
@@ -856,6 +889,7 @@ fth4 (_, _, _, d) = d
 buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> VS.Vector Float
 buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid = VS.fromList $
   case mode of
+    MainMenu -> menuVerts
     Playing -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ handVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts
@@ -1058,6 +1092,22 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid = VS
         in concatMap (\(r, c, clr) ->
              quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                   (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
+    -- Main menu screen
+    menuVerts =
+      -- Dark background
+      quad (-1) (-1) 1 1 (0.1, 0.12, 0.15, 1.0)
+      -- Title area (lighter bar)
+      ++ quad (-0.4) (-0.6) 0.4 (-0.4) (0.2, 0.5, 0.3, 0.9)
+      -- "New World" button (green)
+      ++ quad (-0.25) (-0.1) 0.25 0.05 (0.3, 0.6, 0.35, 0.9)
+      ++ quad (-0.24) (-0.09) 0.24 0.04 (0.25, 0.5, 0.3, 0.9)
+      -- "Load World" button (blue)
+      ++ quad (-0.25) 0.1 0.25 0.25 (0.35, 0.35, 0.6, 0.9)
+      ++ quad (-0.24) 0.11 0.24 0.24 (0.3, 0.3, 0.5, 0.9)
+      -- "Quit" button (red)
+      ++ quad (-0.25) 0.3 0.25 0.45 (0.6, 0.3, 0.3, 0.9)
+      ++ quad (-0.24) 0.31 0.24 0.44 (0.5, 0.25, 0.25, 0.9)
 
 -- | Get a display color for an item (used for hotbar slot rendering)
 itemColor :: Item -> (Float, Float, Float, Float)
