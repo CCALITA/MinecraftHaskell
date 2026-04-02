@@ -43,7 +43,9 @@ applyGravity dt vy = max terminalVelocity (vy - gravity * dt)
 -- | Check if the player is standing on a solid block
 isOnGround :: BlockQuery -> V3 Float -> IO Bool
 isOnGround isSolid (V3 x y z) = do
-  let checkY = floor (y - 0.01) :: Int
+  -- Check with larger epsilon to handle collision resolution gap
+  -- Player can float up to ~0.1 blocks above the surface
+  let checkY = floor (y - 0.15) :: Int
       -- Check blocks under the player's feet (4 corners of AABB base)
       corners =
         [ (floor (x - 0.29) :: Int, checkY, floor (z - 0.29) :: Int)

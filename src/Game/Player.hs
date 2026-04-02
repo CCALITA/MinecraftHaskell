@@ -91,7 +91,7 @@ mouseSensitivity = 0.15
 updatePlayer :: Float -> PlayerInput -> BlockQuery -> Player -> IO Player
 updatePlayer dt input isSolidBlock player = do
   -- 1. Mouse look
-  let yaw'   = plYaw player + piMouseDX input * mouseSensitivity
+  let yaw'   = plYaw player - piMouseDX input * mouseSensitivity
       pitch' = max (-89) . min 89 $ plPitch player + piMouseDY input * mouseSensitivity
       front  = directionFromAngles yaw' pitch'
       right  = normalize $ front `cross` V3 0 1 0

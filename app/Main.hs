@@ -42,6 +42,8 @@ import Data.IORef
 import Linear
 import Foreign.Ptr (castPtr)
 import Foreign.Storable (sizeOf, poke)
+import Foreign.Marshal.Utils (copyBytes)
+import Data.Bits ((.|.))
 import System.FilePath ((</>))
 import qualified System.Random
 
@@ -151,38 +153,13 @@ main = do
     chunkCount <- loadedChunkCount world
     putStrLn $ "Loaded " ++ show chunkCount ++ " initial chunks"
 
-    -- HUD vertex buffer (crosshair + hotbar) — static, created once
-    -- HUD vertex = (vec2 pos, vec4 color) = 24 bytes, stored as 6 Floats
-    let crosshairSize = 0.015 :: Float
-        crosshairThick = 0.003 :: Float
-        white = (1.0, 1.0, 1.0, 0.8) :: (Float, Float, Float, Float)
-        -- Two thin quads forming a + shape (6 vertices each = 12 total)
-        hudVerts = VS.fromList
-          -- Horizontal bar
-          [ -crosshairSize, -crosshairThick, fst4 white, snd4 white, thd4 white, fth4 white
-          ,  crosshairSize, -crosshairThick, fst4 white, snd4 white, thd4 white, fth4 white
-          ,  crosshairSize,  crosshairThick, fst4 white, snd4 white, thd4 white, fth4 white
-          , -crosshairSize, -crosshairThick, fst4 white, snd4 white, thd4 white, fth4 white
-          ,  crosshairSize,  crosshairThick, fst4 white, snd4 white, thd4 white, fth4 white
-          , -crosshairSize,  crosshairThick, fst4 white, snd4 white, thd4 white, fth4 white
-          -- Vertical bar
-          , -crosshairThick, -crosshairSize, fst4 white, snd4 white, thd4 white, fth4 white
-          ,  crosshairThick, -crosshairSize, fst4 white, snd4 white, thd4 white, fth4 white
-          ,  crosshairThick,  crosshairSize, fst4 white, snd4 white, thd4 white, fth4 white
-          , -crosshairThick, -crosshairSize, fst4 white, snd4 white, thd4 white, fth4 white
-          ,  crosshairThick,  crosshairSize, fst4 white, snd4 white, thd4 white, fth4 white
-          , -crosshairThick,  crosshairSize, fst4 white, snd4 white, thd4 white, fth4 white
-          -- Hotbar background (9 slots at bottom of screen)
-          -- Vulkan NDC: Y=-1 is top, Y=+1 is bottom
-          , -0.45,  0.88, 0.2, 0.2, 0.2, 0.6
-          ,  0.45,  0.88, 0.2, 0.2, 0.2, 0.6
-          ,  0.45,  1.0,  0.2, 0.2, 0.2, 0.6
-          , -0.45,  0.88, 0.2, 0.2, 0.2, 0.6
-          ,  0.45,  1.0,  0.2, 0.2, 0.2, 0.6
-          , -0.45,  1.0,  0.2, 0.2, 0.2, 0.6
-          ] :: VS.Vector Float
-        hudVertCount = VS.length hudVerts `div` 6  -- 6 floats per vertex
-    hudVertBuf <- createVertexBuffer physDevice device cmdPool (vcGraphicsQueue vc) hudVerts
+    -- HUD: use a host-visible buffer that's updated each frame with inventory contents
+    let hudMaxVerts = 200  -- enough for crosshair + hotbar + slots
+        hudBufSize = fromIntegral (hudMaxVerts * 24) :: Vk.DeviceSize  -- 24 bytes per vertex (vec2 + vec4)
+    hudBuf <- createBuffer physDevice device hudBufSize
+      Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
+      (Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. Vk.MEMORY_PROPERTY_HOST_COHERENT_BIT)
+    hudVertCountRef <- newIORef (0 :: Int)
 
     -- Per-chunk mesh cache: ChunkPos -> (vertBuf, idxBuf, indexCount)
     meshCacheRef <- newIORef (HM.empty :: HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
@@ -459,8 +436,20 @@ main = do
             -- Compute sky color from day/night cycle
             let V4 skyR skyG skyB skyA = getSkyColor dayNightVal
 
+            -- Update HUD vertices with current inventory
+            inv <- readIORef inventoryRef
+            let hudVerts = buildHudVertices inv
+                hudVC = VS.length hudVerts `div` 6
+            writeIORef hudVertCountRef hudVC
+            when (hudVC > 0) $ do
+              ptr <- Vk.mapMemory device (baMemory hudBuf) 0 (fromIntegral $ VS.length hudVerts * 4) Vk.zero
+              VS.unsafeWith hudVerts $ \srcPtr ->
+                copyBytes (castPtr ptr) srcPtr (VS.length hudVerts * 4)
+              Vk.unmapMemory device (baMemory hudBuf)
+
+            hudVC' <- readIORef hudVertCountRef
             fbs <- readIORef fbRef
-            needsRecreate <- drawFrame vc sc' pc fbs cmdBuf sync chunkDraws ds (skyR, skyG, skyB, skyA) (Just (hudPipeline, hudVertBuf, hudVertCount))
+            needsRecreate <- drawFrame vc sc' pc fbs cmdBuf sync chunkDraws ds (skyR, skyG, skyB, skyA) (Just (hudPipeline, hudBuf, hudVC'))
 
             resized <- readIORef (whResized wh)
             when (needsRecreate || resized) $ do
@@ -502,7 +491,7 @@ main = do
       readIORef depthRef >>= destroyDepthResources device
       destroyPipelineContext device pc
       destroyHudPipeline device hudPipeline
-      destroyBuffer device hudVertBuf
+      destroyBuffer device hudBuf
       scFinal <- readIORef scRef
       destroySwapchain device scFinal
       destroyVulkanContext vc
@@ -640,3 +629,73 @@ fst4 (a, _, _, _) = a
 snd4 (_, b, _, _) = b
 thd4 (_, _, c, _) = c
 fth4 (_, _, _, d) = d
+
+-- | Build HUD vertices from current inventory state
+buildHudVertices :: Inventory -> VS.Vector Float
+buildHudVertices inv = VS.fromList $ crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts
+  where
+    -- Crosshair: white + at center
+    cs = 0.015 :: Float  -- size
+    ct = 0.003 :: Float  -- thickness
+    w = (1.0, 1.0, 1.0, 0.8 :: Float)
+    quad x0 y0 x1 y1 (r, g, b, a) =
+      [x0, y0, r, g, b, a,  x1, y0, r, g, b, a,  x1, y1, r, g, b, a
+      ,x0, y0, r, g, b, a,  x1, y1, r, g, b, a,  x0, y1, r, g, b, a]
+
+    crosshairVerts = quad (-cs) (-ct) cs ct w ++ quad (-ct) (-cs) ct cs w
+
+    -- Hotbar: 9 slots at bottom center (Vulkan Y: -1=top, +1=bottom)
+    slotW = 0.09 :: Float  -- width per slot in NDC
+    slotH = 0.09 :: Float
+    hotbarY = 1.0 - slotH - 0.02  -- just above bottom edge
+    hotbarX0 = -(slotW * 4.5)     -- center 9 slots
+    slotPad = 0.005 :: Float       -- gap between slots
+
+    hotbarBgVerts = quad (hotbarX0 - slotPad) (hotbarY - slotPad)
+                        (hotbarX0 + 9 * slotW + slotPad) (1.0)
+                        (0.15, 0.15, 0.15, 0.7)
+
+    -- Colored squares for each slot's contents
+    slotVerts = concatMap makeSlot [0..8]
+    makeSlot i =
+      let x = hotbarX0 + fromIntegral i * slotW + slotPad
+          y = hotbarY + slotPad
+          sw = slotW - 2 * slotPad
+          sh = slotH - 2 * slotPad
+      in case getSlot inv i of
+        Nothing -> []  -- empty slot
+        Just (ItemStack item _) ->
+          let color = itemColor item
+          in quad x y (x + sw) (y + sh) color
+
+    -- Highlight selected slot
+    sel = invSelected inv
+    selX = hotbarX0 + fromIntegral sel * slotW
+    selectorVerts = quad selX hotbarY (selX + slotW) (hotbarY + slotH) (1.0, 1.0, 1.0, 0.3)
+
+-- | Get a display color for an item (used for hotbar slot rendering)
+itemColor :: Item -> (Float, Float, Float, Float)
+itemColor (BlockItem bt) = case bt of
+  Stone       -> (0.5, 0.5, 0.5, 1.0)
+  Dirt        -> (0.55, 0.35, 0.17, 1.0)
+  Grass       -> (0.2, 0.65, 0.1, 1.0)
+  Sand        -> (0.82, 0.75, 0.5, 1.0)
+  OakLog      -> (0.4, 0.3, 0.15, 1.0)
+  OakPlanks   -> (0.78, 0.65, 0.43, 1.0)
+  OakLeaves   -> (0.15, 0.5, 0.12, 1.0)
+  Cobblestone -> (0.45, 0.45, 0.45, 1.0)
+  Water       -> (0.15, 0.4, 0.8, 0.8)
+  Lava        -> (0.9, 0.35, 0.05, 1.0)
+  Torch       -> (0.95, 0.8, 0.2, 1.0)
+  Glass       -> (0.7, 0.85, 0.95, 0.5)
+  IronOre     -> (0.7, 0.6, 0.5, 1.0)
+  CoalOre     -> (0.25, 0.25, 0.25, 1.0)
+  GoldOre     -> (1.0, 0.85, 0.0, 1.0)
+  DiamondOre  -> (0.3, 0.8, 0.95, 1.0)
+  Snow        -> (0.95, 0.95, 0.95, 1.0)
+  _           -> (0.6, 0.6, 0.6, 1.0)
+itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
+itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)
+itemColor (ToolItem Axe _ _)     = (0.6, 0.5, 0.3, 1.0)
+itemColor (ToolItem Shovel _ _)  = (0.5, 0.4, 0.25, 1.0)
+itemColor (ToolItem Hoe _ _)     = (0.5, 0.5, 0.3, 1.0)
