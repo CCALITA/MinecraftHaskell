@@ -11,9 +11,9 @@ module Engine.BitmapFont
 
 -- | Character pixel size in NDC
 charWidth, charHeight, charSpacing :: Float
-charWidth   = 0.012
-charHeight  = 0.02
-charSpacing = 0.015  -- total width per character including gap
+charWidth   = 0.008   -- width of one pixel
+charHeight  = 0.012   -- height of one pixel
+charSpacing = 0.032   -- total width per character (3 pixels + gap)
 
 -- | Render a string at position (x, y) in NDC with given color.
 --   Returns vertex data as [Float] for the HUD pipeline.
