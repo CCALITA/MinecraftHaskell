@@ -3,6 +3,7 @@ module Game.Player
   , PlayerInput(..)
   , defaultPlayer
   , noInput
+  , endFrameInput
   , updatePlayer
   , raycastBlock
   , RayHit(..)
@@ -53,6 +54,11 @@ defaultPlayer spawnPos = Player
 
 noInput :: PlayerInput
 noInput = PlayerInput False False False False False False False 0 0 False
+
+-- | Clear frame-local input, preserving queued one-shot actions until physics consumes them.
+endFrameInput :: Bool -> PlayerInput -> PlayerInput
+endFrameInput physicsTickRan input =
+  noInput { piToggleFly = not physicsTickRan && piToggleFly input }
 
 -- | Movement speeds
 walkSpeed, sprintSpeed, flySpeed :: Float

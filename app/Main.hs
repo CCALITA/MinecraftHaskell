@@ -278,8 +278,11 @@ main = do
             let accum' = accum + dt
             playerLoop input blockQuery accumRef accum' playerRef
 
-            -- Reset mouse deltas and toggle flags
-            writeIORef inputRef noInput
+            let physicsTickRan = accum' >= tickRate
+
+            -- Clear per-frame mouse movement, but keep one-shot toggles queued
+            -- until a physics tick has consumed them.
+            writeIORef inputRef (endFrameInput physicsTickRan baseInput)
 
             -- Update day/night cycle
             modifyIORef' dayNightRef (updateDayNight dt)

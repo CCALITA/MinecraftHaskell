@@ -9,8 +9,9 @@ import World.Noise
 import World.World (worldToChunkLocal)
 import Game.Inventory
 import Game.Crafting
+import Game.Player
 
-import Linear (V2(..))
+import Linear (V2(..), V3(..))
 import qualified Data.Vector as V
 
 main :: IO ()
@@ -21,6 +22,7 @@ main = hspec $ do
   inventorySpec
   craftingSpec
   worldCoordSpec
+  playerInputSpec
 
 -- =========================================================================
 -- Block
@@ -253,3 +255,26 @@ worldCoordSpec = describe "World.World.worldToChunkLocal" $ do
     property $ \w -> let size = 16
                          (_, l) = worldToChunkLocal w size
                      in l >= 0 && l < size
+
+-- =========================================================================
+-- Player input queue
+-- =========================================================================
+playerInputSpec :: Spec
+playerInputSpec = describe "Game.Player input queue" $ do
+  let airQuery _ _ _ = pure False
+      queuedToggle = noInput { piToggleFly = True, piMouseDX = 4, piMouseDY = -2 }
+
+  it "preserves fly toggle when no physics tick ran" $ do
+    endFrameInput False queuedToggle `shouldBe` noInput { piToggleFly = True }
+
+  it "clears fly toggle after a physics tick runs" $ do
+    endFrameInput True queuedToggle `shouldBe` noInput
+
+  it "applies a queued fly toggle exactly once" $ do
+    let player0 = (defaultPlayer (V3 0 80 0)) { plFlying = True }
+
+    player1 <- updatePlayer 0 queuedToggle airQuery player0
+    player2 <- updatePlayer 0 (endFrameInput True queuedToggle) airQuery player1
+
+    plFlying player1 `shouldBe` False
+    plFlying player2 `shouldBe` False
