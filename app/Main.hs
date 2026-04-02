@@ -538,11 +538,13 @@ cameraFromPlayer player =
   let yawR   = plYaw player * pi / 180
       pitchR = plPitch player * pi / 180
       front  = V3 (sin yawR * cos pitchR) (sin pitchR) (cos yawR * cos pitchR)
+      fov    = if plSprinting player then 55 else 45
   in defaultCamera
     { camPosition = plPos player + V3 0 1.62 0  -- eye height
     , camFront    = front
     , camYaw      = plYaw player
     , camPitch    = plPitch player
+    , camFov      = fov
     }
 
 -- | Get look direction from player
