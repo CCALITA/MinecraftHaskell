@@ -28,7 +28,7 @@ import Game.DayNight
 import World.Fluid
 import World.Light
 import Entity.ECS
-import Entity.Mob (MobType(..), MobInfo(..), updateMobAI, AIState(..), mobInfo)
+import Entity.Mob (MobType(..), MobInfo(..), updateMobAI, AIState(..), mobInfo, damageEntity)
 import Entity.Spawn
 import Game.Save
 import Game.DroppedItem
@@ -209,6 +209,18 @@ main = do
                                                 , piMouseDY = piMouseDY inp + dy }
             writeIORef lastCursorRef (Just (xpos, ypos))
 
+    -- Scroll wheel callback (cycle hotbar slots)
+    GLFW.setScrollCallback (whWindow wh) $ Just $ \_win _dx dy -> do
+      mode <- readIORef gameModeRef
+      when (mode == Playing) $ do
+        inv <- readIORef inventoryRef
+        let cur = invSelected inv
+            newSlot
+              | dy > 0    = (cur - 1) `mod` hotbarSlots
+              | dy < 0    = (cur + 1) `mod` hotbarSlots
+              | otherwise = cur
+        modifyIORef' inventoryRef (`selectHotbar` newSlot)
+
     -- Mining state
     miningRef <- newIORef (Nothing :: Maybe (V3 Int, Float))
     lmbHeldRef <- newIORef False
@@ -253,20 +265,20 @@ main = do
           let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
               ndcX = realToFrac mx / fromIntegral extW * 2.0 - 1.0 :: Float
               ndcY = realToFrac my / fromIntegral extH * 2.0 - 1.0 :: Float
-          -- Resume button
-          when (ndcX >= -0.25 && ndcX <= 0.25 && ndcY >= -0.15 && ndcY <= 0.0) $ do
+          -- Resume button (larger hit area)
+          when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= -0.2 && ndcY <= 0.0) $ do
             writeIORef gameModeRef Playing
             GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
             writeIORef lastCursorRef Nothing
           -- Save & Quit to Menu button
-          when (ndcX >= -0.25 && ndcX <= 0.25 && ndcY >= 0.05 && ndcY <= 0.2) $ do
+          when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= 0.05 && ndcY <= 0.25) $ do
             player <- readIORef playerRef
             savePlayer saveDir player
             saveWorld saveDir world
             putStrLn "World saved."
             writeIORef gameModeRef MainMenu
           -- Quit Game button
-          when (ndcX >= -0.25 && ndcX <= 0.25 && ndcY >= 0.25 && ndcY <= 0.4) $
+          when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= 0.3 && ndcY <= 0.5) $
             GLFW.setWindowShouldClose (whWindow wh) True
 
         InventoryOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
@@ -337,6 +349,23 @@ main = do
         Playing -> do
           when (button == GLFW.MouseButton'1) $
             writeIORef lmbHeldRef (action == GLFW.MouseButtonState'Pressed)
+          -- Melee attack: when LMB pressed and holding a sword, damage nearest entity
+          when (button == GLFW.MouseButton'1 && action == GLFW.MouseButtonState'Pressed) $ do
+            inv <- readIORef inventoryRef
+            case selectedItem inv of
+              Just (ItemStack (ToolItem Sword material _) _) -> do
+                player <- readIORef playerRef
+                let attackDmg = tiAttackDamage (toolInfo material)
+                nearby <- entitiesInRange entityWorld (plPos player) 3.0
+                case nearby of
+                  [] -> pure ()
+                  _  -> do
+                    let closest = foldr1 (\a b -> if distance (entPosition a) (plPos player)
+                                                    < distance (entPosition b) (plPos player)
+                                                  then a else b) nearby
+                    updateEntity entityWorld (entId closest) (\e -> damageEntity e attackDmg)
+                    putStrLn $ "Attacked " ++ entTag closest ++ " for " ++ show attackDmg ++ " damage!"
+              _ -> pure ()
 
       when (button == GLFW.MouseButton'1 && action == GLFW.MouseButtonState'Released) $
         writeIORef miningRef Nothing  -- stop mining on release
@@ -616,6 +645,25 @@ main = do
                       modifyIORef' playerRef (damagePlayer dmg)
                       putStrLn $ entTag ent ++ " attacked you for " ++ show dmg ++ " damage!"
                   _ -> pure ()
+                -- Check for mob death and spawn item drops
+                when (entHealth ent' <= 0) $ do
+                  destroyEntity entityWorld eid
+                  modifyIORef' aiStatesRef (HM.delete eid)
+                  let dropPos = entPosition ent'
+                      mobDrop = case readMobType (entTag ent) of
+                        Pig      -> Just (BlockItem OakPlanks, 1)
+                        Cow      -> Just (BlockItem OakPlanks, 1)
+                        Sheep    -> Just (BlockItem OakPlanks, 1)
+                        Chicken  -> Just (BlockItem OakPlanks, 1)
+                        Zombie   -> Just (BlockItem IronOre, 1)
+                        Skeleton -> Just (BlockItem CoalOre, 1)
+                        Creeper  -> Just (BlockItem Cobblestone, 1)
+                        Spider   -> Just (BlockItem Cobblestone, 1)
+                  case mobDrop of
+                    Just (item, count) -> do
+                      spawnDrop droppedItems item count dropPos
+                      putStrLn $ entTag ent ++ " died and dropped " ++ show item
+                    Nothing -> pure ()
 
             -- Auto-save every ~5 minutes (18000 frames at 60fps)
             when (frameIdx > 0 && frameIdx `mod` 18000 == 0) $ do
@@ -1139,16 +1187,25 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid = VS
 
     -- Pause screen: semi-transparent overlay with Resume / Save+Quit / Quit
     pauseVerts =
-      quad (-1) (-1) 1 1 (0, 0, 0, 0.6)
-      -- Resume button (green)
-      ++ quad (-0.25) (-0.15) 0.25 0.0 (0.3, 0.6, 0.35, 0.9)
-      ++ quad (-0.24) (-0.14) 0.24 (-0.01) (0.25, 0.5, 0.3, 0.9)
-      -- Save & Quit to Menu (blue)
-      ++ quad (-0.25) 0.05 0.25 0.2 (0.35, 0.35, 0.6, 0.9)
-      ++ quad (-0.24) 0.06 0.24 0.19 (0.3, 0.3, 0.5, 0.9)
-      -- Quit Game (red)
-      ++ quad (-0.25) 0.25 0.25 0.4 (0.6, 0.3, 0.3, 0.9)
-      ++ quad (-0.24) 0.26 0.24 0.39 (0.5, 0.25, 0.25, 0.9)
+      quad (-1) (-1) 1 1 (0, 0, 0, 0.65)
+      -- Resume button (large green)
+      ++ quad (-0.3) (-0.2) 0.3 0.0 (0.2, 0.55, 0.25, 1.0)
+      ++ quad (-0.28) (-0.18) 0.28 (-0.02) (0.15, 0.45, 0.2, 1.0)
+      -- Play triangle icon
+      ++ [ -0.1, -0.15, 0.4, 0.9, 0.4, 1.0
+         ,  0.05, -0.1,  0.4, 0.9, 0.4, 1.0
+         , -0.1, -0.05, 0.4, 0.9, 0.4, 1.0 ]
+      -- Save & Quit to Menu (large blue)
+      ++ quad (-0.3) 0.05 0.3 0.25 (0.25, 0.25, 0.55, 1.0)
+      ++ quad (-0.28) 0.07 0.28 0.23 (0.2, 0.2, 0.45, 1.0)
+      -- Arrow icon
+      ++ quad (-0.06) 0.12 0.06 0.15 (0.5, 0.5, 0.8, 1.0)
+      -- Quit Game (large red)
+      ++ quad (-0.3) 0.3 0.3 0.5 (0.55, 0.2, 0.2, 1.0)
+      ++ quad (-0.28) 0.32 0.28 0.48 (0.45, 0.15, 0.15, 1.0)
+      -- X icon
+      ++ quad (-0.04) 0.37 0.04 0.39 (0.9, 0.4, 0.4, 1.0)
+      ++ quad (-0.04) 0.41 0.04 0.43 (0.9, 0.4, 0.4, 1.0)
 
 -- | Get a display color for an item (used for hotbar slot rendering)
 itemColor :: Item -> (Float, Float, Float, Float)

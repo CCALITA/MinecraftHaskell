@@ -11,6 +11,7 @@ import Game.Inventory
 import Game.Item
 import Game.Crafting
 import Game.Player
+import Game.DroppedItem
 
 import Linear (V2(..), V3(..))
 import qualified Data.Vector as V
@@ -23,6 +24,8 @@ main = hspec $ do
   inventorySpec
   craftingSpec
   worldCoordSpec
+  itemSpec
+  droppedItemSpec
   playerInputSpec
 
 -- =========================================================================
@@ -293,3 +296,60 @@ playerInputSpec = describe "Game.Player input queue" $ do
 
     plFlying player1 `shouldBe` False
     plFlying player2 `shouldBe` False
+
+-- =========================================================================
+-- Item system
+-- =========================================================================
+itemSpec :: Spec
+itemSpec = describe "Game.Item" $ do
+  it "BlockItem converts to block type" $ do
+    itemToBlock (BlockItem Stone) `shouldBe` Just Stone
+    itemToBlock (BlockItem Dirt) `shouldBe` Just Dirt
+
+  it "ToolItem does not convert to block type" $ do
+    itemToBlock (ToolItem Pickaxe Wood 59) `shouldBe` Nothing
+
+  it "block items stack to 64" $ do
+    itemStackLimit (BlockItem Stone) `shouldBe` 64
+
+  it "tool items stack to 1" $ do
+    itemStackLimit (ToolItem Sword Diamond 1561) `shouldBe` 1
+
+  it "tool info has correct durability for diamond" $ do
+    tiMaxDurability (toolInfo Diamond) `shouldBe` 1561
+
+  it "blockDrops returns cobblestone for stone" $ do
+    blockDrops Stone `shouldBe` [(BlockItem Cobblestone, 1)]
+
+  it "blockDrops returns nothing for glass" $ do
+    blockDrops Glass `shouldBe` []
+
+  it "blockDrops returns nothing for air" $ do
+    blockDrops Air `shouldBe` []
+
+-- =========================================================================
+-- Dropped items
+-- =========================================================================
+droppedItemSpec :: Spec
+droppedItemSpec = describe "Game.DroppedItem" $ do
+  it "new dropped items list is empty" $ do
+    di <- newDroppedItems
+    collected <- collectNearby di (V3 0 0 0) 100
+    collected `shouldBe` []
+
+  it "spawned items can be collected nearby" $ do
+    di <- newDroppedItems
+    spawnDrop di (BlockItem Stone) 5 (V3 10 65 10)
+    collected <- collectNearby di (V3 10 65 10) 2.0
+    length collected `shouldBe` 1
+    case collected of
+      [(item, cnt)] -> do
+        item `shouldBe` BlockItem Stone
+        cnt `shouldBe` 5
+      _ -> expectationFailure "Expected exactly one item"
+
+  it "items too far away are not collected" $ do
+    di <- newDroppedItems
+    spawnDrop di (BlockItem Dirt) 1 (V3 100 65 100)
+    collected <- collectNearby di (V3 0 65 0) 5.0
+    collected `shouldBe` []
