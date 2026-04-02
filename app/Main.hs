@@ -23,6 +23,7 @@ import Game.Player
 import Game.Physics (BlockQuery)
 import Game.Inventory
 import Game.Item
+import Game.Crafting
 import Game.DayNight
 import World.Fluid
 import World.Light
@@ -47,6 +48,10 @@ import Foreign.Marshal.Utils (copyBytes)
 import Data.Bits ((.|.))
 import System.FilePath ((</>))
 import qualified System.Random
+
+-- | Game UI mode
+data GameMode = Playing | InventoryOpen | CraftingOpen
+  deriving stock (Show, Eq)
 
 -- | Fixed timestep for physics (20 ticks per second, like Minecraft)
 tickRate :: Float
@@ -129,6 +134,9 @@ main = do
       Just p  -> p
       Nothing -> defaultPlayer spawnPos)
     inventoryRef <- newIORef emptyInventory
+    gameModeRef <- newIORef Playing
+    cursorItemRef <- newIORef (Nothing :: Maybe ItemStack)  -- item held by mouse cursor
+    craftingGridRef <- newIORef (emptyCraftingGrid 3)       -- 3x3 crafting grid state
     dayNightRef <- newIORef newDayNightCycle
     fluidState <- newFluidState
     droppedItems <- newDroppedItems
@@ -156,7 +164,7 @@ main = do
     putStrLn $ "Loaded " ++ show chunkCount ++ " initial chunks"
 
     -- HUD: use a host-visible buffer that's updated each frame with inventory contents
-    let hudMaxVerts = 200  -- enough for crosshair + hotbar + slots
+    let hudMaxVerts = 2000  -- enough for inventory/crafting screens
         hudBufSize = fromIntegral (hudMaxVerts * 24) :: Vk.DeviceSize  -- 24 bytes per vertex (vec2 + vec4)
     hudBuf <- createBuffer physDevice device hudBufSize
       Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
@@ -171,26 +179,100 @@ main = do
     inputRef <- newIORef noInput
     lastCursorRef <- newIORef (Nothing :: Maybe (Double, Double))
 
-    -- Mouse callback
-    GLFW.setCursorPosCallback (whWindow wh) $ Just $ \_win xpos ypos -> do
-      mLast <- readIORef lastCursorRef
-      case mLast of
-        Nothing -> writeIORef lastCursorRef (Just (xpos, ypos))
-        Just (lastX, lastY) -> do
-          let dx = realToFrac (xpos - lastX) :: Float
-              dy = realToFrac (lastY - ypos) :: Float  -- inverted Y
-          modifyIORef' inputRef $ \inp -> inp { piMouseDX = piMouseDX inp + dx
-                                              , piMouseDY = piMouseDY inp + dy }
-          writeIORef lastCursorRef (Just (xpos, ypos))
+    -- Track mouse position for UI clicks
+    mousePosRef <- newIORef (0.0 :: Double, 0.0 :: Double)
 
-    -- Mining state: (target block pos, progress 0.0-1.0)
+    -- Mouse movement callback (FPS look in Playing, position tracking in UI)
+    GLFW.setCursorPosCallback (whWindow wh) $ Just $ \_win xpos ypos -> do
+      writeIORef mousePosRef (xpos, ypos)
+      mode <- readIORef gameModeRef
+      when (mode == Playing) $ do
+        mLast <- readIORef lastCursorRef
+        case mLast of
+          Nothing -> writeIORef lastCursorRef (Just (xpos, ypos))
+          Just (lastX, lastY) -> do
+            let dx = realToFrac (xpos - lastX) :: Float
+                dy = realToFrac (lastY - ypos) :: Float
+            modifyIORef' inputRef $ \inp -> inp { piMouseDX = piMouseDX inp + dx
+                                                , piMouseDY = piMouseDY inp + dy }
+            writeIORef lastCursorRef (Just (xpos, ypos))
+
+    -- Mining state
     miningRef <- newIORef (Nothing :: Maybe (V3 Int, Float))
     lmbHeldRef <- newIORef False
 
-    -- Mouse button callback (place blocks on RMB, track LMB for mining)
+    -- Mouse button callback
     GLFW.setMouseButtonCallback (whWindow wh) $ Just $ \_win button action _mods -> do
-      when (button == GLFW.MouseButton'1) $
-        writeIORef lmbHeldRef (action == GLFW.MouseButtonState'Pressed)
+      mode <- readIORef gameModeRef
+      case mode of
+        InventoryOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
+          -- Click on inventory slot
+          (mx, my) <- readIORef mousePosRef
+          sc' <- readIORef scRef
+          let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
+              -- Convert pixel coords to NDC (-1 to 1, Y flipped for Vulkan)
+              ndcX = realToFrac mx / fromIntegral extW * 2.0 - 1.0 :: Float
+              ndcY = realToFrac my / fromIntegral extH * 2.0 - 1.0 :: Float
+              -- Check which inventory slot was clicked
+              mSlot = hitInventorySlot ndcX ndcY
+          case mSlot of
+            Nothing -> pure ()
+            Just slotIdx -> do
+              inv <- readIORef inventoryRef
+              cursor <- readIORef cursorItemRef
+              let slotContent = getSlot inv slotIdx
+              -- Swap cursor and slot
+              writeIORef inventoryRef (setSlot inv slotIdx cursor)
+              writeIORef cursorItemRef slotContent
+
+        CraftingOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
+          (mx, my) <- readIORef mousePosRef
+          sc' <- readIORef scRef
+          let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
+              ndcX = realToFrac mx / fromIntegral extW * 2.0 - 1.0 :: Float
+              ndcY = realToFrac my / fromIntegral extH * 2.0 - 1.0 :: Float
+              mSlot = hitCraftingSlot ndcX ndcY
+          case mSlot of
+            Just (CraftGrid row col) -> do
+              cursor <- readIORef cursorItemRef
+              grid <- readIORef craftingGridRef
+              let slotContent = getCraftingSlot grid row col
+              -- Place cursor item into grid (only block items)
+              case cursor of
+                Just (ItemStack item 1) -> do
+                  writeIORef craftingGridRef (setCraftingSlot grid row col (Just item))
+                  writeIORef cursorItemRef (fmap (\i -> ItemStack i 1) slotContent)
+                Just (ItemStack item n) | n > 1 -> do
+                  writeIORef craftingGridRef (setCraftingSlot grid row col (Just item))
+                  writeIORef cursorItemRef (Just (ItemStack item (n - 1)))
+                Nothing -> do
+                  writeIORef craftingGridRef (setCraftingSlot grid row col Nothing)
+                  writeIORef cursorItemRef (fmap (\i -> ItemStack i 1) slotContent)
+                _ -> pure ()
+            Just CraftOutput -> do
+              -- Take crafted item
+              grid <- readIORef craftingGridRef
+              case tryCraft grid of
+                CraftSuccess item count -> do
+                  cursor <- readIORef cursorItemRef
+                  case cursor of
+                    Nothing -> do
+                      writeIORef cursorItemRef (Just (ItemStack item count))
+                      -- Clear grid (consume ingredients)
+                      writeIORef craftingGridRef (emptyCraftingGrid 3)
+                    _ -> pure ()  -- cursor occupied
+                CraftFailure -> pure ()
+            Just (CraftInvSlot idx) -> do
+              inv <- readIORef inventoryRef
+              cursor <- readIORef cursorItemRef
+              let slotContent = getSlot inv idx
+              writeIORef inventoryRef (setSlot inv idx cursor)
+              writeIORef cursorItemRef slotContent
+            Nothing -> pure ()
+
+        Playing -> do
+          when (button == GLFW.MouseButton'1) $
+            writeIORef lmbHeldRef (action == GLFW.MouseButtonState'Pressed)
 
       when (button == GLFW.MouseButton'1 && action == GLFW.MouseButtonState'Released) $
         writeIORef miningRef Nothing  -- stop mining on release
@@ -211,45 +293,85 @@ main = do
             case button of
               GLFW.MouseButton'1 -> do  -- Left click: start mining
                 writeIORef miningRef (Just (V3 bx by bz, 0.0))
-              GLFW.MouseButton'2 -> do  -- Right click: place from hotbar
-                inv <- readIORef inventoryRef
-                case selectedItem inv of
-                  Nothing -> pure ()
-                  Just (ItemStack item _) -> case itemToBlock item of
-                    Nothing -> pure ()  -- Can't place non-block items
-                    Just bt -> do
-                      let V3 nx ny nz = rhFaceNormal hit
-                          placePos = V3 (bx + nx) (by + ny) (bz + nz)
-                      let (inv', removed) = removeItem inv item 1
-                      when (removed > 0) $ do
-                        writeIORef inventoryRef inv'
-                        worldSetBlock world placePos bt
-                        putStrLn $ "Placed " ++ show bt ++ " at " ++ show placePos
-                        let V3 px' _ pz' = placePos
-                        rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
+              GLFW.MouseButton'2 -> do  -- Right click: interact or place
+                -- Check if clicking on a crafting table
+                hitBlock <- worldGetBlock world (V3 bx by bz)
+                if hitBlock == CraftingTable
+                  then do
+                    writeIORef gameModeRef CraftingOpen
+                    writeIORef craftingGridRef (emptyCraftingGrid 3)
+                    GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+                    writeIORef lastCursorRef Nothing
+                  else do
+                    -- Place block from hotbar
+                    inv <- readIORef inventoryRef
+                    case selectedItem inv of
+                      Nothing -> pure ()
+                      Just (ItemStack item _) -> case itemToBlock item of
+                        Nothing -> pure ()
+                        Just bt -> do
+                          let V3 nx ny nz = rhFaceNormal hit
+                              placePos = V3 (bx + nx) (by + ny) (bz + nz)
+                          let (inv', removed) = removeItem inv item 1
+                          when (removed > 0) $ do
+                            writeIORef inventoryRef inv'
+                            worldSetBlock world placePos bt
+                            putStrLn $ "Placed " ++ show bt ++ " at " ++ show placePos
+                            let V3 px' _ pz' = placePos
+                            rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
               _ -> pure ()
 
-    -- Key callback for toggle (F = fly, 1-9 = hotbar, ESC = quit)
+    -- Key callback
     GLFW.setKeyCallback (whWindow wh) $ Just $ \_win key _scancode action _mods ->
-      when (action == GLFW.KeyState'Pressed) $ case key of
-        GLFW.Key'Escape -> do
-          player <- readIORef playerRef
-          savePlayer saveDir player
-          saveWorld saveDir world
-          putStrLn "World saved."
-          GLFW.setWindowShouldClose (whWindow wh) True
-        GLFW.Key'F ->
-          modifyIORef' inputRef $ \inp -> inp { piToggleFly = True }
-        GLFW.Key'1 -> modifyIORef' inventoryRef (`selectHotbar` 0)
-        GLFW.Key'2 -> modifyIORef' inventoryRef (`selectHotbar` 1)
-        GLFW.Key'3 -> modifyIORef' inventoryRef (`selectHotbar` 2)
-        GLFW.Key'4 -> modifyIORef' inventoryRef (`selectHotbar` 3)
-        GLFW.Key'5 -> modifyIORef' inventoryRef (`selectHotbar` 4)
-        GLFW.Key'6 -> modifyIORef' inventoryRef (`selectHotbar` 5)
-        GLFW.Key'7 -> modifyIORef' inventoryRef (`selectHotbar` 6)
-        GLFW.Key'8 -> modifyIORef' inventoryRef (`selectHotbar` 7)
-        GLFW.Key'9 -> modifyIORef' inventoryRef (`selectHotbar` 8)
-        _ -> pure ()
+      when (action == GLFW.KeyState'Pressed) $ do
+        mode <- readIORef gameModeRef
+        case mode of
+          Playing -> case key of
+            GLFW.Key'Escape -> do
+              player <- readIORef playerRef
+              savePlayer saveDir player
+              saveWorld saveDir world
+              putStrLn "World saved."
+              GLFW.setWindowShouldClose (whWindow wh) True
+            GLFW.Key'F ->
+              modifyIORef' inputRef $ \inp -> inp { piToggleFly = True }
+            GLFW.Key'E -> do
+              writeIORef gameModeRef InventoryOpen
+              GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+              writeIORef lastCursorRef Nothing
+            GLFW.Key'1 -> modifyIORef' inventoryRef (`selectHotbar` 0)
+            GLFW.Key'2 -> modifyIORef' inventoryRef (`selectHotbar` 1)
+            GLFW.Key'3 -> modifyIORef' inventoryRef (`selectHotbar` 2)
+            GLFW.Key'4 -> modifyIORef' inventoryRef (`selectHotbar` 3)
+            GLFW.Key'5 -> modifyIORef' inventoryRef (`selectHotbar` 4)
+            GLFW.Key'6 -> modifyIORef' inventoryRef (`selectHotbar` 5)
+            GLFW.Key'7 -> modifyIORef' inventoryRef (`selectHotbar` 6)
+            GLFW.Key'8 -> modifyIORef' inventoryRef (`selectHotbar` 7)
+            GLFW.Key'9 -> modifyIORef' inventoryRef (`selectHotbar` 8)
+            _ -> pure ()
+          _ -> case key of  -- InventoryOpen or CraftingOpen
+            GLFW.Key'Escape -> do
+              writeIORef gameModeRef Playing
+              GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
+              writeIORef lastCursorRef Nothing
+              -- Return cursor item to inventory if any
+              mCursor <- readIORef cursorItemRef
+              case mCursor of
+                Just (ItemStack item cnt) -> do
+                  modifyIORef' inventoryRef (\inv -> fst $ addItem inv item cnt)
+                  writeIORef cursorItemRef Nothing
+                Nothing -> pure ()
+            GLFW.Key'E -> do
+              writeIORef gameModeRef Playing
+              GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
+              writeIORef lastCursorRef Nothing
+              mCursor <- readIORef cursorItemRef
+              case mCursor of
+                Just (ItemStack item cnt) -> do
+                  modifyIORef' inventoryRef (\inv -> fst $ addItem inv item cnt)
+                  writeIORef cursorItemRef Nothing
+                Nothing -> pure ()
+            _ -> pure ()
 
     -- Timing
     frameRef <- newIORef (0 :: Int)
@@ -281,6 +403,9 @@ main = do
             let rawDt = realToFrac (now - lastTime) :: Float
                 dt = min rawDt 0.25  -- cap to avoid spiral of death
 
+            -- Skip gameplay input when UI is open
+            gameMode <- readIORef gameModeRef
+
             -- Read keyboard state
             let win = whWindow wh
             wDown <- isKeyDown win GLFW.Key'W
@@ -303,10 +428,11 @@ main = do
                   , piSprint   = ctrlDown
                   }
 
-            -- Fixed timestep physics
+            -- Fixed timestep physics (skip when UI is open)
             accum <- readIORef accumRef
             let accum' = accum + dt
-            playerLoop input blockQuery waterQuery accumRef accum' playerRef
+            when (gameMode == Playing) $
+              playerLoop input blockQuery waterQuery accumRef accum' playerRef
 
             -- Check for player death → respawn
             do p <- readIORef playerRef
@@ -320,9 +446,9 @@ main = do
             -- until a physics tick has consumed them.
             writeIORef inputRef (endFrameInput physicsTickRan baseInput)
 
-            -- Mining tick: advance progress while LMB held
+            -- Mining tick: advance progress while LMB held (only when playing)
             lmbHeld <- readIORef lmbHeldRef
-            when lmbHeld $ do
+            when (lmbHeld && gameMode == Playing) $ do
               mining <- readIORef miningRef
               case mining of
                 Nothing -> pure ()
@@ -468,7 +594,10 @@ main = do
             let miningProgress = case mining of
                   Just (_, p) -> p
                   Nothing     -> 0
-                hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player')
+            mode <- readIORef gameModeRef
+            cursorItem <- readIORef cursorItemRef
+            craftGrid <- readIORef craftingGridRef
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
             when (hudVC > 0) $ do
@@ -643,6 +772,43 @@ updateUBO device buf ubo = do
   poke (castPtr ptr) ubo
   Vk.unmapMemory device (baMemory buf)
 
+-- | Inventory slot layout constants
+invGridX0, invGridY0, invSlotW, invSlotH, invSlotPad :: Float
+invGridX0 = -0.55   -- left edge of inventory grid in NDC
+invGridY0 = -0.5    -- top edge
+invSlotW  = 0.1
+invSlotH  = 0.1
+invSlotPad = 0.008
+
+-- | Check if NDC coordinates hit an inventory slot. Returns slot index 0-35.
+hitInventorySlot :: Float -> Float -> Maybe Int
+hitInventorySlot nx ny =
+  let -- Hotbar: row 0 (slots 0-8), main inventory: rows 1-3 (slots 9-35)
+      col = floor ((nx - invGridX0) / invSlotW) :: Int
+      row = floor ((ny - invGridY0) / invSlotH) :: Int
+  in if col >= 0 && col < 9 && row >= 0 && row < 4
+     then Just (if row == 0 then col else 9 + (row - 1) * 9 + col)
+     else Nothing
+
+-- | Crafting slot types
+data CraftSlot = CraftGrid !Int !Int | CraftOutput | CraftInvSlot !Int
+  deriving stock (Show, Eq)
+
+-- | Check if NDC coordinates hit a crafting slot
+hitCraftingSlot :: Float -> Float -> Maybe CraftSlot
+hitCraftingSlot nx ny
+  -- 3x3 crafting grid area
+  | nx >= -0.3 && nx <= 0.0 && ny >= -0.35 && ny <= -0.05 =
+      let col = floor ((nx - (-0.3)) / 0.1) :: Int
+          row = floor ((ny - (-0.35)) / 0.1) :: Int
+      in if col >= 0 && col < 3 && row >= 0 && row < 3
+         then Just (CraftGrid row col)
+         else Nothing
+  -- Output slot
+  | nx >= 0.15 && nx <= 0.25 && ny >= -0.25 && ny <= -0.15 = Just CraftOutput
+  -- Inventory slots below
+  | otherwise = fmap CraftInvSlot (hitInventorySlot nx (ny + 0.3))
+
 -- | Parse mob type from entity tag string
 readMobType :: String -> MobType
 readMobType "Zombie"   = Zombie
@@ -663,8 +829,12 @@ thd4 (_, _, c, _) = c
 fth4 (_, _, _, d) = d
 
 -- | Build HUD vertices from current state
-buildHudVertices :: Inventory -> Float -> Int -> Int -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger = VS.fromList $ crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts
+buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid = VS.fromList $
+  case mode of
+    Playing -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts
+    InventoryOpen -> invScreenVerts ++ cursorVerts
+    CraftingOpen  -> craftScreenVerts ++ cursorVerts
   where
     -- Crosshair: white + at center
     cs = 0.015 :: Float  -- size
@@ -750,6 +920,101 @@ buildHudVertices inv miningProgress health hunger = VS.fromList $ crosshairVerts
             | halfDrum = (0.7, 0.5, 0.15, 0.5)   -- half
             | otherwise = (0.3, 0.2, 0.05, 0.4)  -- empty
       in quad dX dY (dX + dw) (dY + dh) color
+
+    -- Inventory screen: dark overlay + 4x9 slot grid
+    invScreenVerts =
+      -- Full-screen dark overlay
+      quad (-1) (-1) 1 1 (0, 0, 0, 0.5)
+      -- Grid background
+      ++ quad (invGridX0 - 0.02) (invGridY0 - 0.02)
+              (invGridX0 + 9 * invSlotW + 0.02) (invGridY0 + 4 * invSlotH + 0.02)
+              (0.3, 0.3, 0.3, 0.9)
+      -- Individual slots
+      ++ concatMap renderInvSlot [0..35]
+      where
+        renderInvSlot idx =
+          let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
+              col = if idx < 9 then idx else (idx - 9) `mod` 9
+              x = invGridX0 + fromIntegral col * invSlotW + invSlotPad
+              y = invGridY0 + fromIntegral row * invSlotH + invSlotPad
+              sw = invSlotW - 2 * invSlotPad
+              sh = invSlotH - 2 * invSlotPad
+              slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
+          in case getSlot inv idx of
+            Nothing -> slotBg
+            Just (ItemStack item _) ->
+              let colors = itemMiniIcon item
+                  pixW = sw / 3; pixH = sh / 3
+              in slotBg ++ concatMap (\(r, c, clr) ->
+                   quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                        (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
+    -- Crafting screen: grid + output + inventory below
+    craftScreenVerts =
+      quad (-1) (-1) 1 1 (0, 0, 0, 0.5)
+      -- 3x3 crafting grid
+      ++ quad (-0.32) (-0.37) 0.02 (-0.03) (0.3, 0.3, 0.3, 0.9)
+      ++ concatMap renderCraftSlot [(r, c) | r <- [0..2], c <- [0..2]]
+      -- Arrow
+      ++ quad 0.05 (-0.22) 0.12 (-0.18) (1, 1, 1, 0.7)
+      -- Output slot
+      ++ renderCraftOutput
+      -- Inventory grid below
+      ++ quad (invGridX0 - 0.02) (0.08) (invGridX0 + 9 * invSlotW + 0.02) (0.08 + 4 * invSlotH + 0.02) (0.3, 0.3, 0.3, 0.9)
+      ++ concatMap renderCraftInvSlot [0..35]
+      where
+        renderCraftSlot (row, col) =
+          let x = -0.3 + fromIntegral col * 0.1 + 0.005
+              y = -0.35 + fromIntegral row * 0.1 + 0.005
+              sw = 0.09; sh = 0.09
+              slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
+          in case getCraftingSlot craftGrid row col of
+            Nothing -> slotBg
+            Just item ->
+              let colors = itemMiniIcon item
+                  pixW = sw / 3; pixH = sh / 3
+              in slotBg ++ concatMap (\(r, c, clr) ->
+                   quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                        (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
+        renderCraftOutput =
+          let x = 0.15; y = -0.27; sw = 0.12; sh = 0.12
+              slotBg = quad x y (x + sw) (y + sh) (0.2, 0.2, 0.15, 0.9)
+          in case tryCraft craftGrid of
+            CraftFailure -> slotBg
+            CraftSuccess item _ ->
+              let colors = itemMiniIcon item
+                  pixW = sw / 3; pixH = sh / 3
+              in slotBg ++ concatMap (\(r, c, clr) ->
+                   quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                        (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
+        renderCraftInvSlot idx =
+          let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
+              col = if idx < 9 then idx else (idx - 9) `mod` 9
+              x = invGridX0 + fromIntegral col * invSlotW + invSlotPad
+              y = 0.1 + fromIntegral row * invSlotH + invSlotPad
+              sw = invSlotW - 2 * invSlotPad
+              sh = invSlotH - 2 * invSlotPad
+              slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
+          in case getSlot inv idx of
+            Nothing -> slotBg
+            Just (ItemStack item _) ->
+              let colors = itemMiniIcon item
+                  pixW = sw / 3; pixH = sh / 3
+              in slotBg ++ concatMap (\(r, c, clr) ->
+                   quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                        (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
+    -- Cursor item (follows mouse position — simplified to center for now)
+    cursorVerts = case cursorItem of
+      Nothing -> []
+      Just (ItemStack item _) ->
+        let colors = itemMiniIcon item
+            x = -0.05; y = -0.05; sw = 0.1; sh = 0.1; pixW = sw/3; pixH = sh/3
+        in concatMap (\(r, c, clr) ->
+             quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                  (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
 
 -- | Get a display color for an item (used for hotbar slot rendering)
 itemColor :: Item -> (Float, Float, Float, Float)
