@@ -15,7 +15,7 @@ import Engine.Vulkan.Command
 import Engine.Vulkan.Memory
 import Engine.Vulkan.Descriptor
 import Engine.Vulkan.Texture
-import World.Block (BlockType(..), isSolid)
+import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid)
 import World.Chunk
 import World.Generation
 import World.World
@@ -161,36 +161,34 @@ main = do
                                               , piMouseDY = piMouseDY inp + dy }
           writeIORef lastCursorRef (Just (xpos, ypos))
 
-    -- Mouse button callback (break/place blocks)
-    GLFW.setMouseButtonCallback (whWindow wh) $ Just $ \_win button action _mods ->
+    -- Mining state: (target block pos, progress 0.0-1.0)
+    miningRef <- newIORef (Nothing :: Maybe (V3 Int, Float))
+    lmbHeldRef <- newIORef False
+
+    -- Mouse button callback (place blocks on RMB, track LMB for mining)
+    GLFW.setMouseButtonCallback (whWindow wh) $ Just $ \_win button action _mods -> do
+      when (button == GLFW.MouseButton'1) $
+        writeIORef lmbHeldRef (action == GLFW.MouseButtonState'Pressed)
+
+      when (button == GLFW.MouseButton'1 && action == GLFW.MouseButtonState'Released) $
+        writeIORef miningRef Nothing  -- stop mining on release
+
       when (action == GLFW.MouseButtonState'Pressed) $ do
         player <- readIORef playerRef
-        let eyePos = plPos player + V3 0 1.62 0  -- eye height
+        let eyePos = plPos player + V3 0 1.62 0
             dir = dirFromPlayer player
-            blockQuery bx by bz = do
+            blockQueryCb bx by bz = do
               bt <- worldGetBlock world (V3 bx by bz)
               pure (World.Block.isSolid bt)
 
-        mHit <- raycastBlock blockQuery eyePos dir maxReach
+        mHit <- raycastBlock blockQueryCb eyePos dir maxReach
         case mHit of
           Nothing -> pure ()
           Just hit -> do
             let V3 bx by bz = rhBlockPos hit
             case button of
-              GLFW.MouseButton'1 -> do  -- Left click: break
-                brokenType <- worldGetBlock world (V3 bx by bz)
-                worldSetBlock world (V3 bx by bz) Air
-                -- Remove fluid if breaking water/lava
-                when (brokenType == Water || brokenType == Lava) $
-                  removeFluid fluidState world (V3 bx by bz)
-                -- Add dropped items to inventory (using drop table)
-                when (brokenType /= Air && brokenType /= Water && brokenType /= Lava) $ do
-                  inv <- readIORef inventoryRef
-                  let drops = blockDrops brokenType
-                      inv' = foldl (\i (item, cnt) -> fst $ addItem i item cnt) inv drops
-                  writeIORef inventoryRef inv'
-                putStrLn $ "Broke " ++ show brokenType ++ " at " ++ show (V3 bx by bz)
-                rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
+              GLFW.MouseButton'1 -> do  -- Left click: start mining
+                writeIORef miningRef (Just (V3 bx by bz, 0.0))
               GLFW.MouseButton'2 -> do  -- Right click: place from hotbar
                 inv <- readIORef inventoryRef
                 case selectedItem inv of
@@ -285,6 +283,43 @@ main = do
 
             -- Reset mouse deltas and toggle flags
             writeIORef inputRef noInput
+
+            -- Mining tick: advance progress while LMB held
+            lmbHeld <- readIORef lmbHeldRef
+            when lmbHeld $ do
+              mining <- readIORef miningRef
+              case mining of
+                Nothing -> pure ()
+                Just (blockPos, progress) -> do
+                  let V3 bx by bz = blockPos
+                  bt <- worldGetBlock world blockPos
+                  let hardness = bpHardness (blockProperties bt)
+                  if hardness <= 0
+                    then writeIORef miningRef Nothing  -- unbreakable or air
+                    else do
+                      -- Tool speed multiplier
+                      inv <- readIORef inventoryRef
+                      let toolSpeed = case selectedItem inv of
+                            Just (ItemStack (ToolItem tt tm _) _)
+                              | blockPreferredTool bt == Just tt -> toolMiningSpeed tt tm
+                            _ -> 1.0  -- hand speed
+                          progressPerSec = toolSpeed / hardness
+                          newProgress = progress + progressPerSec * dt
+                      if newProgress >= 1.0
+                        then do
+                          -- Block is broken!
+                          worldSetBlock world blockPos Air
+                          when (bt == Water || bt == Lava) $
+                            removeFluid fluidState world blockPos
+                          -- Drop items
+                          let drops = blockDrops bt
+                          inv' <- readIORef inventoryRef
+                          let inv'' = foldl (\i (item, cnt) -> fst $ addItem i item cnt) inv' drops
+                          writeIORef inventoryRef inv''
+                          putStrLn $ "Broke " ++ show bt ++ " at " ++ show blockPos
+                          rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
+                          writeIORef miningRef Nothing
+                        else writeIORef miningRef (Just (blockPos, newProgress))
 
             -- Update day/night cycle
             modifyIORef' dayNightRef (updateDayNight dt)
