@@ -30,6 +30,7 @@ import Entity.ECS
 import Entity.Mob (MobType(..), updateMobAI, AIState(..))
 import Entity.Spawn
 import Game.Save
+import Game.DroppedItem
 
 import Control.Monad (unless, when, forM_)
 import Control.Concurrent.STM (readTVarIO)
@@ -130,6 +131,7 @@ main = do
     inventoryRef <- newIORef emptyInventory
     dayNightRef <- newIORef newDayNightCycle
     fluidState <- newFluidState
+    droppedItems <- newDroppedItems
 
     -- Entity system
     entityWorld <- newEntityWorld
@@ -340,17 +342,18 @@ main = do
                           worldSetBlock world blockPos Air
                           when (bt == Water || bt == Lava) $
                             removeFluid fluidState world blockPos
-                          -- Drop items
+                          -- Drop items as entities in the world
                           let drops = blockDrops bt
-                          inv' <- readIORef inventoryRef
-                          let inv'' = foldl (\i (item, cnt) -> fst $ addItem i item cnt) inv' drops
+                              V3 bxf byf bzf = fmap fromIntegral blockPos :: V3 Float
+                          mapM_ (\(item, cnt) -> spawnDrop droppedItems item cnt (V3 bxf byf bzf)) drops
                           -- Consume tool durability
-                          let inv''' = case getSlot inv'' (invSelected inv'') of
+                          inv' <- readIORef inventoryRef
+                          let inv'' = case getSlot inv' (invSelected inv') of
                                 Just (ItemStack (ToolItem tt tm dur) 1)
-                                  | dur <= 1  -> setSlot inv'' (invSelected inv'') Nothing  -- tool broke
-                                  | otherwise -> setSlot inv'' (invSelected inv'') (Just (ItemStack (ToolItem tt tm (dur - 1)) 1))
-                                _ -> inv''  -- not a tool, no durability change
-                          writeIORef inventoryRef inv'''
+                                  | dur <= 1  -> setSlot inv' (invSelected inv') Nothing
+                                  | otherwise -> setSlot inv' (invSelected inv') (Just (ItemStack (ToolItem tt tm (dur - 1)) 1))
+                                _ -> inv'
+                          writeIORef inventoryRef inv''
                           putStrLn $ "Broke " ++ show bt ++ " at " ++ show blockPos
                           rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
                           writeIORef miningRef Nothing
@@ -361,6 +364,15 @@ main = do
 
             -- Tick fluid simulation every physics update
             tickFluids fluidState world
+
+            -- Update dropped items (gravity, friction) and auto-collect nearby
+            updateDroppedItems dt droppedItems
+            do player' <- readIORef playerRef
+               collected <- collectNearby droppedItems (plPos player') 1.5
+               unless (null collected) $ do
+                 inv' <- readIORef inventoryRef
+                 let inv'' = foldl (\i (item, cnt) -> fst $ addItem i item cnt) inv' collected
+                 writeIORef inventoryRef inv''
 
             -- Entity spawning (every ~2 seconds)
             frameIdx <- readIORef frameRef

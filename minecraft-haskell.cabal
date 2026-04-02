@@ -65,6 +65,7 @@ library
     Game.Crafting
     Game.DayNight
     Game.Save
+    Game.DroppedItem
     Entity.ECS
     Entity.Mob
     Entity.Pathfinding
