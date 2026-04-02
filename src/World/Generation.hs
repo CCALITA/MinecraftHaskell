@@ -140,6 +140,32 @@ generateChunk cfg chunkCoord = do
       when (surfY == gcSeaLevel cfg - 1 && surfBlock == blockW8 Sand && roll < 80) $
         MUV.write mvec (blockIndex lx surfY lz) (blockW8 Clay)
 
+  -- Pass 6: Small ponds (dig down a few blocks and fill with water)
+  forM_ [4..chunkWidth-5] $ \lx ->
+    forM_ [4..chunkDepth-5] $ \lz -> do
+      let wx = cx * chunkWidth + lx
+          wz = cz * chunkDepth + lz
+          pondRoll = hashPos (seed + 8000) (wx `div` 8) (wz `div` 8) `mod` 1000
+      -- ~1% chance per 8x8 area to start a pond
+      when (pondRoll < 10 && wx `mod` 8 == 0 && wz `mod` 8 == 0) $ do
+        surfY <- findSurface mvec lx lz (chunkHeight - 1)
+        when (surfY > gcSeaLevel cfg + 2) $ do
+          -- Dig a 5x5x2 depression and fill with water
+          forM_ [-2..2] $ \dx ->
+            forM_ [-2..2] $ \dz -> do
+              let px = lx + dx
+                  pz = lz + dz
+                  dist = abs dx + abs dz
+                  depth = if dist <= 1 then 2 else 1
+              when (px >= 0 && px < chunkWidth && pz >= 0 && pz < chunkDepth) $
+                forM_ [0..depth-1] $ \dy -> do
+                  let py = surfY - dy
+                  when (py > 0) $ do
+                    MUV.write mvec (blockIndex px py pz) (blockW8 Water)
+                    -- Sand below water
+                    when (dy == depth - 1 && py > 1) $
+                      MUV.write mvec (blockIndex px (py - 1) pz) (blockW8 Sand)
+
   writeIORef (chunkDirty chunk) True
   pure chunk
 

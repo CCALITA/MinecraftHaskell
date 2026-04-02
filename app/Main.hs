@@ -256,11 +256,16 @@ main = do
     lastTimeRef <- newIORef =<< maybe 0 id <$> GLFW.getTime
     accumRef <- newIORef (0.0 :: Float)
 
-    -- Block query for physics
+    -- Block queries for physics
     let blockQuery :: BlockQuery
         blockQuery bx by bz = do
           bt <- worldGetBlock world (V3 bx by bz)
           pure (World.Block.isSolid bt)
+
+    let waterQuery :: BlockQuery
+        waterQuery bx by bz = do
+          bt <- worldGetBlock world (V3 bx by bz)
+          pure (bt == Water)
 
     -- Main loop (wrapped in finally for exception-safe cleanup)
     putStrLn "Controls: WASD=move, Mouse=look, Space=jump, F=fly, 1-9=hotbar, LMB=break, RMB=place, ESC=quit"
@@ -301,7 +306,7 @@ main = do
             -- Fixed timestep physics
             accum <- readIORef accumRef
             let accum' = accum + dt
-            playerLoop input blockQuery accumRef accum' playerRef
+            playerLoop input blockQuery waterQuery accumRef accum' playerRef
 
             -- Check for player death → respawn
             do p <- readIORef playerRef
@@ -523,14 +528,14 @@ main = do
       putStrLn "Goodbye!"
 
 -- | Run physics ticks consuming accumulated time
-playerLoop :: PlayerInput -> BlockQuery -> IORef Float -> Float -> IORef Player -> IO ()
-playerLoop input blockQuery accumRef accum playerRef
+playerLoop :: PlayerInput -> BlockQuery -> BlockQuery -> IORef Float -> Float -> IORef Player -> IO ()
+playerLoop input blockQuery waterQuery accumRef accum playerRef
   | accum < tickRate = writeIORef accumRef accum
   | otherwise = do
       player <- readIORef playerRef
-      player' <- updatePlayer tickRate input blockQuery player
+      player' <- updatePlayer tickRate input blockQuery waterQuery player
       writeIORef playerRef player'
-      playerLoop (input { piToggleFly = False }) blockQuery accumRef (accum - tickRate) playerRef
+      playerLoop (input { piToggleFly = False }) blockQuery waterQuery accumRef (accum - tickRate) playerRef
 
 -- | Convert player state to Camera
 cameraFromPlayer :: Player -> Camera

@@ -95,8 +95,8 @@ mouseSensitivity :: Float
 mouseSensitivity = 0.15
 
 -- | Update player for one physics tick
-updatePlayer :: Float -> PlayerInput -> BlockQuery -> Player -> IO Player
-updatePlayer dt input isSolidBlock player = do
+updatePlayer :: Float -> PlayerInput -> BlockQuery -> BlockQuery -> Player -> IO Player
+updatePlayer dt input isSolidBlock isWaterBlock player = do
   -- 1. Mouse look
   let yaw'   = plYaw player - piMouseDX input * mouseSensitivity
       pitch' = max (-89) . min 89 $ plPitch player + piMouseDY input * mouseSensitivity
@@ -146,15 +146,22 @@ updatePlayer dt input isSolidBlock player = do
         }
     else do
       -- Survival mode: gravity + collision
-      -- Horizontal velocity from input
-      let hVel = normalizedDir ^* speed
+      -- Check if player is in water
+      let V3 px py pz = plPos player
+      inWater <- isWaterBlock (floor px) (floor py) (floor pz)
+
+      -- Horizontal velocity (slower in water)
+      let waterMul = if inWater then 0.4 else 1.0
+          hVel = normalizedDir ^* (speed * waterMul)
           V3 hvx _ hvz = hVel
 
-      -- Vertical: gravity + jump
+      -- Vertical: gravity + jump (buoyancy in water)
       onGround <- isOnGround isSolidBlock (plPos player)
-      let vy' = if onGround && piJump input
-                then jumpVelocity
-                else applyGravity dt vy
+      let vy'
+            | inWater && piJump input = 4.0   -- swim upward
+            | inWater                 = max (-2.0) (vy - 5.0 * dt)  -- slow sinking
+            | onGround && piJump input = jumpVelocity
+            | otherwise               = applyGravity dt vy
 
       let desiredVel = V3 hvx vy' hvz
           displacement = desiredVel ^* dt

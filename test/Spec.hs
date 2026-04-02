@@ -288,8 +288,8 @@ playerInputSpec = describe "Game.Player input queue" $ do
   it "applies a queued fly toggle exactly once" $ do
     let player0 = (defaultPlayer (V3 0 80 0)) { plFlying = True }
 
-    player1 <- updatePlayer 0 queuedToggle airQuery player0
-    player2 <- updatePlayer 0 (endFrameInput True queuedToggle) airQuery player1
+    player1 <- updatePlayer 0 queuedToggle airQuery airQuery player0
+    player2 <- updatePlayer 0 (endFrameInput True queuedToggle) airQuery airQuery player1
 
     plFlying player1 `shouldBe` False
     plFlying player2 `shouldBe` False
