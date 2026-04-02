@@ -119,5 +119,7 @@ loadPlayer saveDir = do
             , plOnGround  = False
             , plFlying    = sdPlayerFlying sd
             , plSprinting = False
+            , plHealth    = 20
+            , plFallDist  = 0
             }
       pure (Just player)

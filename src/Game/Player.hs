@@ -7,6 +7,11 @@ module Game.Player
   , updatePlayer
   , raycastBlock
   , RayHit(..)
+  , maxHealth
+  , applyFallDamage
+  , damagePlayer
+  , respawnPlayer
+  , isPlayerDead
   ) where
 
 import Game.Physics
@@ -24,7 +29,13 @@ data Player = Player
   , plOnGround  :: !Bool
   , plFlying    :: !Bool         -- creative-mode flying
   , plSprinting :: !Bool
+  , plHealth    :: !Int          -- 0-20 (10 hearts)
+  , plFallDist  :: !Float        -- accumulated fall distance
   } deriving stock (Show, Eq)
+
+-- | Max health (10 hearts = 20 half-hearts)
+maxHealth :: Int
+maxHealth = 20
 
 -- | Input state for a single tick
 data PlayerInput = PlayerInput
@@ -50,6 +61,8 @@ defaultPlayer spawnPos = Player
   , plOnGround  = False
   , plFlying    = True  -- start in creative fly mode
   , plSprinting = False
+  , plHealth    = maxHealth
+  , plFallDist  = 0
   }
 
 noInput :: PlayerInput
@@ -121,6 +134,8 @@ updatePlayer dt input isSolidBlock player = do
         , plPitch    = pitch'
         , plOnGround = False
         , plFlying   = flying
+        , plHealth   = plHealth player
+        , plFallDist = 0
         }
     else do
       -- Survival mode: gravity + collision
@@ -141,6 +156,14 @@ updatePlayer dt input isSolidBlock player = do
 
       onGround' <- isOnGround isSolidBlock newPos
       let finalVy = if onGround' && v3y resolvedVel <= 0 then 0 else v3y resolvedVel
+          -- Track fall distance
+          dy = v3y (plPos player) - v3y newPos  -- positive when falling down
+          newFallDist = if dy > 0 then plFallDist player + dy else plFallDist player
+          -- Apply fall damage on landing
+          landed = onGround' && not (plOnGround player)
+          baseDmg = if landed && newFallDist > 3.0 then floor newFallDist - 3 else 0
+          finalHealth = max 0 (plHealth player - baseDmg)
+          finalFallDist = if onGround' then 0 else newFallDist
 
       pure player
         { plPos       = newPos
@@ -150,6 +173,8 @@ updatePlayer dt input isSolidBlock player = do
         , plOnGround  = onGround'
         , plFlying    = flying
         , plSprinting = piSprint input
+        , plHealth    = finalHealth
+        , plFallDist  = finalFallDist
         }
 
 -- | Direction vector from yaw and pitch (degrees)
@@ -164,6 +189,33 @@ v3x, v3y, v3z :: V3 Float -> Float
 v3x (V3 x _ _) = x
 v3y (V3 _ y _) = y
 v3z (V3 _ _ z) = z
+
+-- | Apply fall damage when player lands. Returns updated player.
+--   Fall damage = floor(fallDist) - 3 (Minecraft formula: 1 HP per block above 3)
+applyFallDamage :: Player -> Player
+applyFallDamage player
+  | plFlying player = player { plFallDist = 0 }
+  | plOnGround player && plFallDist player > 3.0 =
+      let damage = floor (plFallDist player) - 3
+      in player { plHealth = max 0 (plHealth player - damage), plFallDist = 0 }
+  | plOnGround player = player { plFallDist = 0 }
+  | v3y (plVelocity player) < 0 =
+      -- Accumulate fall distance while falling
+      player  -- distance tracking is done in updatePlayer
+  | otherwise = player { plFallDist = 0 }  -- going up, reset
+
+-- | Apply damage to player
+damagePlayer :: Int -> Player -> Player
+damagePlayer dmg player = player { plHealth = max 0 (plHealth player - dmg) }
+
+-- | Respawn player at given position with full health
+respawnPlayer :: V3 Float -> Player -> Player
+respawnPlayer spawnPos player = player
+  { plPos = spawnPos, plVelocity = V3 0 0 0, plHealth = maxHealth, plFallDist = 0 }
+
+-- | Is the player dead?
+isPlayerDead :: Player -> Bool
+isPlayerDead = (<= 0) . plHealth
 
 -- | Result of a block raycast
 data RayHit = RayHit

@@ -288,6 +288,12 @@ main = do
             let accum' = accum + dt
             playerLoop input blockQuery accumRef accum' playerRef
 
+            -- Check for player death → respawn
+            do p <- readIORef playerRef
+               when (isPlayerDead p) $ do
+                 putStrLn "You died! Respawning..."
+                 writeIORef playerRef (respawnPlayer spawnPos p)
+
             let physicsTickRan = accum' >= tickRate
 
             -- Clear per-frame mouse movement, but keep one-shot toggles queued
