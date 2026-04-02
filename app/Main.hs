@@ -308,6 +308,12 @@ main = do
                 updateEntity entityWorld eid (const ent')
                 modifyIORef' aiStatesRef (HM.insert eid newAI)
 
+            -- Auto-save every ~5 minutes (18000 frames at 60fps)
+            when (frameIdx > 0 && frameIdx `mod` 18000 == 0) $ do
+              player <- readIORef playerRef
+              savePlayer saveDir player
+              saveWorld saveDir world
+
             -- Update chunks periodically
             when (frameIdx `mod` 60 == 0) $ do
               player <- readIORef playerRef
