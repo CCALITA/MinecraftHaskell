@@ -11,14 +11,13 @@ module Game.Inventory
   , selectHotbar
   , addItem
   , removeItem
-  , canStack
   , stackLimit
   ) where
 
-import World.Block (BlockType(..))
+import Game.Item (Item(..), itemStackLimit)
 import qualified Data.Vector as V
 
--- | Maximum stack size for most items
+-- | Default maximum stack size
 stackLimit :: Int
 stackLimit = 64
 
@@ -32,8 +31,8 @@ inventorySlots = 36
 
 -- | A stack of items in a slot
 data ItemStack = ItemStack
-  { isBlockType :: !BlockType
-  , isCount     :: !Int
+  { isItem  :: !Item
+  , isCount :: !Int
   } deriving stock (Show, Eq)
 
 -- | Player inventory: 36 slots (0-8 = hotbar, 9-35 = main inventory)
@@ -75,63 +74,58 @@ selectHotbar inv idx
   | idx >= 0 && idx < hotbarSlots = inv { invSelected = idx }
   | otherwise = inv
 
--- | Check if two item types can stack together
-canStack :: BlockType -> BlockType -> Bool
-canStack a b = a == b
-
 -- | Add items to inventory, returns updated inventory and leftover count
-addItem :: Inventory -> BlockType -> Int -> (Inventory, Int)
-addItem inv bt count =
-  let -- First try to merge into existing stacks
-      (inv1, remaining1) = mergeIntoExisting inv bt count
-      -- Then try to place in empty slots
-      (inv2, remaining2) = placeInEmpty inv1 bt remaining1
+addItem :: Inventory -> Item -> Int -> (Inventory, Int)
+addItem inv item count =
+  let (inv1, remaining1) = mergeIntoExisting inv item count
+      (inv2, remaining2) = placeInEmpty inv1 item remaining1
   in (inv2, remaining2)
 
 -- | Try to merge items into existing stacks of the same type
-mergeIntoExisting :: Inventory -> BlockType -> Int -> (Inventory, Int)
+mergeIntoExisting :: Inventory -> Item -> Int -> (Inventory, Int)
 mergeIntoExisting inv _ 0 = (inv, 0)
-mergeIntoExisting inv bt remaining = go inv 0 remaining
+mergeIntoExisting inv item remaining = go inv 0 remaining
   where
+    maxStack = itemStackLimit item
     go inv' idx rem'
       | idx >= inventorySlots = (inv', rem')
       | rem' <= 0 = (inv', 0)
       | otherwise = case getSlot inv' idx of
-          Just (ItemStack sbt cnt) | sbt == bt && cnt < stackLimit ->
-            let space = stackLimit - cnt
+          Just (ItemStack sItem cnt) | sItem == item && cnt < maxStack ->
+            let space = maxStack - cnt
                 toAdd = min space rem'
-                inv'' = setSlot inv' idx (Just (ItemStack bt (cnt + toAdd)))
+                inv'' = setSlot inv' idx (Just (ItemStack item (cnt + toAdd)))
             in go inv'' (idx + 1) (rem' - toAdd)
           _ -> go inv' (idx + 1) rem'
 
 -- | Place items in first available empty slot
-placeInEmpty :: Inventory -> BlockType -> Int -> (Inventory, Int)
+placeInEmpty :: Inventory -> Item -> Int -> (Inventory, Int)
 placeInEmpty inv _ 0 = (inv, 0)
-placeInEmpty inv bt remaining = go inv 0 remaining
+placeInEmpty inv item remaining = go inv 0 remaining
   where
+    maxStack = itemStackLimit item
     go inv' idx rem'
       | idx >= inventorySlots = (inv', rem')
       | rem' <= 0 = (inv', 0)
       | otherwise = case getSlot inv' idx of
           Nothing ->
-            let toPlace = min stackLimit rem'
-                inv'' = setSlot inv' idx (Just (ItemStack bt toPlace))
+            let toPlace = min maxStack rem'
+                inv'' = setSlot inv' idx (Just (ItemStack item toPlace))
             in go inv'' (idx + 1) (rem' - toPlace)
           _ -> go inv' (idx + 1) rem'
 
 -- | Remove count items of a type from inventory, returns updated inventory and actual removed count
-removeItem :: Inventory -> BlockType -> Int -> (Inventory, Int)
-removeItem inv bt count = go inv (inventorySlots - 1) count 0
+removeItem :: Inventory -> Item -> Int -> (Inventory, Int)
+removeItem inv item count = go inv (inventorySlots - 1) count 0
   where
-    -- Remove from end first (main inventory before hotbar)
     go inv' idx remaining removed
       | idx < 0 = (inv', removed)
       | remaining <= 0 = (inv', removed)
       | otherwise = case getSlot inv' idx of
-          Just (ItemStack sbt cnt) | sbt == bt ->
+          Just (ItemStack sItem cnt) | sItem == item ->
             let toRemove = min cnt remaining
                 newCnt = cnt - toRemove
-                newSlot = if newCnt <= 0 then Nothing else Just (ItemStack bt newCnt)
+                newSlot = if newCnt <= 0 then Nothing else Just (ItemStack item newCnt)
                 inv'' = setSlot inv' idx newSlot
             in go inv'' (idx - 1) (remaining - toRemove) (removed + toRemove)
           _ -> go inv' (idx - 1) remaining removed

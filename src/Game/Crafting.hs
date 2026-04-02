@@ -10,26 +10,26 @@ module Game.Crafting
   ) where
 
 import World.Block (BlockType(..))
-import Game.Inventory (ItemStack(..))
+import Game.Item (Item(..))
 import qualified Data.Vector as V
 
 -- | Crafting grid (2x2 or 3x3)
 data CraftingGrid = CraftingGrid
   { cgSize  :: !Int                            -- 2 or 3
-  , cgSlots :: !(V.Vector (Maybe BlockType))   -- row-major
+  , cgSlots :: !(V.Vector (Maybe Item))        -- row-major
   } deriving stock (Show, Eq)
 
 -- | A crafting recipe
 data Recipe = Recipe
-  { rcPattern  :: ![[Maybe BlockType]]   -- 2D pattern (rows of columns)
-  , rcResult   :: !BlockType
-  , rcCount    :: !Int                   -- how many items produced
+  { rcPattern  :: ![[Maybe Item]]     -- 2D pattern (rows of columns)
+  , rcResult   :: !Item
+  , rcCount    :: !Int                -- how many items produced
   } deriving stock (Show, Eq)
 
 -- | Result of attempting to craft
 data CraftResult
-  = CraftSuccess !BlockType !Int   -- produced item and count
-  | CraftFailure                   -- no matching recipe
+  = CraftSuccess !Item !Int   -- produced item and count
+  | CraftFailure              -- no matching recipe
   deriving stock (Show, Eq)
 
 -- | Empty crafting grid
@@ -40,14 +40,14 @@ emptyCraftingGrid size = CraftingGrid
   }
 
 -- | Set a slot in the crafting grid (row, col)
-setCraftingSlot :: CraftingGrid -> Int -> Int -> Maybe BlockType -> CraftingGrid
+setCraftingSlot :: CraftingGrid -> Int -> Int -> Maybe Item -> CraftingGrid
 setCraftingSlot grid row col bt
   | row >= 0 && row < cgSize grid && col >= 0 && col < cgSize grid =
       grid { cgSlots = cgSlots grid V.// [(row * cgSize grid + col, bt)] }
   | otherwise = grid
 
 -- | Get a slot from the crafting grid (row, col)
-getCraftingSlot :: CraftingGrid -> Int -> Int -> Maybe BlockType
+getCraftingSlot :: CraftingGrid -> Int -> Int -> Maybe Item
 getCraftingSlot grid row col
   | row >= 0 && row < cgSize grid && col >= 0 && col < cgSize grid =
       cgSlots grid V.! (row * cgSize grid + col)
@@ -62,7 +62,7 @@ tryCraft grid =
     Nothing     -> CraftFailure
 
 -- | Extract the minimal bounding pattern from the grid (trim empty rows/cols)
-extractPattern :: CraftingGrid -> [[Maybe BlockType]]
+extractPattern :: CraftingGrid -> [[Maybe Item]]
 extractPattern grid =
   let size = cgSize grid
       rows = [ [ getCraftingSlot grid r c | c <- [0..size-1] ] | r <- [0..size-1] ]
@@ -87,7 +87,7 @@ transposeGrid ([] : _) = []
 transposeGrid xss = map head xss : transposeGrid (map tail xss)
 
 -- | Find a recipe matching the pattern
-findRecipe :: [[Maybe BlockType]] -> Maybe Recipe
+findRecipe :: [[Maybe Item]] -> Maybe Recipe
 findRecipe pattern = go allRecipes
   where
     go [] = Nothing
@@ -96,7 +96,7 @@ findRecipe pattern = go allRecipes
       | otherwise = go rs
 
 -- | Check if a recipe pattern matches the extracted grid pattern
-matchesPattern :: [[Maybe BlockType]] -> [[Maybe BlockType]] -> Bool
+matchesPattern :: [[Maybe Item]] -> [[Maybe Item]] -> Bool
 matchesPattern recipe grid =
   length recipe == length grid &&
   all (\(rRow, gRow) -> length rRow == length gRow && all matchSlot (zip rRow gRow)) (zip recipe grid)
@@ -105,79 +105,83 @@ matchesPattern recipe grid =
     matchSlot (Just a, Just b)   = a == b
     matchSlot _                  = False
 
+-- | Helper to create a block item pattern entry
+bi :: BlockType -> Maybe Item
+bi = Just . BlockItem
+
 -- | All crafting recipes
 allRecipes :: [Recipe]
 allRecipes =
   -- Basic block conversions
   [ -- 4 wood planks from 1 log
     Recipe
-      { rcPattern = [[Just OakLog]]
-      , rcResult  = OakPlanks
+      { rcPattern = [[bi OakLog]]
+      , rcResult  = BlockItem OakPlanks
       , rcCount   = 4
       }
   -- Crafting table from 4 planks (2x2)
   , Recipe
-      { rcPattern = [[Just OakPlanks, Just OakPlanks]
-                    ,[Just OakPlanks, Just OakPlanks]]
-      , rcResult  = CraftingTable
+      { rcPattern = [[bi OakPlanks, bi OakPlanks]
+                    ,[bi OakPlanks, bi OakPlanks]]
+      , rcResult  = BlockItem CraftingTable
       , rcCount   = 1
       }
   -- Sticks from 2 planks (vertical) — using OakLog as "stick" placeholder
   , Recipe
-      { rcPattern = [[Just OakPlanks]
-                    ,[Just OakPlanks]]
-      , rcResult  = OakLog
+      { rcPattern = [[bi OakPlanks]
+                    ,[bi OakPlanks]]
+      , rcResult  = BlockItem OakLog
       , rcCount   = 4
       }
   -- Furnace from 8 cobblestone
   , Recipe
-      { rcPattern = [[Just Cobblestone, Just Cobblestone, Just Cobblestone]
-                    ,[Just Cobblestone, Nothing,          Just Cobblestone]
-                    ,[Just Cobblestone, Just Cobblestone, Just Cobblestone]]
-      , rcResult  = Furnace
+      { rcPattern = [[bi Cobblestone, bi Cobblestone, bi Cobblestone]
+                    ,[bi Cobblestone, Nothing,        bi Cobblestone]
+                    ,[bi Cobblestone, bi Cobblestone, bi Cobblestone]]
+      , rcResult  = BlockItem Furnace
       , rcCount   = 1
       }
   -- Chest from 8 planks
   , Recipe
-      { rcPattern = [[Just OakPlanks, Just OakPlanks, Just OakPlanks]
-                    ,[Just OakPlanks, Nothing,        Just OakPlanks]
-                    ,[Just OakPlanks, Just OakPlanks, Just OakPlanks]]
-      , rcResult  = Chest
+      { rcPattern = [[bi OakPlanks, bi OakPlanks, bi OakPlanks]
+                    ,[bi OakPlanks, Nothing,      bi OakPlanks]
+                    ,[bi OakPlanks, bi OakPlanks, bi OakPlanks]]
+      , rcResult  = BlockItem Chest
       , rcCount   = 1
       }
   -- Torch from coal + stick (OakLog placeholder)
   , Recipe
-      { rcPattern = [[Just CoalOre]
-                    ,[Just OakLog]]
-      , rcResult  = Torch
+      { rcPattern = [[bi CoalOre]
+                    ,[bi OakLog]]
+      , rcResult  = BlockItem Torch
       , rcCount   = 4
       }
   -- Stone bricks from 4 stone
   , Recipe
-      { rcPattern = [[Just Stone, Just Stone]
-                    ,[Just Stone, Just Stone]]
-      , rcResult  = StoneBrick
+      { rcPattern = [[bi Stone, bi Stone]
+                    ,[bi Stone, bi Stone]]
+      , rcResult  = BlockItem StoneBrick
       , rcCount   = 4
       }
   -- Glass from sand (smelting placeholder - 1:1)
   , Recipe
-      { rcPattern = [[Just Sand]]
-      , rcResult  = Glass
+      { rcPattern = [[bi Sand]]
+      , rcResult  = BlockItem Glass
       , rcCount   = 1
       }
   -- Bricks from clay
   , Recipe
-      { rcPattern = [[Just Clay, Just Clay]
-                    ,[Just Clay, Just Clay]]
-      , rcResult  = Brick
+      { rcPattern = [[bi Clay, bi Clay]
+                    ,[bi Clay, bi Clay]]
+      , rcResult  = BlockItem Brick
       , rcCount   = 1
       }
   -- TNT from sand + gravel pattern
   , Recipe
-      { rcPattern = [[Just Sand,   Just Gravel, Just Sand]
-                    ,[Just Gravel, Just Sand,   Just Gravel]
-                    ,[Just Sand,   Just Gravel, Just Sand]]
-      , rcResult  = TNT
+      { rcPattern = [[bi Sand,   bi Gravel, bi Sand]
+                    ,[bi Gravel, bi Sand,   bi Gravel]
+                    ,[bi Sand,   bi Gravel, bi Sand]]
+      , rcResult  = BlockItem TNT
       , rcCount   = 1
       }
   ]

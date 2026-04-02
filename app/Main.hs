@@ -22,6 +22,7 @@ import World.World
 import Game.Player
 import Game.Physics (BlockQuery)
 import Game.Inventory
+import Game.Item
 import Game.DayNight
 import World.Fluid
 import World.Light
@@ -132,7 +133,7 @@ main = do
     aiStatesRef <- newIORef (HM.empty :: HM.HashMap Int AIState)
 
     -- Give player some starting blocks
-    let startInv = fst $ addItem (fst $ addItem (fst $ addItem emptyInventory Stone 64) Dirt 64) OakPlanks 64
+    let startInv = fst $ addItem (fst $ addItem (fst $ addItem emptyInventory (BlockItem Stone) 64) (BlockItem Dirt) 64) (BlockItem OakPlanks) 64
     writeIORef inventoryRef startInv
 
     -- Initial chunk loading
@@ -185,7 +186,7 @@ main = do
                 -- Add broken block to inventory
                 when (brokenType /= Air && brokenType /= Water && brokenType /= Lava) $ do
                   inv <- readIORef inventoryRef
-                  let (inv', _) = addItem inv brokenType 1
+                  let (inv', _) = addItem inv (BlockItem brokenType) 1
                   writeIORef inventoryRef inv'
                 putStrLn $ "Broke " ++ show brokenType ++ " at " ++ show (V3 bx by bz)
                 rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
@@ -193,16 +194,18 @@ main = do
                 inv <- readIORef inventoryRef
                 case selectedItem inv of
                   Nothing -> pure ()
-                  Just (ItemStack bt _) -> do
-                    let V3 nx ny nz = rhFaceNormal hit
-                        placePos = V3 (bx + nx) (by + ny) (bz + nz)
-                    let (inv', removed) = removeItem inv bt 1
-                    when (removed > 0) $ do
-                      writeIORef inventoryRef inv'
-                      worldSetBlock world placePos bt
-                      putStrLn $ "Placed " ++ show bt ++ " at " ++ show placePos
-                      let V3 px' _ pz' = placePos
-                      rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
+                  Just (ItemStack item _) -> case itemToBlock item of
+                    Nothing -> pure ()  -- Can't place non-block items
+                    Just bt -> do
+                      let V3 nx ny nz = rhFaceNormal hit
+                          placePos = V3 (bx + nx) (by + ny) (bz + nz)
+                      let (inv', removed) = removeItem inv item 1
+                      when (removed > 0) $ do
+                        writeIORef inventoryRef inv'
+                        worldSetBlock world placePos bt
+                        putStrLn $ "Placed " ++ show bt ++ " at " ++ show placePos
+                        let V3 px' _ pz' = placePos
+                        rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
               _ -> pure ()
 
     -- Key callback for toggle (F = fly, 1-9 = hotbar, ESC = quit)

@@ -61,6 +61,7 @@ library
     Game.Physics
     Game.Player
     Game.Inventory
+    Game.Item
     Game.Crafting
     Game.DayNight
     Game.Save
