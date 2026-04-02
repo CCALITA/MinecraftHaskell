@@ -52,7 +52,7 @@ import System.Environment (getArgs)
 import Data.Char (isDigit)
 
 -- | Game UI mode
-data GameMode = MainMenu | Playing | InventoryOpen | CraftingOpen
+data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen
   deriving stock (Show, Eq)
 
 -- | Fixed timestep for physics (20 ticks per second, like Minecraft)
@@ -247,6 +247,28 @@ main = do
           when (ndcX >= -0.25 && ndcX <= 0.25 && ndcY >= 0.3 && ndcY <= 0.45) $
             GLFW.setWindowShouldClose (whWindow wh) True
 
+        Paused -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
+          (mx, my) <- readIORef mousePosRef
+          sc' <- readIORef scRef
+          let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
+              ndcX = realToFrac mx / fromIntegral extW * 2.0 - 1.0 :: Float
+              ndcY = realToFrac my / fromIntegral extH * 2.0 - 1.0 :: Float
+          -- Resume button
+          when (ndcX >= -0.25 && ndcX <= 0.25 && ndcY >= -0.15 && ndcY <= 0.0) $ do
+            writeIORef gameModeRef Playing
+            GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
+            writeIORef lastCursorRef Nothing
+          -- Save & Quit to Menu button
+          when (ndcX >= -0.25 && ndcX <= 0.25 && ndcY >= 0.05 && ndcY <= 0.2) $ do
+            player <- readIORef playerRef
+            savePlayer saveDir player
+            saveWorld saveDir world
+            putStrLn "World saved."
+            writeIORef gameModeRef MainMenu
+          -- Quit Game button
+          when (ndcX >= -0.25 && ndcX <= 0.25 && ndcY >= 0.25 && ndcY <= 0.4) $
+            GLFW.setWindowShouldClose (whWindow wh) True
+
         InventoryOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           -- Click on inventory slot
           (mx, my) <- readIORef mousePosRef
@@ -373,11 +395,9 @@ main = do
             _ -> pure ()
           Playing -> case key of
             GLFW.Key'Escape -> do
-              player <- readIORef playerRef
-              savePlayer saveDir player
-              saveWorld saveDir world
-              putStrLn "World saved."
-              GLFW.setWindowShouldClose (whWindow wh) True
+              writeIORef gameModeRef Paused
+              GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+              writeIORef lastCursorRef Nothing
             GLFW.Key'F ->
               modifyIORef' inputRef $ \inp -> inp { piToggleFly = True }
             GLFW.Key'E -> do
@@ -405,6 +425,13 @@ main = do
                   writeIORef playerRef p
                   putStrLn "Quick-loaded!"
                 Nothing -> putStrLn "No save found."
+            _ -> pure ()
+          Paused -> case key of
+            GLFW.Key'Escape -> do
+              -- Resume game
+              writeIORef gameModeRef Playing
+              GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
+              writeIORef lastCursorRef Nothing
             _ -> pure ()
           _ -> case key of  -- InventoryOpen or CraftingOpen
             GLFW.Key'Escape -> do
@@ -890,7 +917,8 @@ buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemSt
 buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid = VS.fromList $
   case mode of
     MainMenu -> menuVerts
-    Playing -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ handVerts
+    Paused   -> pauseVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ handVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts
   where
@@ -1108,6 +1136,19 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid = VS
       -- "Quit" button (red)
       ++ quad (-0.25) 0.3 0.25 0.45 (0.6, 0.3, 0.3, 0.9)
       ++ quad (-0.24) 0.31 0.24 0.44 (0.5, 0.25, 0.25, 0.9)
+
+    -- Pause screen: semi-transparent overlay with Resume / Save+Quit / Quit
+    pauseVerts =
+      quad (-1) (-1) 1 1 (0, 0, 0, 0.6)
+      -- Resume button (green)
+      ++ quad (-0.25) (-0.15) 0.25 0.0 (0.3, 0.6, 0.35, 0.9)
+      ++ quad (-0.24) (-0.14) 0.24 (-0.01) (0.25, 0.5, 0.3, 0.9)
+      -- Save & Quit to Menu (blue)
+      ++ quad (-0.25) 0.05 0.25 0.2 (0.35, 0.35, 0.6, 0.9)
+      ++ quad (-0.24) 0.06 0.24 0.19 (0.3, 0.3, 0.5, 0.9)
+      -- Quit Game (red)
+      ++ quad (-0.25) 0.25 0.25 0.4 (0.6, 0.3, 0.3, 0.9)
+      ++ quad (-0.24) 0.26 0.24 0.39 (0.5, 0.25, 0.25, 0.9)
 
 -- | Get a display color for an item (used for hotbar slot rendering)
 itemColor :: Item -> (Float, Float, Float, Float)
