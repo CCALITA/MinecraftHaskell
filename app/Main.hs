@@ -687,18 +687,23 @@ buildHudVertices inv miningProgress health hunger = VS.fromList $ crosshairVerts
                         (hotbarX0 + 9 * slotW + slotPad) (1.0)
                         (0.15, 0.15, 0.15, 0.7)
 
-    -- Colored squares for each slot's contents
+    -- Block icons for each slot's contents (3x3 mini-pattern)
     slotVerts = concatMap makeSlot [0..8]
     makeSlot i =
-      let x = hotbarX0 + fromIntegral i * slotW + slotPad
-          y = hotbarY + slotPad
-          sw = slotW - 2 * slotPad
-          sh = slotH - 2 * slotPad
+      let x0 = hotbarX0 + fromIntegral i * slotW + slotPad * 2
+          y0 = hotbarY + slotPad * 2
+          sw = slotW - 4 * slotPad
+          sh = slotH - 4 * slotPad
+          pixW = sw / 3
+          pixH = sh / 3
       in case getSlot inv i of
-        Nothing -> []  -- empty slot
+        Nothing -> []
         Just (ItemStack item _) ->
-          let color = itemColor item
-          in quad x y (x + sw) (y + sh) color
+          let colors = itemMiniIcon item
+          in concatMap (\(row, col, c) ->
+               quad (x0 + fromIntegral col * pixW) (y0 + fromIntegral row * pixH)
+                    (x0 + fromIntegral (col + 1) * pixW) (y0 + fromIntegral (row + 1) * pixH) c
+             ) colors
 
     -- Highlight selected slot
     sel = invSelected inv
@@ -772,3 +777,58 @@ itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)
 itemColor (ToolItem Axe _ _)     = (0.6, 0.5, 0.3, 1.0)
 itemColor (ToolItem Shovel _ _)  = (0.5, 0.4, 0.25, 1.0)
 itemColor (ToolItem Hoe _ _)     = (0.5, 0.5, 0.3, 1.0)
+
+-- | 3x3 mini-icon for item (row, col, color) — used in hotbar slot rendering
+itemMiniIcon :: Item -> [(Int, Int, (Float, Float, Float, Float))]
+itemMiniIcon (ToolItem Pickaxe _ _) =
+  [(0,0,m),(0,1,m),(0,2,m), (1,1,s),(1,2,b), (2,0,b),(2,2,s)]
+  where m = (0.7,0.7,0.8,1); s = (0.5,0.35,0.15,1); b = (0,0,0,0)
+itemMiniIcon (ToolItem Sword _ _) =
+  [(0,2,m), (1,1,m), (2,0,s)]
+  where m = (0.8,0.8,0.9,1); s = (0.5,0.35,0.15,1)
+itemMiniIcon (ToolItem Axe _ _) =
+  [(0,1,m),(0,2,m), (1,0,s),(1,1,m), (2,0,s)]
+  where m = (0.6,0.5,0.3,1); s = (0.5,0.35,0.15,1)
+itemMiniIcon (ToolItem Shovel _ _) =
+  [(0,1,m), (1,1,s), (2,1,s)]
+  where m = (0.5,0.4,0.25,1); s = (0.5,0.35,0.15,1)
+itemMiniIcon (ToolItem Hoe _ _) =
+  [(0,1,m),(0,2,m), (1,1,s), (2,1,s)]
+  where m = (0.5,0.5,0.3,1); s = (0.5,0.35,0.15,1)
+itemMiniIcon (BlockItem bt) = blockMiniIcon bt
+  where
+    fill c = [(r,col,c) | r <- [0..2], col <- [0..2]]
+    blockMiniIcon Stone = fill (0.5,0.5,0.5,1)
+    blockMiniIcon Dirt  = fill (0.55,0.35,0.17,1)
+    blockMiniIcon Grass =
+      [(0,0,g),(0,1,g),(0,2,g), (1,0,gs),(1,1,gs),(1,2,gs), (2,0,d),(2,1,d),(2,2,d)]
+      where g = (0.2,0.65,0.1,1); gs = (0.35,0.55,0.2,1); d = (0.55,0.35,0.17,1)
+    blockMiniIcon Sand = fill (0.82,0.75,0.5,1)
+    blockMiniIcon OakLog =
+      [(0,0,bk),(0,1,lt),(0,2,bk), (1,0,bk),(1,1,lt),(1,2,bk), (2,0,bk),(2,1,lt),(2,2,bk)]
+      where bk = (0.4,0.3,0.15,1); lt = (0.6,0.5,0.25,1)
+    blockMiniIcon OakPlanks = fill (0.78,0.65,0.43,1)
+    blockMiniIcon OakLeaves = fill (0.15,0.5,0.12,1)
+    blockMiniIcon Cobblestone =
+      [(0,0,dk),(0,1,lt),(0,2,dk), (1,0,lt),(1,1,dk),(1,2,lt), (2,0,dk),(2,1,lt),(2,2,dk)]
+      where dk = (0.35,0.35,0.35,1); lt = (0.5,0.5,0.5,1)
+    blockMiniIcon Water = fill (0.15,0.4,0.8,0.8)
+    blockMiniIcon Lava  = fill (0.9,0.35,0.05,1)
+    blockMiniIcon Torch =
+      [(0,1,fl), (1,1,st), (2,1,st)]
+      where fl = (0.95,0.8,0.2,1); st = (0.5,0.35,0.15,1)
+    blockMiniIcon Glass = fill (0.7,0.85,0.95,0.5)
+    blockMiniIcon IronOre =
+      [(0,0,st),(0,1,ore),(0,2,st), (1,0,st),(1,1,st),(1,2,ore), (2,0,ore),(2,1,st),(2,2,st)]
+      where st = (0.5,0.5,0.5,1); ore = (0.7,0.6,0.5,1)
+    blockMiniIcon CoalOre =
+      [(0,0,st),(0,1,ore),(0,2,st), (1,0,ore),(1,1,st),(1,2,st), (2,0,st),(2,1,st),(2,2,ore)]
+      where st = (0.5,0.5,0.5,1); ore = (0.15,0.15,0.15,1)
+    blockMiniIcon GoldOre =
+      [(0,0,st),(0,1,st),(0,2,ore), (1,0,ore),(1,1,st),(1,2,st), (2,0,st),(2,1,ore),(2,2,st)]
+      where st = (0.5,0.5,0.5,1); ore = (1,0.85,0,1)
+    blockMiniIcon DiamondOre =
+      [(0,0,st),(0,1,ore),(0,2,st), (1,0,st),(1,1,ore),(1,2,st), (2,0,ore),(2,1,st),(2,2,ore)]
+      where st = (0.5,0.5,0.5,1); ore = (0.3,0.8,0.95,1)
+    blockMiniIcon Snow = fill (0.95,0.95,0.95,1)
+    blockMiniIcon _ = fill (itemColor (BlockItem bt))
