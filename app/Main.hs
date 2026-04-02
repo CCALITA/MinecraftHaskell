@@ -48,6 +48,8 @@ import Foreign.Marshal.Utils (copyBytes)
 import Data.Bits ((.|.))
 import System.FilePath ((</>))
 import qualified System.Random
+import System.Environment (getArgs)
+import Data.Char (isDigit)
 
 -- | Game UI mode
 data GameMode = Playing | InventoryOpen | CraftingOpen
@@ -68,8 +70,12 @@ saveDir = "saves/world1"
 main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
+  args <- getArgs
+  let seed = case args of
+        (s:_) | all isDigit s && not (null s) -> read s
+        _ -> 12345
   let config = defaultEngineConfig
-  putStrLn $ "Starting " ++ ecWindowTitle config ++ "..."
+  putStrLn $ "Starting " ++ ecWindowTitle config ++ " (seed: " ++ show seed ++ ")..."
 
   withWindow (ecWindowWidth config) (ecWindowHeight config) (ecWindowTitle config) $ \wh -> do
     -- Initialize Vulkan
@@ -123,7 +129,7 @@ main = do
     syncObjects <- createSyncObjects device maxFrames
 
     -- World
-    let genCfg = defaultGenConfig { gcSeed = 12345 }
+    let genCfg = defaultGenConfig { gcSeed = seed }
         renderDist = 4
     world <- newWorld genCfg renderDist
 
@@ -348,6 +354,18 @@ main = do
             GLFW.Key'7 -> modifyIORef' inventoryRef (`selectHotbar` 6)
             GLFW.Key'8 -> modifyIORef' inventoryRef (`selectHotbar` 7)
             GLFW.Key'9 -> modifyIORef' inventoryRef (`selectHotbar` 8)
+            GLFW.Key'F5 -> do
+              player <- readIORef playerRef
+              savePlayer saveDir player
+              saveWorld saveDir world
+              putStrLn "Quick-saved!"
+            GLFW.Key'F9 -> do
+              mPlayer <- loadPlayer saveDir
+              case mPlayer of
+                Just p -> do
+                  writeIORef playerRef p
+                  putStrLn "Quick-loaded!"
+                Nothing -> putStrLn "No save found."
             _ -> pure ()
           _ -> case key of  -- InventoryOpen or CraftingOpen
             GLFW.Key'Escape -> do
