@@ -133,7 +133,14 @@ main = do
     aiStatesRef <- newIORef (HM.empty :: HM.HashMap Int AIState)
 
     -- Give player some starting blocks
-    let startInv = fst $ addItem (fst $ addItem (fst $ addItem emptyInventory (BlockItem Stone) 64) (BlockItem Dirt) 64) (BlockItem OakPlanks) 64
+    let startInv = foldl (\inv (item, cnt) -> fst $ addItem inv item cnt) emptyInventory
+          [ (ToolItem Pickaxe Wood 59, 1)
+          , (ToolItem Sword Wood 59, 1)
+          , (BlockItem Stone, 64)
+          , (BlockItem Dirt, 64)
+          , (BlockItem OakPlanks, 64)
+          , (BlockItem Torch, 16)
+          ]
     writeIORef inventoryRef startInv
 
     -- Initial chunk loading
