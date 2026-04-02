@@ -69,25 +69,48 @@ tilePixel tileIdx lx ly channel =
 -- | Full RGBA for a pixel within a tile
 tileFull :: Int -> Int -> Int -> (Word8, Word8, Word8, Word8)
 tileFull tileIdx lx ly = case tileIdx of
-  0  -> grassTop lx ly         -- grass top
-  1  -> stonePattern lx ly     -- stone
-  2  -> dirtPattern lx ly      -- dirt
-  3  -> grassSide lx ly        -- grass side
-  4  -> planksPattern lx ly    -- oak planks / sand
-  5  -> gravelPattern lx ly    -- gravel
-  6  -> logBark lx ly          -- oak log bark
-  7  -> leavesPattern lx ly    -- leaves
-  8  -> cobblePattern lx ly    -- cobblestone
-  9  -> bedrockPattern lx ly   -- bedrock
-  10 -> orePattern lx ly (200, 170, 130)  -- iron ore
-  11 -> orePattern lx ly (40, 40, 40)     -- coal ore
-  12 -> orePattern lx ly (255, 215, 0)    -- gold ore
-  13 -> waterPattern lx ly     -- water
-  14 -> lavaPattern lx ly      -- lava
-  15 -> glassPattern lx ly     -- glass
-  _  -> solidColor 128 128 128 -- fallback
+  -- Row 0: tileX 0-15
+  0  -> grassTop lx ly         -- grass top (V2 0 0)
+  1  -> stonePattern lx ly     -- stone (V2 1 0)
+  2  -> dirtPattern lx ly      -- dirt (V2 2 0)
+  3  -> grassSide lx ly        -- grass side (V2 3 0)
+  4  -> planksPattern lx ly    -- oak planks / sand (V2 4 0)
+  5  -> gravelPattern lx ly    -- gravel (V2 5 0)
+  7  -> brickPattern lx ly     -- brick (V2 7 0)
+  8  -> tntSide lx ly          -- TNT side (V2 8 0)
+  9  -> tntTop lx ly           -- TNT top (V2 9 0)
+  10 -> tntBottom lx ly        -- TNT bottom (V2 10 0)
+  13 -> waterPattern lx ly     -- water (V2 13 0)
+  14 -> lavaPattern lx ly      -- lava (V2 14 0)
+  15 -> glassPattern lx ly     -- glass (V2 15 0)
+  -- Row 1: tileX 0-15, tileY 1 → tileIdx 16-31
+  16 -> cobblePattern lx ly    -- cobblestone (V2 0 1)
+  17 -> bedrockPattern lx ly   -- bedrock (V2 1 1)
+  20 -> logBark lx ly          -- oak log bark (V2 4 1)
+  21 -> logTop lx ly           -- oak log cross-section (V2 5 1)
+  22 -> leavesPattern lx ly    -- oak leaves (V2 6 1)
+  25 -> chestPattern lx ly     -- chest (V2 9 1)
+  -- Row 2: tileIdx 32-47
+  32 -> orePattern lx ly (255, 215, 0)    -- gold ore (V2 0 2)
+  33 -> orePattern lx ly (200, 170, 130)  -- iron ore (V2 1 2)
+  34 -> orePattern lx ly (40, 40, 40)     -- coal ore (V2 2 2)
+  44 -> furnaceSide lx ly      -- furnace side (V2 12 2)
+  45 -> furnaceSide lx ly      -- furnace side alt (V2 13 2)
+  -- Row 3: tileIdx 48-63
+  49 -> glassPattern lx ly     -- glass alt (V2 1 3)
+  50 -> orePattern lx ly (100, 220, 255)  -- diamond ore (V2 2 3)
+  54 -> stoneBrickPattern lx ly -- stone brick (V2 6 3)
+  59 -> craftingTop lx ly      -- crafting table top (V2 11 3)
+  62 -> furnaceTop lx ly       -- furnace top (V2 14 3)
+  -- Row 4: tileIdx 64-79
+  66 -> snowPattern lx ly      -- snow (V2 2 4)
+  72 -> clayPattern lx ly      -- clay (V2 8 4)
+  -- Row 5: tileIdx 80+
+  80 -> torchPattern lx ly     -- torch (V2 0 5)
+  -- Fallback: checkerboard pattern so missing tiles are visible
+  _  -> let checker = (lx + ly) `mod` 2 == 0
+        in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
   where
-    solidColor r g b = (r, g, b, 255)
 
     -- Grass top: green with darker blade variations
     grassTop x y =
@@ -181,6 +204,77 @@ tileFull tileIdx lx ly = case tileIdx of
     glassPattern x y =
       let border = x == 0 || y == 0 || x == 15 || y == 15
       in if border then (200, 220, 240, 120) else (220, 235, 250, 40)
+
+    -- Log cross-section (top/bottom of oak log)
+    logTop x y =
+      let dist = abs (x - 7) + abs (y - 7)  -- taxicab distance from center
+          ring = dist `div` 2
+      in if ring <= 1 then (80, 60, 30, 255)    -- dark center
+         else if ring <= 3 then (160, 130, 70, 255) -- light wood
+         else (100, 75, 40, 255)                 -- bark edge
+
+    -- Brick pattern: red bricks with gray mortar
+    brickPattern x y =
+      let row = y `div` 4
+          offset = if row `mod` 2 == 0 then 0 else 8
+          bx = (x + offset) `mod` 16
+          isMortar = y `mod` 4 == 0 || bx `mod` 8 == 0
+      in if isMortar then (160, 160, 160, 255) else (170, 80, 60, 255)
+
+    -- TNT side: red with white band
+    tntSide x y =
+      let band = y >= 5 && y <= 10
+      in if band then (220, 220, 220, 255) else (200, 50, 40, 255)
+
+    tntTop _ _ = (180, 180, 180, 255)
+    tntBottom _ _ = (180, 180, 180, 255)
+
+    -- Chest: brown wood box
+    chestPattern x y =
+      let border = x == 0 || y == 0 || x == 15 || y == 15
+          latch = x >= 6 && x <= 9 && y >= 6 && y <= 8
+      in if latch then (200, 180, 50, 255)  -- gold latch
+         else if border then (100, 65, 30, 255) -- dark border
+         else (140, 95, 45, 255)  -- wood
+
+    -- Furnace side: stone with dark opening
+    furnaceSide x y =
+      let opening = x >= 4 && x <= 11 && y >= 5 && y <= 12
+      in if opening then (40, 40, 40, 255) else stonePattern x y
+
+    furnaceTop = stonePattern
+
+    -- Stone brick: cut stone blocks with mortar lines
+    stoneBrickPattern x y =
+      let isMortar = y `mod` 8 == 0 || (x + (if (y `div` 8) `mod` 2 == 0 then 0 else 4)) `mod` 8 == 0
+          n = pixHash x y 1500 `mod` 20
+          v = if isMortar then 100 else fromIntegral (130 + n)
+      in (v, v, v, 255)
+
+    -- Crafting table top: wooden grid pattern
+    craftingTop x y =
+      let grid = x `mod` 8 == 0 || y `mod` 8 == 0
+      in if grid then (80, 55, 25, 255) else planksPattern x y
+
+    -- Snow: white with subtle variation
+    snowPattern x y =
+      let n = pixHash x y 1600 `mod` 15
+          v = fromIntegral (240 + n)
+      in (v, v, v, 255)
+
+    -- Clay: light gray-brown
+    clayPattern x y =
+      let n = pixHash x y 1700 `mod` 20
+          v = fromIntegral (160 + n)
+      in (v, fromIntegral (155 + n), fromIntegral (145 + n), 255)
+
+    -- Torch: mostly transparent with orange flame center
+    torchPattern x y =
+      let isStick = x >= 7 && x <= 8 && y >= 5 && y <= 15
+          isFlame = x >= 6 && x <= 9 && y >= 2 && y <= 6
+      in if isFlame then (255, 200, 50, 255)
+         else if isStick then (120, 90, 40, 255)
+         else (0, 0, 0, 0)  -- transparent
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels

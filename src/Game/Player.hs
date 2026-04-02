@@ -155,7 +155,13 @@ updatePlayer dt input isSolidBlock player = do
       (newPos, resolvedVel) <- resolveCollision isSolidBlock (plPos player) displacement
 
       onGround' <- isOnGround isSolidBlock newPos
-      let finalVy = if onGround' && v3y resolvedVel <= 0 then 0 else v3y resolvedVel
+      -- Store actual velocity, zeroing axes where collision blocked movement.
+      -- resolvedVel components are 0 when blocked by collision.
+      let finalVy = if onGround' && vy' <= 0 then 0
+                    else if v3y resolvedVel == 0 then 0  -- blocked by floor/ceiling
+                    else vy'
+          finalVx = if v3x resolvedVel == 0 then 0 else hvx
+          finalVz = if v3z resolvedVel == 0 then 0 else hvz
           -- Track fall distance
           dy = v3y (plPos player) - v3y newPos  -- positive when falling down
           newFallDist = if dy > 0 then plFallDist player + dy else plFallDist player
@@ -167,7 +173,7 @@ updatePlayer dt input isSolidBlock player = do
 
       pure player
         { plPos       = newPos
-        , plVelocity  = V3 (v3x resolvedVel) finalVy (v3z resolvedVel)
+        , plVelocity  = V3 finalVx finalVy finalVz
         , plYaw       = yaw'
         , plPitch     = pitch'
         , plOnGround  = onGround'
