@@ -172,13 +172,14 @@ main = do
           , -crosshairThick, -crosshairSize, fst4 white, snd4 white, thd4 white, fth4 white
           ,  crosshairThick,  crosshairSize, fst4 white, snd4 white, thd4 white, fth4 white
           , -crosshairThick,  crosshairSize, fst4 white, snd4 white, thd4 white, fth4 white
-          -- Hotbar background (9 slots at bottom center)
-          , -0.45, -1.0,  0.2, 0.2, 0.2, 0.6
-          ,  0.45, -1.0,  0.2, 0.2, 0.2, 0.6
-          ,  0.45, -0.88, 0.2, 0.2, 0.2, 0.6
-          , -0.45, -1.0,  0.2, 0.2, 0.2, 0.6
-          ,  0.45, -0.88, 0.2, 0.2, 0.2, 0.6
-          , -0.45, -0.88, 0.2, 0.2, 0.2, 0.6
+          -- Hotbar background (9 slots at bottom of screen)
+          -- Vulkan NDC: Y=-1 is top, Y=+1 is bottom
+          , -0.45,  0.88, 0.2, 0.2, 0.2, 0.6
+          ,  0.45,  0.88, 0.2, 0.2, 0.2, 0.6
+          ,  0.45,  1.0,  0.2, 0.2, 0.2, 0.6
+          , -0.45,  0.88, 0.2, 0.2, 0.2, 0.6
+          ,  0.45,  1.0,  0.2, 0.2, 0.2, 0.6
+          , -0.45,  1.0,  0.2, 0.2, 0.2, 0.6
           ] :: VS.Vector Float
         hudVertCount = VS.length hudVerts `div` 6  -- 6 floats per vertex
     hudVertBuf <- createVertexBuffer physDevice device cmdPool (vcGraphicsQueue vc) hudVerts
