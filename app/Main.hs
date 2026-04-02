@@ -325,13 +325,20 @@ main = do
             let ds     = dsSets V.! currentFrame
 
             sc' <- readIORef scRef
+            dayNightVal <- readIORef dayNightRef
             let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
             let cam = cameraFromPlayer player
                 aspect = fromIntegral extW / fromIntegral extH
+                V3 sx sy sz = getSunDirection dayNightVal
                 ubo = UniformBufferObject
-                  { uboModel      = transpose identity
-                  , uboView       = transpose $ cameraViewMatrix cam
-                  , uboProjection = transpose $ cameraProjectionMatrix aspect 0.1 1000 cam
+                  { uboModel        = transpose identity
+                  , uboView         = transpose $ cameraViewMatrix cam
+                  , uboProjection   = transpose $ cameraProjectionMatrix aspect 0.1 1000 cam
+                  , uboSunDirection = V4 sx sy sz 0
+                  , uboAmbientLight = getAmbientLight dayNightVal
+                  , _uboPad1        = 0
+                  , _uboPad2        = 0
+                  , _uboPad3        = 0
                   }
             updateUBO device (uniformBufs V.! currentFrame) ubo
 
@@ -347,8 +354,7 @@ main = do
                              ]
 
             -- Compute sky color from day/night cycle
-            dayNight <- readIORef dayNightRef
-            let V4 skyR skyG skyB skyA = getSkyColor dayNight
+            let V4 skyR skyG skyB skyA = getSkyColor dayNightVal
 
             fbs <- readIORef fbRef
             needsRecreate <- drawFrame vc sc' pc fbs cmdBuf sync chunkDraws ds (skyR, skyG, skyB, skyA)
