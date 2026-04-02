@@ -27,7 +27,7 @@ import Game.DayNight
 import World.Fluid
 import World.Light
 import Entity.ECS
-import Entity.Mob (MobType(..), updateMobAI, AIState(..))
+import Entity.Mob (MobType(..), MobInfo(..), updateMobAI, AIState(..), mobInfo)
 import Entity.Spawn
 import Game.Save
 import Game.DroppedItem
@@ -393,6 +393,14 @@ main = do
                 (ent', newAI) <- updateMobAI dt ent (readMobType (entTag ent)) (plPos player) blockQuery currentAI spawnRngRef
                 updateEntity entityWorld eid (const ent')
                 modifyIORef' aiStatesRef (HM.insert eid newAI)
+                -- Apply mob attack damage to player
+                case (currentAI, newAI) of
+                  (AIAttack _ cd, AIAttack _ 1.0) | cd <= 0 -> do
+                    let dmg = floor $ miAttackDmg (mobInfo (readMobType (entTag ent)))
+                    when (dmg > 0) $ do
+                      modifyIORef' playerRef (damagePlayer dmg)
+                      putStrLn $ entTag ent ++ " attacked you for " ++ show dmg ++ " damage!"
+                  _ -> pure ()
 
             -- Auto-save every ~5 minutes (18000 frames at 60fps)
             when (frameIdx > 0 && frameIdx `mod` 18000 == 0) $ do
