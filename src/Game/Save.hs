@@ -120,6 +120,7 @@ loadPlayer saveDir = do
             , plFlying    = sdPlayerFlying sd
             , plSprinting = False
             , plHealth    = 20
+            , plHunger    = 20
             , plFallDist  = 0
             }
       pure (Just player)

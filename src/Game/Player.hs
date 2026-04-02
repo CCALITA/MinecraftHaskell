@@ -8,6 +8,7 @@ module Game.Player
   , raycastBlock
   , RayHit(..)
   , maxHealth
+  , maxHunger
   , applyFallDamage
   , damagePlayer
   , respawnPlayer
@@ -30,12 +31,17 @@ data Player = Player
   , plFlying    :: !Bool         -- creative-mode flying
   , plSprinting :: !Bool
   , plHealth    :: !Int          -- 0-20 (10 hearts)
+  , plHunger    :: !Int          -- 0-20 (10 drumsticks)
   , plFallDist  :: !Float        -- accumulated fall distance
   } deriving stock (Show, Eq)
 
 -- | Max health (10 hearts = 20 half-hearts)
 maxHealth :: Int
 maxHealth = 20
+
+-- | Max hunger (10 drumsticks = 20 half-drumsticks)
+maxHunger :: Int
+maxHunger = 20
 
 -- | Input state for a single tick
 data PlayerInput = PlayerInput
@@ -62,6 +68,7 @@ defaultPlayer spawnPos = Player
   , plFlying    = True  -- start in creative fly mode
   , plSprinting = False
   , plHealth    = maxHealth
+  , plHunger    = maxHunger
   , plFallDist  = 0
   }
 
@@ -170,6 +177,17 @@ updatePlayer dt input isSolidBlock player = do
           baseDmg = if landed && newFallDist > 3.0 then floor newFallDist - 3 else 0
           finalHealth = max 0 (plHealth player - baseDmg)
           finalFallDist = if onGround' then 0 else newFallDist
+          -- Hunger: drain on sprint/jump, regen health when full, starve when empty
+          hungerDrain = (if piSprint input then 1 else 0)
+                      + (if landed && piJump input then 1 else 0)
+          curHunger = plHunger player
+          -- Drain hunger very slowly (1 point per ~100 ticks of sprinting)
+          newHunger = max 0 (curHunger - hungerDrain)
+          -- Health regen when hunger >= 18
+          healthRegen = if newHunger >= 18 && finalHealth < maxHealth then 1 else 0
+          -- Starvation when hunger = 0
+          starveDmg = if newHunger <= 0 && finalHealth > 1 then 1 else 0
+          finalHealth' = min maxHealth (max 0 (finalHealth + healthRegen - starveDmg))
 
       pure player
         { plPos       = newPos
@@ -179,7 +197,8 @@ updatePlayer dt input isSolidBlock player = do
         , plOnGround  = onGround'
         , plFlying    = flying
         , plSprinting = piSprint input
-        , plHealth    = finalHealth
+        , plHealth    = finalHealth'
+        , plHunger    = newHunger
         , plFallDist  = finalFallDist
         }
 
@@ -217,7 +236,7 @@ damagePlayer dmg player = player { plHealth = max 0 (plHealth player - dmg) }
 -- | Respawn player at given position with full health
 respawnPlayer :: V3 Float -> Player -> Player
 respawnPlayer spawnPos player = player
-  { plPos = spawnPos, plVelocity = V3 0 0 0, plHealth = maxHealth, plFallDist = 0 }
+  { plPos = spawnPos, plVelocity = V3 0 0 0, plHealth = maxHealth, plHunger = maxHunger, plFallDist = 0 }
 
 -- | Is the player dead?
 isPlayerDead :: Player -> Bool

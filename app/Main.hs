@@ -463,7 +463,7 @@ main = do
             let miningProgress = case mining of
                   Just (_, p) -> p
                   Nothing     -> 0
-                hudVerts = buildHudVertices inv miningProgress (plHealth player')
+                hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player')
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
             when (hudVC > 0) $ do
@@ -656,8 +656,8 @@ thd4 (_, _, c, _) = c
 fth4 (_, _, _, d) = d
 
 -- | Build HUD vertices from current state
-buildHudVertices :: Inventory -> Float -> Int -> VS.Vector Float
-buildHudVertices inv miningProgress health = VS.fromList $ crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts
+buildHudVertices :: Inventory -> Float -> Int -> Int -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger = VS.fromList $ crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts
   where
     -- Crosshair: white + at center
     cs = 0.015 :: Float  -- size
@@ -722,6 +722,22 @@ buildHudVertices inv miningProgress health = VS.fromList $ crosshairVerts ++ hot
             | halfHeart = (0.85, 0.1, 0.1, 0.5)
             | otherwise = (0.3, 0.1, 0.1, 0.4)
       in quad heartX heartY (heartX + heartW) (heartY + heartH) color
+
+    -- Hunger drumsticks: brown squares on the right side above hotbar
+    hungerVerts = concatMap makeDrumstick [0..9]
+    makeDrumstick i =
+      let dw = 0.035
+          dh = 0.035
+          dY = hotbarY - dh - 0.01
+          -- Right-aligned: start from right edge of hotbar
+          dX = hotbarX0 + 9 * slotW - fromIntegral (i + 1) * (dw + 0.005) + 0.005
+          halfDrum = (i * 2 + 1) == hunger
+          fullDrum = (i * 2 + 2) <= hunger
+          color
+            | fullDrum = (0.7, 0.5, 0.15, 1.0)   -- full drumstick (brown)
+            | halfDrum = (0.7, 0.5, 0.15, 0.5)   -- half
+            | otherwise = (0.3, 0.2, 0.05, 0.4)  -- empty
+      in quad dX dY (dX + dw) (dY + dh) color
 
 -- | Get a display color for an item (used for hotbar slot rendering)
 itemColor :: Item -> (Float, Float, Float, Float)
