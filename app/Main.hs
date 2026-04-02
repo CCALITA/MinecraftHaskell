@@ -7,6 +7,7 @@ import qualified Graphics.UI.GLFW as GLFW
 import Engine.Window
 import Engine.Camera
 import Engine.Mesh (BlockVertex(..), MeshData(..), meshChunkWithLight)
+import Engine.BitmapFont
 import Engine.Types (defaultEngineConfig, EngineConfig(..), UniformBufferObject(..))
 import Engine.Vulkan.Init
 import Engine.Vulkan.Swapchain
@@ -176,7 +177,7 @@ main = do
         putStrLn $ "Generated " ++ show chunkCount ++ " initial chunks"
 
     -- HUD: use a host-visible buffer that's updated each frame with inventory contents
-    let hudMaxVerts = 2000  -- enough for inventory/crafting screens
+    let hudMaxVerts = 5000  -- enough for inventory/crafting screens + text
         hudBufSize = fromIntegral (hudMaxVerts * 24) :: Vk.DeviceSize  -- 24 bytes per vertex (vec2 + vec4)
     hudBuf <- createBuffer physDevice device hudBufSize
       Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
@@ -236,13 +237,13 @@ main = do
               ndcX = realToFrac mx / fromIntegral extW * 2.0 - 1.0 :: Float
               ndcY = realToFrac my / fromIntegral extH * 2.0 - 1.0 :: Float
           -- "New World" button: centered, y = -0.1 to 0.0
-          when (ndcX >= -0.25 && ndcX <= 0.25 && ndcY >= -0.1 && ndcY <= 0.05) $ do
+          when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= -0.12 && ndcY <= 0.07) $ do
             writeIORef gameModeRef Playing
             GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
             writeIORef lastCursorRef Nothing
             putStrLn "Starting new world..."
           -- "Load World" button: centered, y = 0.1 to 0.2
-          when (ndcX >= -0.25 && ndcX <= 0.25 && ndcY >= 0.1 && ndcY <= 0.25) $ do
+          when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= 0.1 && ndcY <= 0.27) $ do
             loaded <- loadWorld saveDir world
             when loaded $ do
               mPlayer <- loadPlayer saveDir
@@ -256,7 +257,7 @@ main = do
             GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
             writeIORef lastCursorRef Nothing
           -- "Quit" button: centered, y = 0.3 to 0.4
-          when (ndcX >= -0.25 && ndcX <= 0.25 && ndcY >= 0.3 && ndcY <= 0.45) $
+          when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= 0.32 && ndcY <= 0.49) $
             GLFW.setWindowShouldClose (whWindow wh) True
 
         Paused -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
@@ -1002,12 +1003,16 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid = VS
           pixH = sh / 3
       in case getSlot inv i of
         Nothing -> []
-        Just (ItemStack item _) ->
+        Just (ItemStack item cnt) ->
           let colors = itemMiniIcon item
-          in concatMap (\(row, col, c) ->
-               quad (x0 + fromIntegral col * pixW) (y0 + fromIntegral row * pixH)
-                    (x0 + fromIntegral (col + 1) * pixW) (y0 + fromIntegral (row + 1) * pixH) c
-             ) colors
+              iconVerts = concatMap (\(row, col, c) ->
+                   quad (x0 + fromIntegral col * pixW) (y0 + fromIntegral row * pixH)
+                        (x0 + fromIntegral (col + 1) * pixW) (y0 + fromIntegral (row + 1) * pixH) c
+                   ) colors
+              countText = if cnt > 1
+                then renderText (x0 + sw - 0.025) (y0 + sh - 0.02) 0.6 (1,1,1,1) (show cnt)
+                else []
+          in iconVerts ++ countText
 
     -- Highlight selected slot
     sel = invSelected inv
@@ -1173,39 +1178,38 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid = VS
     menuVerts =
       -- Dark background
       quad (-1) (-1) 1 1 (0.1, 0.12, 0.15, 1.0)
-      -- Title area (lighter bar)
+      -- Title
       ++ quad (-0.4) (-0.6) 0.4 (-0.4) (0.2, 0.5, 0.3, 0.9)
+      ++ renderTextCentered (-0.54) 1.5 (1, 1, 1, 1) "MINECRAFT"
       -- "New World" button (green)
-      ++ quad (-0.25) (-0.1) 0.25 0.05 (0.3, 0.6, 0.35, 0.9)
-      ++ quad (-0.24) (-0.09) 0.24 0.04 (0.25, 0.5, 0.3, 0.9)
+      ++ quad (-0.3) (-0.12) 0.3 0.07 (0.3, 0.6, 0.35, 0.9)
+      ++ quad (-0.28) (-0.1) 0.28 0.05 (0.25, 0.5, 0.3, 0.9)
+      ++ renderTextCentered (-0.06) 1.0 (1, 1, 1, 1) "NEW WORLD"
       -- "Load World" button (blue)
-      ++ quad (-0.25) 0.1 0.25 0.25 (0.35, 0.35, 0.6, 0.9)
-      ++ quad (-0.24) 0.11 0.24 0.24 (0.3, 0.3, 0.5, 0.9)
+      ++ quad (-0.3) 0.1 0.3 0.27 (0.35, 0.35, 0.6, 0.9)
+      ++ quad (-0.28) 0.12 0.28 0.25 (0.3, 0.3, 0.5, 0.9)
+      ++ renderTextCentered 0.15 1.0 (1, 1, 1, 1) "LOAD WORLD"
       -- "Quit" button (red)
-      ++ quad (-0.25) 0.3 0.25 0.45 (0.6, 0.3, 0.3, 0.9)
-      ++ quad (-0.24) 0.31 0.24 0.44 (0.5, 0.25, 0.25, 0.9)
+      ++ quad (-0.3) 0.32 0.3 0.49 (0.6, 0.3, 0.3, 0.9)
+      ++ quad (-0.28) 0.34 0.28 0.47 (0.5, 0.25, 0.25, 0.9)
+      ++ renderTextCentered 0.37 1.0 (1, 1, 1, 1) "QUIT"
 
     -- Pause screen: semi-transparent overlay with Resume / Save+Quit / Quit
     pauseVerts =
       quad (-1) (-1) 1 1 (0, 0, 0, 0.65)
-      -- Resume button (large green)
+      ++ renderTextCentered (-0.35) 1.5 (1, 1, 1, 1) "PAUSED"
+      -- Resume button (green)
       ++ quad (-0.3) (-0.2) 0.3 0.0 (0.2, 0.55, 0.25, 1.0)
       ++ quad (-0.28) (-0.18) 0.28 (-0.02) (0.15, 0.45, 0.2, 1.0)
-      -- Play triangle icon
-      ++ [ -0.1, -0.15, 0.4, 0.9, 0.4, 1.0
-         ,  0.05, -0.1,  0.4, 0.9, 0.4, 1.0
-         , -0.1, -0.05, 0.4, 0.9, 0.4, 1.0 ]
-      -- Save & Quit to Menu (large blue)
+      ++ renderTextCentered (-0.14) 1.0 (1, 1, 1, 1) "RESUME"
+      -- Save & Quit to Menu (blue)
       ++ quad (-0.3) 0.05 0.3 0.25 (0.25, 0.25, 0.55, 1.0)
       ++ quad (-0.28) 0.07 0.28 0.23 (0.2, 0.2, 0.45, 1.0)
-      -- Arrow icon
-      ++ quad (-0.06) 0.12 0.06 0.15 (0.5, 0.5, 0.8, 1.0)
-      -- Quit Game (large red)
+      ++ renderTextCentered 0.11 1.0 (1, 1, 1, 1) "SAVE AND QUIT"
+      -- Quit Game (red)
       ++ quad (-0.3) 0.3 0.3 0.5 (0.55, 0.2, 0.2, 1.0)
       ++ quad (-0.28) 0.32 0.28 0.48 (0.45, 0.15, 0.15, 1.0)
-      -- X icon
-      ++ quad (-0.04) 0.37 0.04 0.39 (0.9, 0.4, 0.4, 1.0)
-      ++ quad (-0.04) 0.41 0.04 0.43 (0.9, 0.4, 0.4, 1.0)
+      ++ renderTextCentered 0.37 1.0 (1, 1, 1, 1) "QUIT GAME"
 
 -- | Get a display color for an item (used for hotbar slot rendering)
 itemColor :: Item -> (Float, Float, Float, Float)
