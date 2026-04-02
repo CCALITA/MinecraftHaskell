@@ -232,11 +232,10 @@ main = do
       case mode of
         MainMenu -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
-          sc' <- readIORef scRef
-          let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
-              ndcX = realToFrac mx / fromIntegral extW * 2.0 - 1.0 :: Float
-              ndcY = realToFrac my / fromIntegral extH * 2.0 - 1.0 :: Float
-          -- "New World" button: centered, y = -0.1 to 0.0
+          (winW, winH) <- getWindowSize wh
+          let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+              ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
+          -- "New World" button
           when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= -0.12 && ndcY <= 0.07) $ do
             writeIORef gameModeRef Playing
             GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
@@ -262,10 +261,9 @@ main = do
 
         Paused -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
-          sc' <- readIORef scRef
-          let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
-              ndcX = realToFrac mx / fromIntegral extW * 2.0 - 1.0 :: Float
-              ndcY = realToFrac my / fromIntegral extH * 2.0 - 1.0 :: Float
+          (winW, winH) <- getWindowSize wh
+          let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+              ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
           -- Resume button (larger hit area)
           when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= -0.2 && ndcY <= 0.0) $ do
             writeIORef gameModeRef Playing
@@ -283,13 +281,10 @@ main = do
             GLFW.setWindowShouldClose (whWindow wh) True
 
         InventoryOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
-          -- Click on inventory slot
           (mx, my) <- readIORef mousePosRef
-          sc' <- readIORef scRef
-          let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
-              -- Convert pixel coords to NDC (-1 to 1, Y flipped for Vulkan)
-              ndcX = realToFrac mx / fromIntegral extW * 2.0 - 1.0 :: Float
-              ndcY = realToFrac my / fromIntegral extH * 2.0 - 1.0 :: Float
+          (winW, winH) <- getWindowSize wh
+          let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+              ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
               -- Check which inventory slot was clicked
               mSlot = hitInventorySlot ndcX ndcY
           case mSlot of
@@ -304,10 +299,9 @@ main = do
 
         CraftingOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
-          sc' <- readIORef scRef
-          let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
-              ndcX = realToFrac mx / fromIntegral extW * 2.0 - 1.0 :: Float
-              ndcY = realToFrac my / fromIntegral extH * 2.0 - 1.0 :: Float
+          (winW, winH) <- getWindowSize wh
+          let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+              ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
               mSlot = hitCraftingSlot ndcX ndcY
           case mSlot of
             Just (CraftGrid row col) -> do
