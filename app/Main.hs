@@ -850,7 +850,7 @@ fth4 (_, _, _, d) = d
 buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> VS.Vector Float
 buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid = VS.fromList $
   case mode of
-    Playing -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts
+    Playing -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ handVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts
   where
@@ -938,6 +938,25 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid = VS
             | halfDrum = (0.7, 0.5, 0.15, 0.5)   -- half
             | otherwise = (0.3, 0.2, 0.05, 0.4)  -- empty
       in quad dX dY (dX + dw) (dY + dh) color
+
+    -- First-person hand/arm in lower-right
+    handVerts =
+      let -- Swing animation: offset hand when mining
+          swingOff = if miningProgress > 0 then sin (miningProgress * 6.28) * 0.08 else 0
+          -- Arm base position (lower-right, Vulkan NDC)
+          armX = 0.45 + swingOff
+          armY = 0.3 - abs swingOff * 0.5
+          -- Skin color
+          skin = (0.85, 0.7, 0.55, 1.0)
+          -- Item color on the "hand"
+          heldColor = case selectedItem inv of
+            Just (ItemStack item _) -> itemColor item
+            Nothing -> skin
+          -- Arm (tall rectangle)
+          arm = quad armX armY (armX + 0.2) 1.0 skin
+          -- Item block (small square at top of arm)
+          itemBlock = quad (armX + 0.02) (armY - 0.12) (armX + 0.18) armY heldColor
+      in arm ++ itemBlock
 
     -- Inventory screen: dark overlay + 4x9 slot grid
     invScreenVerts =
