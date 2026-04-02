@@ -10,7 +10,7 @@ module Game.Crafting
   ) where
 
 import World.Block (BlockType(..))
-import Game.Item (Item(..))
+import Game.Item (Item(..), ToolType(..), ToolMaterial(..), toolInfo, ToolInfo(..))
 import qualified Data.Vector as V
 
 -- | Crafting grid (2x2 or 3x3)
@@ -184,4 +184,29 @@ allRecipes =
       , rcResult  = BlockItem TNT
       , rcCount   = 1
       }
-  ]
+  ] ++ toolRecipes
+
+-- | Helper to create a tool item with full durability
+tool :: ToolType -> ToolMaterial -> Item
+tool tt tm = ToolItem tt tm (tiMaxDurability (toolInfo tm))
+
+-- | Generate crafting recipes for all tool tiers
+toolRecipes :: [Recipe]
+toolRecipes = concatMap tierRecipes [(Wood, OakPlanks), (StoneTier, Cobblestone), (Iron, IronOre), (Diamond, DiamondOre)]
+  where
+    stick = bi OakLog  -- OakLog as stick placeholder
+    tierRecipes (mat, matBlock) =
+      let m = bi matBlock
+      in [ -- Pickaxe: 3 material on top, 2 sticks below
+           Recipe [[m, m, m], [Nothing, stick, Nothing], [Nothing, stick, Nothing]]
+                  (tool Pickaxe mat) 1
+         , -- Axe: 2 material + 1 material, 2 sticks
+           Recipe [[m, m, Nothing], [m, stick, Nothing], [Nothing, stick, Nothing]]
+                  (tool Axe mat) 1
+         , -- Shovel: 1 material on top, 2 sticks
+           Recipe [[m], [stick], [stick]]
+                  (tool Shovel mat) 1
+         , -- Sword: 2 material + 1 stick
+           Recipe [[m], [m], [stick]]
+                  (tool Sword mat) 1
+         ]

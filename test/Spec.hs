@@ -238,6 +238,16 @@ craftingSpec = describe "Game.Crafting" $ do
     let grid = setCraftingSlot (emptyCraftingGrid 3) 0 0 (Just (BlockItem Sand))
     tryCraft grid `shouldBe` CraftSuccess (BlockItem Glass) 1
 
+  it "wood pickaxe recipe works" $ do
+    let p = Just (BlockItem OakPlanks)
+        s = Just (BlockItem OakLog)  -- stick placeholder
+        grid = setCraftingSlot (setCraftingSlot (setCraftingSlot
+              (setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3)
+                0 0 p) 0 1 p) 0 2 p) 1 1 s) 2 1 s
+    case tryCraft grid of
+      CraftSuccess (ToolItem Pickaxe Wood _) 1 -> pure ()
+      other -> expectationFailure $ "Expected wood pickaxe, got: " ++ show other
+
 -- =========================================================================
 -- World coordinate mapping
 -- =========================================================================
