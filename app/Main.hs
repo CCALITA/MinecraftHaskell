@@ -32,6 +32,7 @@ import Game.Save
 
 import Control.Monad (unless, when, forM_)
 import Control.Concurrent.STM (readTVarIO)
+import Control.Exception (finally)
 import System.IO (hSetBuffering, stdout, BufferMode(..))
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Vector as V
@@ -237,7 +238,7 @@ main = do
           bt <- worldGetBlock world (V3 bx by bz)
           pure (World.Block.isSolid bt)
 
-    -- Main loop
+    -- Main loop (wrapped in finally for exception-safe cleanup)
     putStrLn "Controls: WASD=move, Mouse=look, Space=jump, F=fly, 1-9=hotbar, LMB=break, RMB=place, ESC=quit"
     let loop = do
           shouldClose <- windowShouldClose wh
@@ -374,28 +375,27 @@ main = do
 
             writeIORef frameRef (frameIdx + 1)
             loop
-    loop
-
-    -- Cleanup
-    putStrLn "Cleaning up..."
-    Vk.deviceWaitIdle device
-    destroySyncObjects device syncObjects
-    Vk.destroyCommandPool device cmdPool Nothing
-    -- Destroy all chunk meshes
-    meshCache <- readIORef meshCacheRef
-    mapM_ (\(vb, ib, _) -> destroyBuffer device vb >> destroyBuffer device ib) (HM.elems meshCache)
-    V.mapM_ (destroyBuffer device) uniformBufs
-    destroyTextureImage device texAtlas
-    Vk.destroyDescriptorPool device dsPool Nothing
-    Vk.destroyDescriptorSetLayout device dsLayout Nothing
-    fbs <- readIORef fbRef
-    destroyFramebuffers device fbs
-    readIORef depthRef >>= destroyDepthResources device
-    destroyPipelineContext device pc
-    scFinal <- readIORef scRef
-    destroySwapchain device scFinal
-    destroyVulkanContext vc
-    putStrLn "Goodbye!"
+    loop `finally` do
+      -- Cleanup (runs even if game loop throws an exception)
+      putStrLn "Cleaning up..."
+      Vk.deviceWaitIdle device
+      destroySyncObjects device syncObjects
+      Vk.destroyCommandPool device cmdPool Nothing
+      -- Destroy all chunk meshes
+      meshCache <- readIORef meshCacheRef
+      mapM_ (\(vb, ib, _) -> destroyBuffer device vb >> destroyBuffer device ib) (HM.elems meshCache)
+      V.mapM_ (destroyBuffer device) uniformBufs
+      destroyTextureImage device texAtlas
+      Vk.destroyDescriptorPool device dsPool Nothing
+      Vk.destroyDescriptorSetLayout device dsLayout Nothing
+      fbs <- readIORef fbRef
+      destroyFramebuffers device fbs
+      readIORef depthRef >>= destroyDepthResources device
+      destroyPipelineContext device pc
+      scFinal <- readIORef scRef
+      destroySwapchain device scFinal
+      destroyVulkanContext vc
+      putStrLn "Goodbye!"
 
 -- | Run physics ticks consuming accumulated time
 playerLoop :: PlayerInput -> BlockQuery -> IORef Float -> Float -> IORef Player -> IO ()
