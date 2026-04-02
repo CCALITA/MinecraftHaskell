@@ -138,14 +138,14 @@ main = do
     aiStatesRef <- newIORef (HM.empty :: HM.HashMap Int AIState)
 
     -- Give player some starting blocks
-    let startInv = foldl (\inv (item, cnt) -> fst $ addItem inv item cnt) emptyInventory
+    let startInv = selectHotbar (foldl (\i (item, cnt) -> fst $ addItem i item cnt) emptyInventory
           [ (ToolItem Pickaxe Wood 59, 1)
           , (ToolItem Sword Wood 59, 1)
           , (BlockItem Stone, 64)
           , (BlockItem Dirt, 64)
           , (BlockItem OakPlanks, 64)
           , (BlockItem Torch, 16)
-          ]
+          ]) 2  -- select first block slot
     writeIORef inventoryRef startInv
 
     -- Initial chunk loading
@@ -436,9 +436,14 @@ main = do
             -- Compute sky color from day/night cycle
             let V4 skyR skyG skyB skyA = getSkyColor dayNightVal
 
-            -- Update HUD vertices with current inventory
+            -- Update HUD vertices with current inventory, mining progress, and health
             inv <- readIORef inventoryRef
-            let hudVerts = buildHudVertices inv
+            mining <- readIORef miningRef
+            player' <- readIORef playerRef
+            let miningProgress = case mining of
+                  Just (_, p) -> p
+                  Nothing     -> 0
+                hudVerts = buildHudVertices inv miningProgress (plHealth player')
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
             when (hudVC > 0) $ do
@@ -630,9 +635,9 @@ snd4 (_, b, _, _) = b
 thd4 (_, _, c, _) = c
 fth4 (_, _, _, d) = d
 
--- | Build HUD vertices from current inventory state
-buildHudVertices :: Inventory -> VS.Vector Float
-buildHudVertices inv = VS.fromList $ crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts
+-- | Build HUD vertices from current state
+buildHudVertices :: Inventory -> Float -> Int -> VS.Vector Float
+buildHudVertices inv miningProgress health = VS.fromList $ crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts
   where
     -- Crosshair: white + at center
     cs = 0.015 :: Float  -- size
@@ -672,6 +677,31 @@ buildHudVertices inv = VS.fromList $ crosshairVerts ++ hotbarBgVerts ++ slotVert
     sel = invSelected inv
     selX = hotbarX0 + fromIntegral sel * slotW
     selectorVerts = quad selX hotbarY (selX + slotW) (hotbarY + slotH) (1.0, 1.0, 1.0, 0.3)
+
+    -- Mining progress bar: thin bar below crosshair
+    miningBarVerts
+      | miningProgress <= 0 = []
+      | otherwise =
+          let barW = 0.15
+              barH = 0.012
+              barY = 0.03  -- below crosshair
+              fillW = barW * min 1.0 miningProgress
+          in quad (-barW) barY ((-barW) + fillW * 2) (barY + barH) (0.9, 0.9, 0.2, 0.9)
+
+    -- Health hearts: red squares above hotbar
+    healthVerts = concatMap makeHeart [0..9]
+    makeHeart i =
+      let heartW = 0.035
+          heartH = 0.035
+          heartY = hotbarY - heartH - 0.01
+          heartX = hotbarX0 + fromIntegral i * (heartW + 0.005)
+          halfHeart = (i * 2 + 1) == health
+          fullHeart = (i * 2 + 2) <= health
+          color
+            | fullHeart = (0.85, 0.1, 0.1, 1.0)
+            | halfHeart = (0.85, 0.1, 0.1, 0.5)
+            | otherwise = (0.3, 0.1, 0.1, 0.4)
+      in quad heartX heartY (heartX + heartW) (heartY + heartH) color
 
 -- | Get a display color for an item (used for hotbar slot rendering)
 itemColor :: Item -> (Float, Float, Float, Float)
