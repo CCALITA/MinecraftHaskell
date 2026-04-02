@@ -14,7 +14,7 @@ import qualified Vulkan.CStruct.Extends as Vk
 
 import Engine.Vulkan.Init (VulkanContext(..))
 import Engine.Vulkan.Swapchain (SwapchainContext(..))
-import Engine.Vulkan.Pipeline (PipelineContext(..))
+import Engine.Vulkan.Pipeline (PipelineContext(..), HudPipeline(..))
 import Engine.Vulkan.Memory (BufferAllocation(..))
 
 import Data.Vector (Vector)
@@ -84,8 +84,9 @@ recordCommandBuffer
   -> [(BufferAllocation, BufferAllocation, Int)]  -- ^ List of (vertBuf, idxBuf, indexCount) per chunk
   -> Vk.DescriptorSet        -- ^ Descriptor set (UBO + texture)
   -> (Float, Float, Float, Float)  -- ^ Sky clear color (r, g, b, a)
+  -> Maybe (HudPipeline, BufferAllocation, Int)  -- ^ Optional HUD pipeline, vertex buffer, vertex count
   -> IO ()
-recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent chunkDraws descriptorSet (skyR, skyG, skyB, skyA) = do
+recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent chunkDraws descriptorSet (skyR, skyG, skyB, skyA) mHud = do
   let beginInfo = Vk.CommandBufferBeginInfo
         { Vk.next            = ()
         , Vk.flags           = Vk.zero
@@ -125,6 +126,16 @@ recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent
     Vk.cmdDrawIndexed cmdBuf (fromIntegral ic) 1 0 0 0
     ) chunkDraws
 
+  -- Draw HUD overlay (crosshair, hotbar)
+  case mHud of
+    Nothing -> pure ()
+    Just (hudPipeline, hudVertBuf, hudVertCount) -> when (hudVertCount > 0) $ do
+      Vk.cmdBindPipeline cmdBuf Vk.PIPELINE_BIND_POINT_GRAPHICS (hpPipeline hudPipeline)
+      Vk.cmdSetViewport cmdBuf 0 (V.singleton viewport)
+      Vk.cmdSetScissor cmdBuf 0 (V.singleton scissor)
+      Vk.cmdBindVertexBuffers cmdBuf 0 (V.singleton (baBuffer hudVertBuf)) (V.singleton 0)
+      Vk.cmdDraw cmdBuf (fromIntegral hudVertCount) 1 0 0
+
   Vk.cmdEndRenderPass cmdBuf
   Vk.endCommandBuffer cmdBuf
 
@@ -140,8 +151,9 @@ drawFrame
   -> [(BufferAllocation, BufferAllocation, Int)]  -- ^ Per-chunk draw data
   -> Vk.DescriptorSet        -- ^ Descriptor set for current frame
   -> (Float, Float, Float, Float)  -- ^ Sky clear color
+  -> Maybe (HudPipeline, BufferAllocation, Int)  -- ^ Optional HUD
   -> IO Bool
-drawFrame vc sc pc framebuffers cmdBuf syncObj chunkDraws descriptorSet skyColor = do
+drawFrame vc sc pc framebuffers cmdBuf syncObj chunkDraws descriptorSet skyColor mHud = do
   let device = vcDevice vc
       maxWait = maxBound :: Word64
 
@@ -172,6 +184,7 @@ drawFrame vc sc pc framebuffers cmdBuf syncObj chunkDraws descriptorSet skyColor
         chunkDraws
         descriptorSet
         skyColor
+        mHud
 
       -- Submit command buffer
       let submitInfo = Vk.SubmitInfo

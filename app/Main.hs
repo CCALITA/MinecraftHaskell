@@ -105,6 +105,9 @@ main = do
     pc <- createGraphicsPipeline device renderPass dsLayout
       (shaderDir </> "block_vert.spv")
       (shaderDir </> "block_frag.spv")
+    hudPipeline <- createHudPipeline device renderPass
+      (shaderDir </> "hud_vert.spv")
+      (shaderDir </> "hud_frag.spv")
     depth <- readIORef depthRef
     fbRef <- newIORef =<< createFramebuffers device renderPass sc (drImageView depth)
 
@@ -147,6 +150,38 @@ main = do
     _ <- updateLoadedChunks world spawnPos
     chunkCount <- loadedChunkCount world
     putStrLn $ "Loaded " ++ show chunkCount ++ " initial chunks"
+
+    -- HUD vertex buffer (crosshair + hotbar) — static, created once
+    -- HUD vertex = (vec2 pos, vec4 color) = 24 bytes, stored as 6 Floats
+    let crosshairSize = 0.015 :: Float
+        crosshairThick = 0.003 :: Float
+        white = (1.0, 1.0, 1.0, 0.8) :: (Float, Float, Float, Float)
+        -- Two thin quads forming a + shape (6 vertices each = 12 total)
+        hudVerts = VS.fromList
+          -- Horizontal bar
+          [ -crosshairSize, -crosshairThick, fst4 white, snd4 white, thd4 white, fth4 white
+          ,  crosshairSize, -crosshairThick, fst4 white, snd4 white, thd4 white, fth4 white
+          ,  crosshairSize,  crosshairThick, fst4 white, snd4 white, thd4 white, fth4 white
+          , -crosshairSize, -crosshairThick, fst4 white, snd4 white, thd4 white, fth4 white
+          ,  crosshairSize,  crosshairThick, fst4 white, snd4 white, thd4 white, fth4 white
+          , -crosshairSize,  crosshairThick, fst4 white, snd4 white, thd4 white, fth4 white
+          -- Vertical bar
+          , -crosshairThick, -crosshairSize, fst4 white, snd4 white, thd4 white, fth4 white
+          ,  crosshairThick, -crosshairSize, fst4 white, snd4 white, thd4 white, fth4 white
+          ,  crosshairThick,  crosshairSize, fst4 white, snd4 white, thd4 white, fth4 white
+          , -crosshairThick, -crosshairSize, fst4 white, snd4 white, thd4 white, fth4 white
+          ,  crosshairThick,  crosshairSize, fst4 white, snd4 white, thd4 white, fth4 white
+          , -crosshairThick,  crosshairSize, fst4 white, snd4 white, thd4 white, fth4 white
+          -- Hotbar background (9 slots at bottom center)
+          , -0.45, -1.0,  0.2, 0.2, 0.2, 0.6
+          ,  0.45, -1.0,  0.2, 0.2, 0.2, 0.6
+          ,  0.45, -0.88, 0.2, 0.2, 0.2, 0.6
+          , -0.45, -1.0,  0.2, 0.2, 0.2, 0.6
+          ,  0.45, -0.88, 0.2, 0.2, 0.2, 0.6
+          , -0.45, -0.88, 0.2, 0.2, 0.2, 0.6
+          ] :: VS.Vector Float
+        hudVertCount = VS.length hudVerts `div` 6  -- 6 floats per vertex
+    hudVertBuf <- createVertexBuffer physDevice device cmdPool (vcGraphicsQueue vc) hudVerts
 
     -- Per-chunk mesh cache: ChunkPos -> (vertBuf, idxBuf, indexCount)
     meshCacheRef <- newIORef (HM.empty :: HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
@@ -424,7 +459,7 @@ main = do
             let V4 skyR skyG skyB skyA = getSkyColor dayNightVal
 
             fbs <- readIORef fbRef
-            needsRecreate <- drawFrame vc sc' pc fbs cmdBuf sync chunkDraws ds (skyR, skyG, skyB, skyA)
+            needsRecreate <- drawFrame vc sc' pc fbs cmdBuf sync chunkDraws ds (skyR, skyG, skyB, skyA) (Just (hudPipeline, hudVertBuf, hudVertCount))
 
             resized <- readIORef (whResized wh)
             when (needsRecreate || resized) $ do
@@ -465,6 +500,8 @@ main = do
       destroyFramebuffers device fbs
       readIORef depthRef >>= destroyDepthResources device
       destroyPipelineContext device pc
+      destroyHudPipeline device hudPipeline
+      destroyBuffer device hudVertBuf
       scFinal <- readIORef scRef
       destroySwapchain device scFinal
       destroyVulkanContext vc
@@ -595,3 +632,10 @@ readMobType "Cow"      = Cow
 readMobType "Sheep"    = Sheep
 readMobType "Chicken"  = Chicken
 readMobType _          = Pig
+
+-- | Tuple component accessors for HUD vertex data
+fst4, snd4, thd4, fth4 :: (a, a, a, a) -> a
+fst4 (a, _, _, _) = a
+snd4 (_, b, _, _) = b
+thd4 (_, _, c, _) = c
+fth4 (_, _, _, d) = d
