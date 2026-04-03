@@ -6,6 +6,8 @@ module Game.Save
   , loadPlayer
   , worldSavePath
   , playerSavePath
+  , listSaves
+  , nextSaveName
   ) where
 
 import World.Block (BlockType(..))
@@ -13,7 +15,7 @@ import World.Chunk (Chunk(..), ChunkPos, chunkWidth, chunkDepth, chunkHeight, ne
 import World.World (World(..))
 import Game.Player (Player(..))
 
-import Control.Monad (unless, mapM_)
+import Control.Monad (unless, mapM_, filterM)
 
 import Control.Concurrent.STM (readTVarIO, atomically, writeTVar)
 import qualified Data.HashMap.Strict as HM
@@ -25,6 +27,7 @@ import Data.Binary (Binary(..), encode, decode)
 import qualified Data.ByteString.Lazy as BL
 import System.Directory (createDirectoryIfMissing, doesFileExist, listDirectory, doesDirectoryExist)
 import System.FilePath ((</>), takeExtension)
+import Data.List (sort, stripPrefix)
 import Linear (V2(..), V3(..))
 import GHC.Generics (Generic)
 
@@ -146,3 +149,34 @@ loadPlayer saveDir = do
             , plFallDist  = 0
             }
       pure (Just player)
+
+-- | List available save directories under "saves/"
+listSaves :: IO [String]
+listSaves = do
+  let savesRoot = "saves"
+  exists <- doesDirectoryExist savesRoot
+  if not exists
+    then pure []
+    else do
+      dirs <- listDirectory savesRoot
+      -- Filter to directories that have a player.dat or world/ subdirectory
+      validDirs <- filterM (\d -> do
+        let path = savesRoot </> d
+        isDir <- doesDirectoryExist path
+        if not isDir then pure False
+        else do
+          hasPlayer <- doesFileExist (path </> "player.dat")
+          hasWorld <- doesDirectoryExist (path </> "world")
+          pure (hasPlayer || hasWorld)
+        ) dirs
+      pure (sort validDirs)
+
+-- | Generate the next available save name (world1, world2, ...)
+nextSaveName :: IO String
+nextSaveName = do
+  existing <- listSaves
+  let nums = [n | name <- existing
+                 , Just rest <- [stripPrefix "world" name]
+                 , [(n, "")] <- [reads rest :: [(Int, String)]]]
+      nextN = if null nums then 1 else maximum nums + 1
+  pure ("world" ++ show nextN)

@@ -35,7 +35,7 @@ import Game.Save
 import Game.DroppedItem
 
 import Control.Monad (unless, when, forM_)
-import Control.Concurrent.STM (readTVarIO)
+import Control.Concurrent.STM (readTVarIO, atomically, writeTVar)
 import Control.Exception (finally)
 import System.IO (hSetBuffering, stdout, BufferMode(..))
 import qualified Data.HashMap.Strict as HM
@@ -64,9 +64,9 @@ tickRate = 1.0 / 20.0
 maxReach :: Float
 maxReach = 5.0
 
--- | Save directory
-saveDir :: FilePath
-saveDir = "saves/world1"
+-- | Default save directory root
+savesRoot :: FilePath
+savesRoot = "saves"
 
 main :: IO ()
 main = do
@@ -136,14 +136,19 @@ main = do
 
     -- Player (try to load from save, else default)
     let spawnPos = V3 0 80 0
-    mSavedPlayer <- loadPlayer saveDir
+    -- World save management: use world1 as default, create saveDirRef for dynamic switching
+    saveDirRef <- newIORef (savesRoot </> "world1")
+    let defaultSaveDir = savesRoot </> "world1"
+    mSavedPlayer <- loadPlayer defaultSaveDir
     playerRef <- newIORef (case mSavedPlayer of
       Just p  -> p
       Nothing -> defaultPlayer spawnPos)
     inventoryRef <- newIORef emptyInventory
     gameModeRef <- newIORef MainMenu
     cursorItemRef <- newIORef (Nothing :: Maybe ItemStack)  -- item held by mouse cursor
-    craftingGridRef <- newIORef (emptyCraftingGrid 3)       -- 3x3 crafting grid state
+    craftingGridRef <- newIORef (emptyCraftingGrid 3)
+    debugOverlayRef <- newIORef False
+    targetBlockRef <- newIORef (Nothing :: Maybe (V3 Int))
     dayNightRef <- newIORef newDayNightCycle
     fluidState <- newFluidState
     droppedItems <- newDroppedItems
@@ -166,7 +171,7 @@ main = do
     writeIORef inventoryRef startInv
 
     -- Try to load saved world, otherwise generate fresh
-    loaded <- loadWorld saveDir world
+    loaded <- loadWorld defaultSaveDir world
     if loaded
       then do
         chunkCount <- loadedChunkCount world
@@ -237,24 +242,45 @@ main = do
               ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
           -- "New World" button
           when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= -0.12 && ndcY <= 0.07) $ do
+            -- Create a new world with a unique save name
+            newName <- nextSaveName
+            let newDir = savesRoot </> newName
+            writeIORef saveDirRef newDir
+            -- Reset world chunks (clear old data)
+            atomically $ writeTVar (worldChunks world) HM.empty
+            -- Generate fresh chunks around spawn
+            _ <- updateLoadedChunks world spawnPos
+            -- Reset player to spawn
+            writeIORef playerRef (defaultPlayer spawnPos)
+            -- Rebuild chunk meshes
+            rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
             writeIORef gameModeRef Playing
             GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
             writeIORef lastCursorRef Nothing
-            putStrLn "Starting new world..."
-          -- "Load World" button: centered, y = 0.1 to 0.2
+            putStrLn $ "New world: " ++ newName
+          -- "Load World" button: load most recent save
           when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= 0.1 && ndcY <= 0.27) $ do
-            loaded <- loadWorld saveDir world
-            when loaded $ do
-              mPlayer <- loadPlayer saveDir
-              case mPlayer of
-                Just p -> writeIORef playerRef p
-                Nothing -> pure ()
-              -- Rebuild all chunk meshes
-              rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
-              putStrLn "Loaded saved world!"
-            writeIORef gameModeRef Playing
-            GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
-            writeIORef lastCursorRef Nothing
+            saves <- listSaves
+            case saves of
+              [] -> putStrLn "No saved worlds found"
+              _  -> do
+                -- Load the last (most recent by name) save
+                let saveName = last saves
+                    sd = savesRoot </> saveName
+                writeIORef saveDirRef sd
+                -- Clear and reload world
+                atomically $ writeTVar (worldChunks world) HM.empty
+                loaded <- loadWorld sd world
+                when loaded $ do
+                  mPlayer <- loadPlayer sd
+                  case mPlayer of
+                    Just p -> writeIORef playerRef p
+                    Nothing -> pure ()
+                  rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
+                  putStrLn $ "Loaded world: " ++ saveName
+                writeIORef gameModeRef Playing
+                GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
+                writeIORef lastCursorRef Nothing
           -- "Quit" button: centered, y = 0.3 to 0.4
           when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= 0.32 && ndcY <= 0.49) $
             GLFW.setWindowShouldClose (whWindow wh) True
@@ -272,8 +298,9 @@ main = do
           -- Save & Quit to Menu button
           when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= 0.05 && ndcY <= 0.25) $ do
             player <- readIORef playerRef
-            savePlayer saveDir player
-            saveWorld saveDir world
+            sd <- readIORef saveDirRef
+            savePlayer sd player
+            saveWorld sd world
             putStrLn "World saved."
             writeIORef gameModeRef MainMenu
           -- Quit Game button
@@ -424,6 +451,8 @@ main = do
               writeIORef lastCursorRef Nothing
             GLFW.Key'F ->
               modifyIORef' inputRef $ \inp -> inp { piToggleFly = True }
+            GLFW.Key'F3 ->
+              modifyIORef' debugOverlayRef not
             GLFW.Key'E -> do
               writeIORef gameModeRef InventoryOpen
               GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
@@ -439,11 +468,13 @@ main = do
             GLFW.Key'9 -> modifyIORef' inventoryRef (`selectHotbar` 8)
             GLFW.Key'F5 -> do
               player <- readIORef playerRef
-              savePlayer saveDir player
-              saveWorld saveDir world
+              sd <- readIORef saveDirRef
+              savePlayer sd player
+              saveWorld sd world
               putStrLn "Quick-saved!"
             GLFW.Key'F9 -> do
-              mPlayer <- loadPlayer saveDir
+              sd <- readIORef saveDirRef
+              mPlayer <- loadPlayer sd
               case mPlayer of
                 Just p -> do
                   writeIORef playerRef p
@@ -485,6 +516,9 @@ main = do
     frameRef <- newIORef (0 :: Int)
     lastTimeRef <- newIORef =<< maybe 0 id <$> GLFW.getTime
     accumRef <- newIORef (0.0 :: Float)
+    fpsCounterRef <- newIORef (0 :: Int)       -- frames since last FPS update
+    fpsTimerRef   <- newIORef (0.0 :: Float)   -- time since last FPS update
+    fpsDisplayRef <- newIORef (0 :: Int)       -- displayed FPS value
 
     -- Block queries for physics
     let blockQuery :: BlockQuery
@@ -510,6 +544,16 @@ main = do
             writeIORef lastTimeRef now
             let rawDt = realToFrac (now - lastTime) :: Float
                 dt = min rawDt 0.25  -- cap to avoid spiral of death
+
+            -- FPS counter (update once per second)
+            modifyIORef' fpsCounterRef (+ 1)
+            modifyIORef' fpsTimerRef (+ dt)
+            fpsTimer <- readIORef fpsTimerRef
+            when (fpsTimer >= 1.0) $ do
+              fpsCount <- readIORef fpsCounterRef
+              writeIORef fpsDisplayRef fpsCount
+              writeIORef fpsCounterRef 0
+              writeIORef fpsTimerRef (fpsTimer - 1.0)
 
             -- Skip gameplay input when UI is open
             gameMode <- readIORef gameModeRef
@@ -663,8 +707,9 @@ main = do
             -- Auto-save every ~5 minutes (18000 frames at 60fps)
             when (frameIdx > 0 && frameIdx `mod` 18000 == 0) $ do
               player <- readIORef playerRef
-              savePlayer saveDir player
-              saveWorld saveDir world
+              sd <- readIORef saveDirRef
+              savePlayer sd player
+              saveWorld sd world
 
             -- Update chunks periodically
             when (frameIdx `mod` 60 == 0) $ do
@@ -714,6 +759,15 @@ main = do
             -- Compute sky color from day/night cycle
             let V4 skyR skyG skyB skyA = getSkyColor dayNightVal
 
+            -- Per-frame raycast for block target highlight
+            do let eyePos = plPos player + V3 0 1.62 0
+                   dir = dirFromPlayer player
+                   bqCb bx by bz = do
+                     bt <- worldGetBlock world (V3 bx by bz)
+                     pure (World.Block.isSolid bt)
+               mHit <- raycastBlock bqCb eyePos dir maxReach
+               writeIORef targetBlockRef (fmap rhBlockPos mHit)
+
             -- Update HUD vertices with current inventory, mining progress, and health
             inv <- readIORef inventoryRef
             mining <- readIORef miningRef
@@ -724,7 +778,14 @@ main = do
             mode <- readIORef gameModeRef
             cursorItem <- readIORef cursorItemRef
             craftGrid <- readIORef craftingGridRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid
+            showDebug <- readIORef debugOverlayRef
+            fpsVal <- readIORef fpsDisplayRef
+            chunks <- readTVarIO (worldChunks world)
+            targetBlock <- readIORef targetBlockRef
+            let debugInfo = if showDebug
+                  then Just (plPos player', plYaw player', plPitch player', fpsVal, HM.size chunks)
+                  else Nothing
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid debugInfo (fmap (\tb -> (tb, vp)) targetBlock)
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
             when (hudVC > 0) $ do
@@ -948,20 +1009,15 @@ readMobType "Sheep"    = Sheep
 readMobType "Chicken"  = Chicken
 readMobType _          = Pig
 
--- | Tuple component accessors for HUD vertex data
-fst4, snd4, thd4, fth4 :: (a, a, a, a) -> a
-fst4 (a, _, _, _) = a
-snd4 (_, b, _, _) = b
-thd4 (_, _, c, _) = c
-fth4 (_, _, _, d) = d
-
 -- | Build HUD vertices from current state
-buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid = VS.fromList $
+-- debugInfo: Just (pos, yaw, pitch, fps, chunkCount) when F3 overlay is active
+-- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
+buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid debugInfo targetInfo = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
-    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ handVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ handVerts ++ debugVerts ++ highlightVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts
   where
@@ -1072,6 +1128,92 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid = VS
           -- Item block (small square at top of arm)
           itemBlock = quad (armX + 0.02) (armY - 0.12) (armX + 0.18) armY heldColor
       in arm ++ itemBlock
+
+    -- F3 debug overlay: position, direction, FPS, chunk count
+    debugVerts = case debugInfo of
+      Nothing -> []
+      Just (V3 px py pz, yaw, pitch, fps, chunkCount) ->
+        let dc = (1.0, 1.0, 1.0, 0.9)  -- white text
+            bgc = (0.0, 0.0, 0.0, 0.5)  -- semi-transparent background
+            sc = 0.7 :: Float
+            lh = 0.07 :: Float  -- line height
+            x0 = -0.98 :: Float -- left margin
+            y0 = -0.95 :: Float -- top (Vulkan NDC: -1 = top)
+            showF1 f = let n = round (f * 10) :: Int
+                           s = show (div n 10) ++ "." ++ show (mod (abs n) 10)
+                       in if f < 0 && n > -10 then "-" ++ s else s
+            lines' = [ "FPS: " ++ show fps
+                     , "XYZ: " ++ showF1 px ++ " / " ++ showF1 py ++ " / " ++ showF1 pz
+                     , "YAW: " ++ showF1 yaw ++ "  PITCH: " ++ showF1 pitch
+                     , "CHUNKS: " ++ show chunkCount
+                     ]
+            bgW = 0.75 :: Float
+            bgH = fromIntegral (length lines') * lh + 0.02
+            bg = quad x0 y0 (x0 + bgW) (y0 + bgH) bgc
+            textVerts = concatMap (\(i, line) ->
+              renderText (x0 + 0.01) (y0 + 0.01 + fromIntegral i * lh) sc dc line
+              ) (zip [0 :: Int ..] lines')
+        in bg ++ textVerts
+
+    -- Block target highlight: project 3D block edges to 2D NDC and render wireframe
+    highlightVerts = case targetInfo of
+      Nothing -> []
+      Just (V3 bx by bz, vpMat) ->
+        let -- Block corners in world space (slightly expanded to avoid z-fighting)
+            e = 0.002 :: Float  -- expansion
+            x0 = fromIntegral bx - e
+            y0 = fromIntegral by - e
+            z0 = fromIntegral bz - e
+            x1 = fromIntegral bx + 1 + e
+            y1 = fromIntegral by + 1 + e
+            z1 = fromIntegral bz + 1 + e
+            -- Project a 3D point to 2D NDC via the VP matrix
+            -- Vulkan clip correction: Y-flip is in the projection matrix,
+            -- so projected Y is already in Vulkan NDC (-1=top, +1=bottom)
+            projectPt (V3 wx wy wz) =
+              let V4 cx cy cz cw = vpMat !* V4 wx wy wz 1
+              in if cw > 0.01
+                 then Just (cx / cw, cy / cw, cz / cw)
+                 else Nothing  -- behind camera
+            -- 8 corners of the block
+            corners =
+              [ V3 x0 y0 z0, V3 x1 y0 z0, V3 x1 y0 z1, V3 x0 y0 z1  -- bottom
+              , V3 x0 y1 z0, V3 x1 y1 z0, V3 x1 y1 z1, V3 x0 y1 z1  -- top
+              ]
+            projected = map projectPt corners
+            -- 12 edges of a cube (index pairs)
+            edges = [ (0,1),(1,2),(2,3),(3,0)   -- bottom face
+                    , (4,5),(5,6),(6,7),(7,4)   -- top face
+                    , (0,4),(1,5),(2,6),(3,7)   -- vertical edges
+                    ]
+            -- Draw a thin quad between two NDC points (line thickness in NDC)
+            lineColor = (0.1, 0.1, 0.1, 0.6)
+            lineT = 0.003 :: Float  -- line thickness in NDC
+            drawEdge (i, j) =
+              case (projected !! i, projected !! j) of
+                (Just (ax, ay, _), Just (bx', by', _)) ->
+                  -- Only draw if both points are in front of camera and on-screen
+                  if abs ax < 1.5 && abs ay < 1.5 && abs bx' < 1.5 && abs by' < 1.5
+                  then
+                    let dx = bx' - ax
+                        dy = by' - ay
+                        len = sqrt (dx * dx + dy * dy)
+                        -- Perpendicular direction for thickness
+                        (nx, ny) = if len > 0.001
+                                   then (-dy * lineT / len, dx * lineT / len)
+                                   else (lineT, 0)
+                        -- Four corners of the line quad
+                        (r, g, b, a) = lineColor
+                    in [ ax + nx, ay + ny, r, g, b, a
+                       , bx' + nx, by' + ny, r, g, b, a
+                       , bx' - nx, by' - ny, r, g, b, a
+                       , ax + nx, ay + ny, r, g, b, a
+                       , bx' - nx, by' - ny, r, g, b, a
+                       , ax - nx, ay - ny, r, g, b, a
+                       ]
+                  else []
+                _ -> []
+        in concatMap drawEdge edges
 
     -- Inventory screen: dark overlay + 4x9 slot grid
     invScreenVerts =
