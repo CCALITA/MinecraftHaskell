@@ -12,6 +12,7 @@ import qualified Vulkan.CStruct.Extends as Vk
 import Engine.Vulkan.Memory (createBuffer, destroyBuffer, BufferAllocation(..), copyBuffer)
 
 import Data.Bits ((.|.), (.&.), shiftL)
+import qualified Data.Bits
 import Data.Word (Word8, Word32)
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as VS
@@ -27,14 +28,14 @@ data TextureImage = TextureImage
   , tiSampler   :: !Vk.Sampler
   } deriving stock (Show)
 
--- | Create a placeholder 256x256 texture atlas with colored squares for each block type
+-- | Create a placeholder 256x256 texture atlas with patterned tiles for each block type
 createPlaceholderAtlas
   :: Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue
   -> IO TextureImage
 createPlaceholderAtlas physDevice device cmdPool queue = do
   let width  = 256 :: Word32
       height = 256 :: Word32
-      tileSize = 16 :: Int  -- 16x16 tiles
+      tileSize = 16 :: Int
       pixels = VS.generate (fromIntegral width * fromIntegral height * 4) $ \i ->
         let pixelIdx = i `div` 4
             channel  = i `mod` 4
@@ -43,39 +44,237 @@ createPlaceholderAtlas physDevice device cmdPool queue = do
             tileX = px `div` tileSize
             tileY = py `div` tileSize
             tileIdx = tileX + tileY * (fromIntegral width `div` tileSize)
-        in tileColor tileIdx channel :: Word8
+            localX = px `mod` tileSize
+            localY = py `mod` tileSize
+        in tilePixel tileIdx localX localY channel :: Word8
 
   createTextureFromPixels physDevice device cmdPool queue width height pixels
 
--- | Generate a color for a tile based on its index and channel
-tileColor :: Int -> Int -> Word8
-tileColor tileIdx channel =
-  let colors = -- R, G, B for each tile index
-        [ (0,   200, 0)    -- 0: grass top (green)
-        , (128, 128, 128)  -- 1: stone (gray)
-        , (139, 90,  43)   -- 2: dirt (brown)
-        , (100, 140, 50)   -- 3: grass side
-        , (210, 190, 130)  -- 4: sand / planks (tan)
-        , (140, 140, 140)  -- 5: gravel
-        , (100, 80,  50)   -- 6: oak log bark
-        , (50,  120, 50)   -- 7: leaves (dark green)
-        , (100, 100, 100)  -- 8: cobblestone
-        , (40,  40,  40)   -- 9: bedrock
-        , (200, 170, 130)  -- 10: iron ore
-        , (60,  60,  60)   -- 11: coal ore
-        , (255, 215, 0)    -- 12: gold ore
-        , (50,  100, 200)  -- 13: water (blue)
-        , (255, 100, 0)    -- 14: lava (orange)
-        , (180, 220, 255)  -- 15: glass (light blue)
-        ]
-      idx = tileIdx `mod` length colors
-      (r, g, b) = colors !! idx
-  in case channel of
-       0 -> r
-       1 -> g
-       2 -> b
-       3 -> 255  -- alpha
-       _ -> 0
+-- | Simple hash for pixel-level noise (deterministic)
+pixHash :: Int -> Int -> Int -> Int
+pixHash x y s =
+  let h0 = (x * 374761393 + y * 668265263 + s * 1274126177) `mod` 0x7FFFFFFF
+      h1 = ((h0 `xor` (h0 `shiftR` 13)) * 1103515245 + 12345) `mod` 0x7FFFFFFF
+  in abs h1
+  where
+    xor = Data.Bits.xor
+    shiftR = Data.Bits.shiftR
+
+-- | Generate a pixel for a tile with patterns
+tilePixel :: Int -> Int -> Int -> Int -> Word8
+tilePixel tileIdx lx ly channel =
+  let (r, g, b, a) = tileFull tileIdx lx ly
+  in case channel of { 0 -> r; 1 -> g; 2 -> b; 3 -> a; _ -> 0 }
+
+-- | Full RGBA for a pixel within a tile
+tileFull :: Int -> Int -> Int -> (Word8, Word8, Word8, Word8)
+tileFull tileIdx lx ly = case tileIdx of
+  -- Row 0: tileX 0-15
+  0  -> grassTop lx ly         -- grass top (V2 0 0)
+  1  -> stonePattern lx ly     -- stone (V2 1 0)
+  2  -> dirtPattern lx ly      -- dirt (V2 2 0)
+  3  -> grassSide lx ly        -- grass side (V2 3 0)
+  4  -> planksPattern lx ly    -- oak planks / sand (V2 4 0)
+  5  -> gravelPattern lx ly    -- gravel (V2 5 0)
+  7  -> brickPattern lx ly     -- brick (V2 7 0)
+  8  -> tntSide lx ly          -- TNT side (V2 8 0)
+  9  -> tntTop lx ly           -- TNT top (V2 9 0)
+  10 -> tntBottom lx ly        -- TNT bottom (V2 10 0)
+  13 -> waterPattern lx ly     -- water (V2 13 0)
+  14 -> lavaPattern lx ly      -- lava (V2 14 0)
+  15 -> glassPattern lx ly     -- glass (V2 15 0)
+  -- Row 1: tileX 0-15, tileY 1 → tileIdx 16-31
+  16 -> cobblePattern lx ly    -- cobblestone (V2 0 1)
+  17 -> bedrockPattern lx ly   -- bedrock (V2 1 1)
+  20 -> logBark lx ly          -- oak log bark (V2 4 1)
+  21 -> logTop lx ly           -- oak log cross-section (V2 5 1)
+  22 -> leavesPattern lx ly    -- oak leaves (V2 6 1)
+  25 -> chestPattern lx ly     -- chest (V2 9 1)
+  -- Row 2: tileIdx 32-47
+  32 -> orePattern lx ly (255, 215, 0)    -- gold ore (V2 0 2)
+  33 -> orePattern lx ly (200, 170, 130)  -- iron ore (V2 1 2)
+  34 -> orePattern lx ly (40, 40, 40)     -- coal ore (V2 2 2)
+  44 -> furnaceSide lx ly      -- furnace side (V2 12 2)
+  45 -> furnaceSide lx ly      -- furnace side alt (V2 13 2)
+  -- Row 3: tileIdx 48-63
+  49 -> glassPattern lx ly     -- glass alt (V2 1 3)
+  50 -> orePattern lx ly (100, 220, 255)  -- diamond ore (V2 2 3)
+  54 -> stoneBrickPattern lx ly -- stone brick (V2 6 3)
+  59 -> craftingTop lx ly      -- crafting table top (V2 11 3)
+  62 -> furnaceTop lx ly       -- furnace top (V2 14 3)
+  -- Row 4: tileIdx 64-79
+  66 -> snowPattern lx ly      -- snow (V2 2 4)
+  72 -> clayPattern lx ly      -- clay (V2 8 4)
+  -- Row 5: tileIdx 80+
+  80 -> torchPattern lx ly     -- torch (V2 0 5)
+  -- Fallback: checkerboard pattern so missing tiles are visible
+  _  -> let checker = (lx + ly) `mod` 2 == 0
+        in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
+  where
+
+    -- Grass top: green with darker blade variations
+    grassTop x y =
+      let n = pixHash x y 42 `mod` 100
+          base = if n < 30 then (30, 140, 20) else if n < 60 then (50, 170, 30) else (40, 155, 25)
+          (br, bg, bb) = base
+      in (br, bg, bb, 255)
+
+    -- Stone: gray with crack-like darker lines
+    stonePattern x y =
+      let n = pixHash x y 100 `mod` 100
+          crack = pixHash (x `div` 3) (y `div` 4) 101 `mod` 10 < 2
+          base = if crack then 95 else if n < 20 then 115 else if n < 50 then 125 else 130
+      in (base, base, base, 255)
+
+    -- Dirt: brown with speckled variation
+    dirtPattern x y =
+      let n = pixHash x y 200 `mod` 100
+          r = if n < 25 then 120 else if n < 50 then 135 else 140
+          g = r * 60 `div` 140
+          b = r * 35 `div` 140
+      in (fromIntegral r, fromIntegral g, fromIntegral b, 255)
+
+    -- Grass side: dirt bottom with green strip on top
+    grassSide x y
+      | y <= 2    = grassTop x y
+      | y == 3    = let n = pixHash x y 300 `mod` 3
+                    in if n == 0 then grassTop x y else dirtPattern x y
+      | otherwise = dirtPattern x y
+
+    -- Wood planks: tan with horizontal grain lines
+    planksPattern x y =
+      let grain = pixHash x (y `div` 4) 400 `mod` 100
+          base = if y `mod` 4 == 0 then 160 else if grain < 20 then 190 else 200
+          r = base; g = base * 170 `div` 210; b = base * 110 `div` 210
+      in (fromIntegral r, fromIntegral g, fromIntegral b, 255)
+
+    -- Gravel: mix of gray pebble shapes
+    gravelPattern x y =
+      let n = pixHash x y 500 `mod` 100
+          v = if n < 20 then 100 else if n < 50 then 130 else if n < 80 then 145 else 160
+      in (v, v, v, 255)
+
+    -- Log bark: brown with vertical lines
+    logBark x y =
+      let stripe = pixHash (x `div` 2) y 600 `mod` 100
+          dark = x `mod` 3 == 0 || stripe < 15
+          (r, g, b) = if dark then (70, 50, 25) else (100, 75, 40)
+      in (r, g, b, 255)
+
+    -- Leaves: transparent-ish green with holes
+    leavesPattern x y =
+      let n = pixHash x y 700 `mod` 100
+          hole = n < 15
+      in if hole then (20, 60, 15, 180) else (40 + fromIntegral (n `mod` 30), 120 + fromIntegral (n `mod` 40), 30, 255)
+
+    -- Cobblestone: irregular gray blocks
+    cobblePattern x y =
+      let blockN = pixHash (x `div` 4) (y `div` 3) 800
+          border = x `mod` 4 == 0 || y `mod` 3 == 0
+          v = if border then 80 else fromIntegral (100 + blockN `mod` 40)
+      in (v, v, v, 255)
+
+    -- Bedrock: very dark with slight variation
+    bedrockPattern x y =
+      let n = pixHash x y 900 `mod` 30
+          v = fromIntegral (30 + n)
+      in (v, v, v, 255)
+
+    -- Ore: stone base with colored spots
+    orePattern x y (or', og, ob) =
+      let isOreSpot = let n = pixHash (x `div` 3) (y `div` 3) 1000 `mod` 10
+                      in n < 3 && (x + y) `mod` 3 /= 0
+      in if isOreSpot then (or', og, ob, 255) else stonePattern x y
+
+    -- Water: blue with subtle wave pattern
+    waterPattern x y =
+      let wave = pixHash x (y + x `div` 3) 1100 `mod` 30
+          b = fromIntegral (160 + wave)
+          g = fromIntegral (80 + wave `div` 2)
+      in (30, g, b, 200)
+
+    -- Lava: orange-red with bright spots
+    lavaPattern x y =
+      let n = pixHash x y 1200 `mod` 100
+          bright = n < 20
+          (r, g, b) = if bright then (255, 200, 50) else (220, 80 + fromIntegral (n `mod` 30), 10)
+      in (r, g, b, 255)
+
+    -- Glass: mostly transparent with faint border
+    glassPattern x y =
+      let border = x == 0 || y == 0 || x == 15 || y == 15
+      in if border then (200, 220, 240, 120) else (220, 235, 250, 40)
+
+    -- Log cross-section (top/bottom of oak log)
+    logTop x y =
+      let dist = abs (x - 7) + abs (y - 7)  -- taxicab distance from center
+          ring = dist `div` 2
+      in if ring <= 1 then (80, 60, 30, 255)    -- dark center
+         else if ring <= 3 then (160, 130, 70, 255) -- light wood
+         else (100, 75, 40, 255)                 -- bark edge
+
+    -- Brick pattern: red bricks with gray mortar
+    brickPattern x y =
+      let row = y `div` 4
+          offset = if row `mod` 2 == 0 then 0 else 8
+          bx = (x + offset) `mod` 16
+          isMortar = y `mod` 4 == 0 || bx `mod` 8 == 0
+      in if isMortar then (160, 160, 160, 255) else (170, 80, 60, 255)
+
+    -- TNT side: red with white band
+    tntSide x y =
+      let band = y >= 5 && y <= 10
+      in if band then (220, 220, 220, 255) else (200, 50, 40, 255)
+
+    tntTop _ _ = (180, 180, 180, 255)
+    tntBottom _ _ = (180, 180, 180, 255)
+
+    -- Chest: brown wood box
+    chestPattern x y =
+      let border = x == 0 || y == 0 || x == 15 || y == 15
+          latch = x >= 6 && x <= 9 && y >= 6 && y <= 8
+      in if latch then (200, 180, 50, 255)  -- gold latch
+         else if border then (100, 65, 30, 255) -- dark border
+         else (140, 95, 45, 255)  -- wood
+
+    -- Furnace side: stone with dark opening
+    furnaceSide x y =
+      let opening = x >= 4 && x <= 11 && y >= 5 && y <= 12
+      in if opening then (40, 40, 40, 255) else stonePattern x y
+
+    furnaceTop = stonePattern
+
+    -- Stone brick: cut stone blocks with mortar lines
+    stoneBrickPattern x y =
+      let isMortar = y `mod` 8 == 0 || (x + (if (y `div` 8) `mod` 2 == 0 then 0 else 4)) `mod` 8 == 0
+          n = pixHash x y 1500 `mod` 20
+          v = if isMortar then 100 else fromIntegral (130 + n)
+      in (v, v, v, 255)
+
+    -- Crafting table top: wooden grid pattern
+    craftingTop x y =
+      let grid = x `mod` 8 == 0 || y `mod` 8 == 0
+      in if grid then (80, 55, 25, 255) else planksPattern x y
+
+    -- Snow: white with subtle variation
+    snowPattern x y =
+      let n = pixHash x y 1600 `mod` 15
+          v = fromIntegral (240 + n)
+      in (v, v, v, 255)
+
+    -- Clay: light gray-brown
+    clayPattern x y =
+      let n = pixHash x y 1700 `mod` 20
+          v = fromIntegral (160 + n)
+      in (v, fromIntegral (155 + n), fromIntegral (145 + n), 255)
+
+    -- Torch: mostly transparent with orange flame center
+    torchPattern x y =
+      let isStick = x >= 7 && x <= 8 && y >= 5 && y <= 15
+          isFlame = x >= 6 && x <= 9 && y >= 2 && y <= 6
+      in if isFlame then (255, 200, 50, 255)
+         else if isStick then (120, 90, 40, 255)
+         else (0, 0, 0, 0)  -- transparent
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels

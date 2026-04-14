@@ -7,6 +7,12 @@ module Game.Player
   , updatePlayer
   , raycastBlock
   , RayHit(..)
+  , maxHealth
+  , maxHunger
+  , applyFallDamage
+  , damagePlayer
+  , respawnPlayer
+  , isPlayerDead
   ) where
 
 import Game.Physics
@@ -24,7 +30,18 @@ data Player = Player
   , plOnGround  :: !Bool
   , plFlying    :: !Bool         -- creative-mode flying
   , plSprinting :: !Bool
+  , plHealth    :: !Int          -- 0-20 (10 hearts)
+  , plHunger    :: !Int          -- 0-20 (10 drumsticks)
+  , plFallDist  :: !Float        -- accumulated fall distance
   } deriving stock (Show, Eq)
+
+-- | Max health (10 hearts = 20 half-hearts)
+maxHealth :: Int
+maxHealth = 20
+
+-- | Max hunger (10 drumsticks = 20 half-drumsticks)
+maxHunger :: Int
+maxHunger = 20
 
 -- | Input state for a single tick
 data PlayerInput = PlayerInput
@@ -50,6 +67,9 @@ defaultPlayer spawnPos = Player
   , plOnGround  = False
   , plFlying    = True  -- start in creative fly mode
   , plSprinting = False
+  , plHealth    = maxHealth
+  , plHunger    = maxHunger
+  , plFallDist  = 0
   }
 
 noInput :: PlayerInput
@@ -75,10 +95,10 @@ mouseSensitivity :: Float
 mouseSensitivity = 0.15
 
 -- | Update player for one physics tick
-updatePlayer :: Float -> PlayerInput -> BlockQuery -> Player -> IO Player
-updatePlayer dt input isSolidBlock player = do
+updatePlayer :: Float -> PlayerInput -> BlockQuery -> BlockQuery -> Player -> IO Player
+updatePlayer dt input isSolidBlock isWaterBlock player = do
   -- 1. Mouse look
-  let yaw'   = plYaw player + piMouseDX input * mouseSensitivity
+  let yaw'   = plYaw player - piMouseDX input * mouseSensitivity
       pitch' = max (-89) . min 89 $ plPitch player + piMouseDY input * mouseSensitivity
       front  = directionFromAngles yaw' pitch'
       right  = normalize $ front `cross` V3 0 1 0
@@ -121,35 +141,85 @@ updatePlayer dt input isSolidBlock player = do
         , plPitch    = pitch'
         , plOnGround = False
         , plFlying   = flying
+        , plHealth   = plHealth player
+        , plFallDist = 0
         }
     else do
       -- Survival mode: gravity + collision
-      -- Horizontal velocity from input
-      let hVel = normalizedDir ^* speed
+      -- Check if player is in water
+      let V3 px py pz = plPos player
+      inWater <- isWaterBlock (floor px) (floor py) (floor pz)
+
+      -- Horizontal velocity (slower in water)
+      let waterMul = if inWater then 0.4 else 1.0
+          hVel = normalizedDir ^* (speed * waterMul)
           V3 hvx _ hvz = hVel
 
-      -- Vertical: gravity + jump
+      -- Vertical: gravity + jump (buoyancy in water)
       onGround <- isOnGround isSolidBlock (plPos player)
-      let vy' = if onGround && piJump input
-                then jumpVelocity
-                else applyGravity dt vy
+      let vy'
+            | inWater && piJump input = 4.0   -- swim upward
+            | inWater                 = max (-2.0) (vy - 5.0 * dt)  -- slow sinking
+            | onGround && piJump input = jumpVelocity
+            | otherwise               = applyGravity dt vy
 
       let desiredVel = V3 hvx vy' hvz
           displacement = desiredVel ^* dt
 
-      (newPos, resolvedVel) <- resolveCollision isSolidBlock (plPos player) displacement
+      (newPos0, resolvedVel) <- resolveCollision isSolidBlock (plPos player) displacement
+
+      -- Sneak edge-stop: if sneaking and on ground, prevent walking off edges
+      newPos <- if piSneak input && onGround
+        then do
+          hasGround <- isOnGround isSolidBlock newPos0
+          if hasGround
+            then pure newPos0
+            else do
+              -- Keep Y movement but cancel horizontal to stay on edge
+              let V3 _ newY _ = newPos0
+                  V3 oldX _ oldZ = plPos player
+              pure (V3 oldX newY oldZ)
+        else pure newPos0
 
       onGround' <- isOnGround isSolidBlock newPos
-      let finalVy = if onGround' && v3y resolvedVel <= 0 then 0 else v3y resolvedVel
+      -- Store actual velocity, zeroing axes where collision blocked movement.
+      -- resolvedVel components are 0 when blocked by collision.
+      let finalVy = if onGround' && vy' <= 0 then 0
+                    else if v3y resolvedVel == 0 then 0  -- blocked by floor/ceiling
+                    else vy'
+          finalVx = if v3x resolvedVel == 0 then 0 else hvx
+          finalVz = if v3z resolvedVel == 0 then 0 else hvz
+          -- Track fall distance
+          dy = v3y (plPos player) - v3y newPos  -- positive when falling down
+          newFallDist = if dy > 0 then plFallDist player + dy else plFallDist player
+          -- Apply fall damage on landing
+          landed = onGround' && not (plOnGround player)
+          baseDmg = if landed && newFallDist > 3.0 then floor newFallDist - 3 else 0
+          finalHealth = max 0 (plHealth player - baseDmg)
+          finalFallDist = if onGround' then 0 else newFallDist
+          -- Hunger: drain on sprint/jump, regen health when full, starve when empty
+          hungerDrain = (if piSprint input then 1 else 0)
+                      + (if landed && piJump input then 1 else 0)
+          curHunger = plHunger player
+          -- Drain hunger very slowly (1 point per ~100 ticks of sprinting)
+          newHunger = max 0 (curHunger - hungerDrain)
+          -- Health regen when hunger >= 18
+          healthRegen = if newHunger >= 18 && finalHealth < maxHealth then 1 else 0
+          -- Starvation when hunger = 0
+          starveDmg = if newHunger <= 0 && finalHealth > 1 then 1 else 0
+          finalHealth' = min maxHealth (max 0 (finalHealth + healthRegen - starveDmg))
 
       pure player
         { plPos       = newPos
-        , plVelocity  = V3 (v3x resolvedVel) finalVy (v3z resolvedVel)
+        , plVelocity  = V3 finalVx finalVy finalVz
         , plYaw       = yaw'
         , plPitch     = pitch'
         , plOnGround  = onGround'
         , plFlying    = flying
         , plSprinting = piSprint input
+        , plHealth    = finalHealth'
+        , plHunger    = newHunger
+        , plFallDist  = finalFallDist
         }
 
 -- | Direction vector from yaw and pitch (degrees)
@@ -164,6 +234,33 @@ v3x, v3y, v3z :: V3 Float -> Float
 v3x (V3 x _ _) = x
 v3y (V3 _ y _) = y
 v3z (V3 _ _ z) = z
+
+-- | Apply fall damage when player lands. Returns updated player.
+--   Fall damage = floor(fallDist) - 3 (Minecraft formula: 1 HP per block above 3)
+applyFallDamage :: Player -> Player
+applyFallDamage player
+  | plFlying player = player { plFallDist = 0 }
+  | plOnGround player && plFallDist player > 3.0 =
+      let damage = floor (plFallDist player) - 3
+      in player { plHealth = max 0 (plHealth player - damage), plFallDist = 0 }
+  | plOnGround player = player { plFallDist = 0 }
+  | v3y (plVelocity player) < 0 =
+      -- Accumulate fall distance while falling
+      player  -- distance tracking is done in updatePlayer
+  | otherwise = player { plFallDist = 0 }  -- going up, reset
+
+-- | Apply damage to player
+damagePlayer :: Int -> Player -> Player
+damagePlayer dmg player = player { plHealth = max 0 (plHealth player - dmg) }
+
+-- | Respawn player at given position with full health
+respawnPlayer :: V3 Float -> Player -> Player
+respawnPlayer spawnPos player = player
+  { plPos = spawnPos, plVelocity = V3 0 0 0, plHealth = maxHealth, plHunger = maxHunger, plFallDist = 0 }
+
+-- | Is the player dead?
+isPlayerDead :: Player -> Bool
+isPlayerDead = (<= 0) . plHealth
 
 -- | Result of a block raycast
 data RayHit = RayHit

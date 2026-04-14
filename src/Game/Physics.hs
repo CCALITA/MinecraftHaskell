@@ -43,7 +43,9 @@ applyGravity dt vy = max terminalVelocity (vy - gravity * dt)
 -- | Check if the player is standing on a solid block
 isOnGround :: BlockQuery -> V3 Float -> IO Bool
 isOnGround isSolid (V3 x y z) = do
-  let checkY = floor (y - 0.01) :: Int
+  -- Check with larger epsilon to handle collision resolution gap
+  -- Player can float up to ~0.1 blocks above the surface
+  let checkY = floor (y - 0.15) :: Int
       -- Check blocks under the player's feet (4 corners of AABB base)
       corners =
         [ (floor (x - 0.29) :: Int, checkY, floor (z - 0.29) :: Int)
@@ -78,13 +80,27 @@ resolveCollision isSolid pos (V3 dvx dvy dvz) = do
 
 -- | Resolve movement along a single axis.
 --   Returns new position and remaining displacement on that axis (0 if blocked).
+--   When falling (Y axis, downward), snaps to block top to prevent floating.
 resolveAxis :: BlockQuery -> V3 Float -> V3 Float -> Int -> IO (V3 Float, Float)
 resolveAxis isSolid pos delta axisIdx = do
   let newPos = pos + delta
       aabb = playerAABB newPos
   blocked <- aabbCollidesVoxels isSolid aabb
   if blocked
-    then pure (pos, 0)  -- blocked: don't move, zero out velocity on this axis
+    then do
+      -- For Y axis falling (delta.y < 0), try snapping to block top
+      if axisIdx == 1 && getAxis 1 delta < 0
+        then do
+          let V3 px py pz = pos
+              -- Snap feet to the top of the block below
+              snappedY = fromIntegral (floor py :: Int)
+              snappedPos = V3 px snappedY pz
+              snappedAABB = playerAABB snappedPos
+          snappedBlocked <- aabbCollidesVoxels isSolid snappedAABB
+          if snappedBlocked
+            then pure (pos, 0)  -- still blocked even at snap, don't move
+            else pure (snappedPos, 0)
+        else pure (pos, 0)  -- blocked on other axes: don't move
     else pure (newPos, getAxis axisIdx delta)
 
 -- | Get axis component

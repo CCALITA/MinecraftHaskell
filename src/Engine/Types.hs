@@ -34,27 +34,39 @@ instance Storable Vertex where
     pokeByteOff p 12 col
     pokeByteOff p 24 tex
 
--- | Uniform buffer for MVP matrices
+-- | Uniform buffer for MVP matrices and lighting
 data UniformBufferObject = UniformBufferObject
-  { uboModel      :: !(M44 Float)
-  , uboView       :: !(M44 Float)
-  , uboProjection :: !(M44 Float)
+  { uboModel        :: !(M44 Float)
+  , uboView         :: !(M44 Float)
+  , uboProjection   :: !(M44 Float)
+  , uboSunDirection :: !(V4 Float)    -- xyz = sun dir, w = unused (padding)
+  , uboAmbientLight :: !Float         -- 0.0-1.0 ambient brightness
+  , _uboPad1        :: !Float         -- padding to 16-byte alignment
+  , _uboPad2        :: !Float
+  , _uboPad3        :: !Float
   } deriving stock (Show, Eq, Generic)
 
 instance Storable UniformBufferObject where
-  sizeOf _ = 3 * sizeOf (undefined :: M44 Float)
+  sizeOf _ = 3 * sizeOf (undefined :: M44 Float) + sizeOf (undefined :: V4 Float) + 4 * sizeOf (undefined :: Float)  -- 192 + 16 + 16 = 224
   alignment _ = alignment (undefined :: Float)
   peek ptr = do
     let p = castPtr ptr
     m <- peekByteOff p 0
     v <- peekByteOff p 64
     proj <- peekByteOff p 128
-    pure $ UniformBufferObject m v proj
-  poke ptr (UniformBufferObject m v proj) = do
+    sunDir <- peekByteOff p 192
+    ambient <- peekByteOff p 208
+    pure $ UniformBufferObject m v proj sunDir ambient 0 0 0
+  poke ptr (UniformBufferObject m v proj sunDir ambient _ _ _) = do
     let p = castPtr ptr
     pokeByteOff p 0   m
     pokeByteOff p 64  v
     pokeByteOff p 128 proj
+    pokeByteOff p 192 sunDir
+    pokeByteOff p 208 ambient
+    pokeByteOff p 212 (0 :: Float)
+    pokeByteOff p 216 (0 :: Float)
+    pokeByteOff p 220 (0 :: Float)
 
 -- | Per-frame synchronization and command data
 data FrameData = FrameData

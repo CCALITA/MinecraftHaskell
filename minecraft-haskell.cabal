@@ -42,6 +42,7 @@ library
     Engine.Window
     Engine.Camera
     Engine.Mesh
+    Engine.BitmapFont
     Engine.Vulkan.Init
     Engine.Vulkan.Swapchain
     Engine.Vulkan.Pipeline
@@ -61,9 +62,13 @@ library
     Game.Physics
     Game.Player
     Game.Inventory
+    Game.Item
     Game.Crafting
     Game.DayNight
     Game.Save
+    Game.DroppedItem
+    Game.Particle
+    Game.TileEntity
     Entity.ECS
     Entity.Mob
     Entity.Pathfinding

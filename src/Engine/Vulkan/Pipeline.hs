@@ -1,9 +1,12 @@
 module Engine.Vulkan.Pipeline
   ( PipelineContext(..)
+  , HudPipeline(..)
   , DepthResources(..)
   , createRenderPass
   , createGraphicsPipeline
+  , createHudPipeline
   , destroyPipelineContext
+  , destroyHudPipeline
   , createFramebuffers
   , destroyFramebuffers
   , createDepthResources
@@ -29,6 +32,12 @@ data PipelineContext = PipelineContext
   { pcRenderPass     :: !Vk.RenderPass
   , pcPipelineLayout :: !Vk.PipelineLayout
   , pcPipeline       :: !Vk.Pipeline
+  } deriving stock (Show)
+
+-- | HUD overlay pipeline (no depth test, alpha blending)
+data HudPipeline = HudPipeline
+  { hpPipelineLayout :: !Vk.PipelineLayout
+  , hpPipeline       :: !Vk.Pipeline
   } deriving stock (Show)
 
 -- | Depth buffer resources
@@ -123,12 +132,11 @@ createShaderModule device code = do
 createGraphicsPipeline
   :: Vk.Device
   -> Vk.RenderPass
-  -> Vk.Extent2D
   -> Vk.DescriptorSetLayout
   -> FilePath    -- ^ Vertex shader SPIR-V path
   -> FilePath    -- ^ Fragment shader SPIR-V path
   -> IO PipelineContext
-createGraphicsPipeline device renderPass extent dsLayout vertPath fragPath = do
+createGraphicsPipeline device renderPass dsLayout vertPath fragPath = do
   vertCode <- BS.readFile vertPath
   fragCode <- BS.readFile fragPath
 
@@ -200,29 +208,14 @@ createGraphicsPipeline device renderPass extent dsLayout vertPath fragPath = do
         , Vk.primitiveRestartEnable = False
         }
 
-  let Vk.Extent2D{width = extW, height = extH} = extent
-
-  let viewport = Vk.Viewport
-        { Vk.x        = 0
-        , Vk.y        = 0
-        , Vk.width    = fromIntegral extW
-        , Vk.height   = fromIntegral extH
-        , Vk.minDepth = 0
-        , Vk.maxDepth = 1
-        }
-
-  let scissor = Vk.Rect2D
-        { Vk.offset = Vk.Offset2D 0 0
-        , Vk.extent = extent
-        }
-
+  -- Dynamic viewport and scissor (set per-frame via cmdSetViewport/cmdSetScissor)
   let viewportState = Vk.PipelineViewportStateCreateInfo
         { Vk.next      = ()
         , Vk.flags     = Vk.zero
         , Vk.viewportCount = 1
-        , Vk.viewports = V.singleton viewport
+        , Vk.viewports = V.empty  -- dynamic
         , Vk.scissorCount  = 1
-        , Vk.scissors  = V.singleton scissor
+        , Vk.scissors  = V.empty  -- dynamic
         }
 
   let rasterizer = Vk.PipelineRasterizationStateCreateInfo
@@ -298,6 +291,11 @@ createGraphicsPipeline device renderPass extent dsLayout vertPath fragPath = do
 
   pipelineLayout <- Vk.createPipelineLayout device layoutInfo Nothing
 
+  let dynamicState = Vk.PipelineDynamicStateCreateInfo
+        { Vk.flags       = Vk.zero
+        , Vk.dynamicStates = V.fromList [Vk.DYNAMIC_STATE_VIEWPORT, Vk.DYNAMIC_STATE_SCISSOR]
+        }
+
   let pipelineInfo = Vk.GraphicsPipelineCreateInfo
         { Vk.next               = ()
         , Vk.flags              = Vk.zero
@@ -311,7 +309,7 @@ createGraphicsPipeline device renderPass extent dsLayout vertPath fragPath = do
         , Vk.multisampleState   = Just (Vk.SomeStruct multisampling)
         , Vk.depthStencilState  = Just depthStencil
         , Vk.colorBlendState    = Just (Vk.SomeStruct colorBlending)
-        , Vk.dynamicState       = Nothing
+        , Vk.dynamicState       = Just dynamicState
         , Vk.layout             = pipelineLayout
         , Vk.renderPass         = renderPass
         , Vk.subpass            = 0
@@ -338,6 +336,114 @@ destroyPipelineContext device pc = do
   Vk.destroyPipeline device (pcPipeline pc) Nothing
   Vk.destroyPipelineLayout device (pcPipelineLayout pc) Nothing
   Vk.destroyRenderPass device (pcRenderPass pc) Nothing
+
+-- | Create HUD overlay pipeline: 2D colored vertices, no depth test, alpha blending
+createHudPipeline :: Vk.Device -> Vk.RenderPass -> FilePath -> FilePath -> IO HudPipeline
+createHudPipeline device renderPass vertPath fragPath = do
+  vertCode <- BS.readFile vertPath
+  fragCode <- BS.readFile fragPath
+  vertModule <- createShaderModule device vertCode
+  fragModule <- createShaderModule device fragCode
+
+  let vertStage = Vk.PipelineShaderStageCreateInfo
+        { Vk.next = (), Vk.flags = Vk.zero
+        , Vk.stage = Vk.SHADER_STAGE_VERTEX_BIT
+        , Vk.module' = vertModule, Vk.name = "main"
+        , Vk.specializationInfo = Nothing }
+      fragStage = Vk.PipelineShaderStageCreateInfo
+        { Vk.next = (), Vk.flags = Vk.zero
+        , Vk.stage = Vk.SHADER_STAGE_FRAGMENT_BIT
+        , Vk.module' = fragModule, Vk.name = "main"
+        , Vk.specializationInfo = Nothing }
+
+  -- Vertex input: vec2 position + vec4 color = 24 bytes
+  let bindingDesc = Vk.VertexInputBindingDescription 0 24 Vk.VERTEX_INPUT_RATE_VERTEX
+      attrDescs = V.fromList
+        [ Vk.VertexInputAttributeDescription 0 0 Vk.FORMAT_R32G32_SFLOAT 0      -- position
+        , Vk.VertexInputAttributeDescription 1 0 Vk.FORMAT_R32G32B32A32_SFLOAT 8 -- color
+        ]
+      vertexInput = Vk.PipelineVertexInputStateCreateInfo
+        { Vk.next = (), Vk.flags = Vk.zero
+        , Vk.vertexBindingDescriptions = V.singleton bindingDesc
+        , Vk.vertexAttributeDescriptions = attrDescs }
+      inputAssembly = Vk.PipelineInputAssemblyStateCreateInfo
+        Vk.zero Vk.PRIMITIVE_TOPOLOGY_TRIANGLE_LIST False
+      viewportState = Vk.PipelineViewportStateCreateInfo
+        { Vk.next = (), Vk.flags = Vk.zero
+        , Vk.viewportCount = 1, Vk.viewports = V.empty
+        , Vk.scissorCount = 1, Vk.scissors = V.empty }
+      rasterizer = Vk.PipelineRasterizationStateCreateInfo
+        { Vk.next = (), Vk.flags = Vk.zero
+        , Vk.depthClampEnable = False, Vk.rasterizerDiscardEnable = False
+        , Vk.polygonMode = Vk.POLYGON_MODE_FILL, Vk.lineWidth = 1.0
+        , Vk.cullMode = Vk.zero, Vk.frontFace = Vk.FRONT_FACE_CLOCKWISE
+        , Vk.depthBiasEnable = False, Vk.depthBiasConstantFactor = 0
+        , Vk.depthBiasClamp = 0, Vk.depthBiasSlopeFactor = 0 }
+      multisampling = Vk.PipelineMultisampleStateCreateInfo
+        { Vk.next = (), Vk.flags = Vk.zero
+        , Vk.sampleShadingEnable = False, Vk.rasterizationSamples = Vk.SAMPLE_COUNT_1_BIT
+        , Vk.minSampleShading = 1, Vk.sampleMask = V.empty
+        , Vk.alphaToCoverageEnable = False, Vk.alphaToOneEnable = False }
+      -- Alpha blending enabled for HUD transparency
+      colorBlendAttachment = Vk.PipelineColorBlendAttachmentState
+        { Vk.colorWriteMask = Vk.COLOR_COMPONENT_R_BIT .|. Vk.COLOR_COMPONENT_G_BIT
+                            .|. Vk.COLOR_COMPONENT_B_BIT .|. Vk.COLOR_COMPONENT_A_BIT
+        , Vk.blendEnable = True
+        , Vk.srcColorBlendFactor = Vk.BLEND_FACTOR_SRC_ALPHA
+        , Vk.dstColorBlendFactor = Vk.BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
+        , Vk.colorBlendOp = Vk.BLEND_OP_ADD
+        , Vk.srcAlphaBlendFactor = Vk.BLEND_FACTOR_ONE
+        , Vk.dstAlphaBlendFactor = Vk.BLEND_FACTOR_ZERO
+        , Vk.alphaBlendOp = Vk.BLEND_OP_ADD }
+      colorBlending = Vk.PipelineColorBlendStateCreateInfo
+        { Vk.next = (), Vk.flags = Vk.zero
+        , Vk.logicOpEnable = False, Vk.logicOp = Vk.LOGIC_OP_COPY
+        , Vk.attachmentCount = 1, Vk.attachments = V.singleton colorBlendAttachment
+        , Vk.blendConstants = (0, 0, 0, 0) }
+      -- No depth test for HUD
+      depthStencil = Vk.PipelineDepthStencilStateCreateInfo
+        { Vk.flags = Vk.zero
+        , Vk.depthTestEnable = False, Vk.depthWriteEnable = False
+        , Vk.depthCompareOp = Vk.COMPARE_OP_ALWAYS
+        , Vk.depthBoundsTestEnable = False, Vk.stencilTestEnable = False
+        , Vk.front = Vk.zero, Vk.back = Vk.zero
+        , Vk.minDepthBounds = 0, Vk.maxDepthBounds = 1 }
+      dynamicState = Vk.PipelineDynamicStateCreateInfo
+        { Vk.flags = Vk.zero
+        , Vk.dynamicStates = V.fromList [Vk.DYNAMIC_STATE_VIEWPORT, Vk.DYNAMIC_STATE_SCISSOR] }
+
+  let layoutInfo = Vk.PipelineLayoutCreateInfo Vk.zero V.empty V.empty
+  pipelineLayout <- Vk.createPipelineLayout device layoutInfo Nothing
+
+  let pipelineInfo = Vk.GraphicsPipelineCreateInfo
+        { Vk.next = (), Vk.flags = Vk.zero, Vk.stageCount = 2
+        , Vk.stages = V.fromList [Vk.SomeStruct vertStage, Vk.SomeStruct fragStage]
+        , Vk.vertexInputState = Just (Vk.SomeStruct vertexInput)
+        , Vk.inputAssemblyState = Just inputAssembly
+        , Vk.tessellationState = Nothing
+        , Vk.viewportState = Just (Vk.SomeStruct viewportState)
+        , Vk.rasterizationState = Just (Vk.SomeStruct rasterizer)
+        , Vk.multisampleState = Just (Vk.SomeStruct multisampling)
+        , Vk.depthStencilState = Just depthStencil
+        , Vk.colorBlendState = Just (Vk.SomeStruct colorBlending)
+        , Vk.dynamicState = Just dynamicState
+        , Vk.layout = pipelineLayout
+        , Vk.renderPass = renderPass, Vk.subpass = 0
+        , Vk.basePipelineHandle = Vk.zero, Vk.basePipelineIndex = -1 }
+
+  (_, pipelines) <- Vk.createGraphicsPipelines device Vk.zero (V.singleton (Vk.SomeStruct pipelineInfo)) Nothing
+  let pipeline = V.head pipelines
+
+  Vk.destroyShaderModule device vertModule Nothing
+  Vk.destroyShaderModule device fragModule Nothing
+
+  pure $ HudPipeline pipelineLayout pipeline
+
+-- | Destroy HUD pipeline resources
+destroyHudPipeline :: Vk.Device -> HudPipeline -> IO ()
+destroyHudPipeline device hp = do
+  Vk.destroyPipeline device (hpPipeline hp) Nothing
+  Vk.destroyPipelineLayout device (hpPipelineLayout hp) Nothing
 
 -- | Create framebuffers for each swapchain image view (color + depth)
 createFramebuffers :: Vk.Device -> Vk.RenderPass -> SwapchainContext -> Vk.ImageView -> IO (Vector Vk.Framebuffer)
