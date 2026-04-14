@@ -275,23 +275,27 @@ tickOneHopper _ref teMap (pos, hs)
   | otherwise = do
       -- Pull from container above
       let abovePos = pos + V3 0 1 0
-          teMap1 = case HM.lookup abovePos teMap of
+          (teMap1, pulled) = case HM.lookup abovePos teMap of
             Just srcTE -> case hopperPullFrom hs srcTE of
-              Just (hs', srcTE') -> HM.insert pos (TEHopper hs') (HM.insert abovePos srcTE' teMap)
-              Nothing -> teMap
-            Nothing -> teMap
+              Just (hs', srcTE') -> (HM.insert pos (TEHopper hs') (HM.insert abovePos srcTE' teMap), True)
+              Nothing -> (teMap, False)
+            Nothing -> (teMap, False)
       -- Get the updated hopper state
       let hs1 = case HM.lookup pos teMap1 of
             Just (TEHopper h) -> h
             _                 -> hs
       -- Push to target container
       let targetPos = hopperTargetPos pos (hsDirection hs1)
-          teMap2 = case HM.lookup targetPos teMap1 of
+          (teMap2, pushed) = case HM.lookup targetPos teMap1 of
             Just dstTE -> case hopperPushTo hs1 dstTE of
-              Just (hs', dstTE') -> HM.insert pos (TEHopper hs' { hsCooldown = 8 }) (HM.insert targetPos dstTE' teMap1)
-              Nothing -> HM.insert pos (TEHopper hs1 { hsCooldown = 8 }) teMap1
-            Nothing -> HM.insert pos (TEHopper hs1 { hsCooldown = 8 }) teMap1
-      pure teMap2
+              Just (hs', dstTE') -> (HM.insert pos (TEHopper hs' { hsCooldown = 8 }) (HM.insert targetPos dstTE' teMap1), True)
+              Nothing -> (teMap1, False)
+            Nothing -> (teMap1, False)
+          -- Only apply cooldown if a transfer actually happened
+          teMap3 = if pulled || pushed
+            then teMap2
+            else HM.insert pos (TEHopper hs1) teMap1
+      pure teMap3
 
 -- | Get the world position a hopper pushes to
 hopperTargetPos :: V3 Int -> HopperDirection -> V3 Int

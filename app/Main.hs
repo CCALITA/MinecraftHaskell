@@ -39,7 +39,7 @@ import qualified Game.TileEntity as TE
 
 import Control.Monad (unless, when, forM_)
 import Data.Maybe (isNothing, catMaybes)
-import Control.Concurrent.STM (readTVarIO)
+import Control.Concurrent.STM (readTVarIO, atomically, writeTVar)
 import Control.Exception (finally)
 import System.IO (hSetBuffering, stdout, BufferMode(..))
 import qualified Data.HashMap.Strict as HM
@@ -68,9 +68,9 @@ tickRate = 1.0 / 20.0
 maxReach :: Float
 maxReach = 5.0
 
--- | Save directory
-saveDir :: FilePath
-saveDir = "saves/world1"
+-- | Default save directory root
+savesRoot :: FilePath
+savesRoot = "saves"
 
 main :: IO ()
 main = do
@@ -140,7 +140,9 @@ main = do
 
     -- Player (try to load from save, else default)
     let spawnPos = V3 0 80 0
-    mSavedPlayer <- loadPlayer saveDir
+    saveDirRef <- newIORef (savesRoot </> "world1")
+    let defaultSaveDir = savesRoot </> "world1"
+    mSavedPlayer <- loadPlayer defaultSaveDir
     playerRef <- newIORef (case mSavedPlayer of
       Just p  -> p
       Nothing -> defaultPlayer spawnPos)
@@ -180,10 +182,10 @@ main = do
     writeIORef inventoryRef startInv
 
     -- Try to load saved world, otherwise generate fresh
-    loaded <- loadWorld saveDir world
+    loaded <- loadWorld defaultSaveDir world
     if loaded
       then do
-        loadTileEntities saveDir tileEntityRef
+        loadTileEntities defaultSaveDir tileEntityRef
         chunkCount <- loadedChunkCount world
         putStrLn $ "Loaded " ++ show chunkCount ++ " saved chunks"
       else do
@@ -252,22 +254,41 @@ main = do
               ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
           -- "New World" button
           when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= -0.12 && ndcY <= 0.07) $ do
+            newName <- nextSaveName
+            let newDir = savesRoot </> newName
+            writeIORef saveDirRef newDir
+            -- Reset world chunks
+            atomically $ writeTVar (worldChunks world) HM.empty
+            -- Generate fresh chunks around spawn
+            _ <- updateLoadedChunks world spawnPos
+            -- Reset player and tile entities
+            writeIORef playerRef (defaultPlayer spawnPos)
+            writeIORef tileEntityRef HM.empty
+            -- Rebuild chunk meshes
+            rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
             writeIORef gameModeRef Playing
             GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
             writeIORef lastCursorRef Nothing
-            putStrLn "Starting new world..."
-          -- "Load World" button: centered, y = 0.1 to 0.2
+            putStrLn $ "New world: " ++ newName
+          -- "Load World" button: load most recent save
           when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= 0.1 && ndcY <= 0.27) $ do
-            loaded <- loadWorld saveDir world
-            when loaded $ do
-              mPlayer <- loadPlayer saveDir
-              case mPlayer of
-                Just p -> writeIORef playerRef p
-                Nothing -> pure ()
-              loadTileEntities saveDir tileEntityRef
-              -- Rebuild all chunk meshes
-              rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
-              putStrLn "Loaded saved world!"
+            saves <- listSaves
+            case saves of
+              [] -> putStrLn "No saved worlds found"
+              _  -> do
+                let saveName = last saves
+                    sd = savesRoot </> saveName
+                writeIORef saveDirRef sd
+                atomically $ writeTVar (worldChunks world) HM.empty
+                ldOk <- loadWorld sd world
+                when ldOk $ do
+                  mPlayer <- loadPlayer sd
+                  case mPlayer of
+                    Just p -> writeIORef playerRef p
+                    Nothing -> pure ()
+                  loadTileEntities sd tileEntityRef
+                  rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
+                  putStrLn $ "Loaded world: " ++ saveName
             writeIORef gameModeRef Playing
             GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
             writeIORef lastCursorRef Nothing
@@ -288,9 +309,10 @@ main = do
           -- Save & Quit to Menu button
           when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= 0.05 && ndcY <= 0.25) $ do
             player <- readIORef playerRef
-            savePlayer saveDir player
-            saveWorld saveDir world
-            saveTileEntities saveDir tileEntityRef
+            sd <- readIORef saveDirRef
+            savePlayer sd player
+            saveWorld sd world
+            saveTileEntities sd tileEntityRef
             putStrLn "World saved."
             writeIORef gameModeRef MainMenu
           -- Quit Game button
@@ -375,7 +397,11 @@ main = do
               case mTE of
                 Just (TEFurnace fs) -> do
                   let slotContent = fsInput fs
-                  setTileEntity tileEntityRef fPos (TEFurnace fs { fsInput = cursor, fsSmeltProgress = 0 })
+                      sameItem = case (cursor, fsInput fs) of
+                        (Just (ItemStack ci _), Just (ItemStack fi _)) -> ci == fi
+                        _ -> False
+                      newProgress = if sameItem then fsSmeltProgress fs else 0
+                  setTileEntity tileEntityRef fPos (TEFurnace fs { fsInput = cursor, fsSmeltProgress = newProgress })
                   writeIORef cursorItemRef slotContent
                 _ -> pure ()
             (Just FurnaceFuel, Just fPos) -> do
@@ -539,16 +565,18 @@ main = do
             GLFW.Key'9 -> modifyIORef' inventoryRef (`selectHotbar` 8)
             GLFW.Key'F5 -> do
               player <- readIORef playerRef
-              savePlayer saveDir player
-              saveWorld saveDir world
-              saveTileEntities saveDir tileEntityRef
+              sd <- readIORef saveDirRef
+              savePlayer sd player
+              saveWorld sd world
+              saveTileEntities sd tileEntityRef
               putStrLn "Quick-saved!"
             GLFW.Key'F9 -> do
-              mPlayer <- loadPlayer saveDir
+              sd <- readIORef saveDirRef
+              mPlayer <- loadPlayer sd
               case mPlayer of
                 Just p -> do
                   writeIORef playerRef p
-                  loadTileEntities saveDir tileEntityRef
+                  loadTileEntities sd tileEntityRef
                   putStrLn "Quick-loaded!"
                 Nothing -> putStrLn "No save found."
             _ -> pure ()
@@ -788,9 +816,10 @@ main = do
             -- Auto-save every ~5 minutes (18000 frames at 60fps)
             when (frameIdx > 0 && frameIdx `mod` 18000 == 0) $ do
               player <- readIORef playerRef
-              savePlayer saveDir player
-              saveWorld saveDir world
-              saveTileEntities saveDir tileEntityRef
+              sd <- readIORef saveDirRef
+              savePlayer sd player
+              saveWorld sd world
+              saveTileEntities sd tileEntityRef
 
             -- Update chunks periodically
             when (frameIdx `mod` 60 == 0) $ do
