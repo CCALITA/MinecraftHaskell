@@ -10,7 +10,7 @@ module Game.Crafting
   ) where
 
 import World.Block (BlockType(..))
-import Game.Item (Item(..), ToolType(..), ToolMaterial(..), toolInfo, ToolInfo(..))
+import Game.Item (Item(..), MaterialType(..), ToolType(..), ToolMaterial(..), toolInfo, ToolInfo(..))
 import qualified Data.Vector as V
 
 -- | Crafting grid (2x2 or 3x3)
@@ -184,29 +184,66 @@ allRecipes =
       , rcResult  = BlockItem TNT
       , rcCount   = 1
       }
-  ] ++ toolRecipes
+  ] ++ toolRecipes ++ manufacturingRecipes
+
+-- | Recipes for manufacturing blocks
+manufacturingRecipes :: [Recipe]
+manufacturingRecipes =
+  [ -- Blast Furnace: 3 iron ingots + furnace + 5 cobblestone
+    Recipe
+      { rcPattern = [[mi IronIngot,     mi IronIngot, mi IronIngot]
+                    ,[bi Cobblestone,    bi Furnace,   bi Cobblestone]
+                    ,[bi Cobblestone, bi Cobblestone,  bi Cobblestone]]
+      , rcResult  = BlockItem BlastFurnace
+      , rcCount   = 1
+      }
+  , -- Smoker: 4 logs + furnace
+    Recipe
+      { rcPattern = [[Nothing,   bi OakLog,  Nothing]
+                    ,[bi OakLog, bi Furnace,  bi OakLog]
+                    ,[Nothing,   bi OakLog,  Nothing]]
+      , rcResult  = BlockItem Smoker
+      , rcCount   = 1
+      }
+  , -- Hopper: 5 iron ingots + chest
+    Recipe
+      { rcPattern = [[mi IronIngot, Nothing,    mi IronIngot]
+                    ,[mi IronIngot, bi Chest,    mi IronIngot]
+                    ,[Nothing,      mi IronIngot, Nothing]]
+      , rcResult  = BlockItem Hopper
+      , rcCount   = 1
+      }
+  ]
 
 -- | Helper to create a tool item with full durability
 tool :: ToolType -> ToolMaterial -> Item
 tool tt tm = ToolItem tt tm (tiMaxDurability (toolInfo tm))
 
+-- | Helper to create a material item pattern entry
+mi :: MaterialType -> Maybe Item
+mi = Just . MaterialItem
+
 -- | Generate crafting recipes for all tool tiers
 toolRecipes :: [Recipe]
-toolRecipes = concatMap tierRecipes [(Wood, OakPlanks), (StoneTier, Cobblestone), (Iron, IronOre), (Diamond, DiamondOre)]
+toolRecipes = concatMap tierRecipes
+  [ (Wood,      bi OakPlanks)
+  , (StoneTier, bi Cobblestone)
+  , (Iron,      mi IronIngot)
+  , (Diamond,   bi DiamondOre)
+  ]
   where
     stick = bi OakLog  -- OakLog as stick placeholder
-    tierRecipes (mat, matBlock) =
-      let m = bi matBlock
-      in [ -- Pickaxe: 3 material on top, 2 sticks below
-           Recipe [[m, m, m], [Nothing, stick, Nothing], [Nothing, stick, Nothing]]
-                  (tool Pickaxe mat) 1
-         , -- Axe: 2 material + 1 material, 2 sticks
-           Recipe [[m, m, Nothing], [m, stick, Nothing], [Nothing, stick, Nothing]]
-                  (tool Axe mat) 1
-         , -- Shovel: 1 material on top, 2 sticks
-           Recipe [[m], [stick], [stick]]
-                  (tool Shovel mat) 1
-         , -- Sword: 2 material + 1 stick
-           Recipe [[m], [m], [stick]]
-                  (tool Sword mat) 1
-         ]
+    tierRecipes (mat, m) =
+      [ -- Pickaxe: 3 material on top, 2 sticks below
+        Recipe [[m, m, m], [Nothing, stick, Nothing], [Nothing, stick, Nothing]]
+               (tool Pickaxe mat) 1
+      , -- Axe: 2 material + 1 material, 2 sticks
+        Recipe [[m, m, Nothing], [m, stick, Nothing], [Nothing, stick, Nothing]]
+               (tool Axe mat) 1
+      , -- Shovel: 1 material on top, 2 sticks
+        Recipe [[m], [stick], [stick]]
+               (tool Shovel mat) 1
+      , -- Sword: 2 material + 1 stick
+        Recipe [[m], [m], [stick]]
+               (tool Sword mat) 1
+      ]

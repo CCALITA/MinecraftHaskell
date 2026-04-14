@@ -2,6 +2,7 @@ module Game.Item
   ( Item(..)
   , ToolType(..)
   , ToolMaterial(..)
+  , MaterialType(..)
   , ToolInfo(..)
   , itemFromBlock
   , itemToBlock
@@ -16,6 +17,7 @@ module Game.Item
   ) where
 
 import World.Block (BlockType(..))
+import GHC.Generics (Generic)
 
 -- | Tool types
 data ToolType
@@ -24,7 +26,7 @@ data ToolType
   | Axe
   | Sword
   | Hoe
-  deriving stock (Show, Eq, Ord, Enum, Bounded)
+  deriving stock (Show, Eq, Ord, Enum, Bounded, Generic)
 
 -- | Tool material tiers (ascending power)
 data ToolMaterial
@@ -32,13 +34,24 @@ data ToolMaterial
   | StoneTier     -- "StoneTier" to avoid clash with BlockType.Stone
   | Iron
   | Diamond
-  deriving stock (Show, Eq, Ord, Enum, Bounded)
+  deriving stock (Show, Eq, Ord, Enum, Bounded, Generic)
 
--- | An item in the inventory — either a placeable block or a tool
+-- | Material items (non-placeable, non-tool items produced by smelting etc.)
+data MaterialType
+  = IronIngot
+  | GoldIngot
+  | Charcoal
+  | CookedPork
+  | CookedBeef
+  | BrickItem
+  deriving stock (Show, Eq, Ord, Enum, Bounded, Generic)
+
+-- | An item in the inventory — either a placeable block, a tool, or a material
 data Item
-  = BlockItem !BlockType
-  | ToolItem  !ToolType !ToolMaterial !Int  -- tool type, material, remaining durability
-  deriving stock (Show, Eq)
+  = BlockItem    !BlockType
+  | ToolItem     !ToolType !ToolMaterial !Int  -- tool type, material, remaining durability
+  | MaterialItem !MaterialType
+  deriving stock (Show, Eq, Generic)
 
 -- | Tool properties
 data ToolInfo = ToolInfo
@@ -70,18 +83,20 @@ itemFromBlock = BlockItem
 
 -- | Try to convert an item to a block type (for placement)
 itemToBlock :: Item -> Maybe BlockType
-itemToBlock (BlockItem bt) = Just bt
-itemToBlock (ToolItem {})  = Nothing
+itemToBlock (BlockItem bt)    = Just bt
+itemToBlock (ToolItem {})     = Nothing
+itemToBlock (MaterialItem {}) = Nothing
 
 -- | Is this a placeable block item?
 isBlockItem :: Item -> Bool
 isBlockItem (BlockItem _) = True
 isBlockItem _             = False
 
--- | Stack limit for an item (tools stack to 1, blocks to 64)
+-- | Stack limit for an item (tools stack to 1, blocks and materials to 64)
 itemStackLimit :: Item -> Int
-itemStackLimit (BlockItem _) = 64
-itemStackLimit (ToolItem {}) = 1
+itemStackLimit (BlockItem _)    = 64
+itemStackLimit (ToolItem {})    = 1
+itemStackLimit (MaterialItem _) = 64
 
 -- | What items a block drops when broken. Returns (item, count).
 --   Some blocks require a minimum harvest level to drop anything.
@@ -114,6 +129,9 @@ blockDrops = \case
   StoneBrick  -> [(BlockItem StoneBrick, 1)]
   Brick       -> [(BlockItem Brick, 1)]
   TNT         -> [(BlockItem TNT, 1)]
+  BlastFurnace -> [(BlockItem BlastFurnace, 1)]
+  Smoker      -> [(BlockItem Smoker, 1)]
+  Hopper      -> [(BlockItem Hopper, 1)]
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
@@ -126,6 +144,9 @@ blockRequiredHarvestLevel = \case
   Stone       -> 1
   StoneBrick  -> 1
   Brick       -> 1
+  BlastFurnace -> 1
+  Smoker      -> 1
+  Hopper      -> 1
   _           -> 0  -- hand is fine
 
 -- | The preferred tool type for faster mining of this block.
@@ -141,6 +162,9 @@ blockPreferredTool = \case
   GoldOre     -> Just Pickaxe
   DiamondOre  -> Just Pickaxe
   Furnace     -> Just Pickaxe
+  BlastFurnace -> Just Pickaxe
+  Smoker      -> Just Pickaxe
+  Hopper      -> Just Pickaxe
   Dirt        -> Just Shovel
   Grass       -> Just Shovel
   Sand        -> Just Shovel

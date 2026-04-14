@@ -11,6 +11,7 @@ module World.Block
 
 import Data.Word (Word8)
 import Linear (V2(..))
+import GHC.Generics (Generic)
 
 -- | Block types represented as Word8 for compact chunk storage
 data BlockType
@@ -41,14 +42,19 @@ data BlockType
   | StoneBrick
   | Brick
   | TNT
-  deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
+  | BlastFurnace
+  | Smoker
+  | Hopper
+  deriving stock (Eq, Ord, Enum, Bounded, Show, Read, Generic)
 
 -- | Convert BlockType to/from Word8 for chunk storage
 blockToWord8 :: BlockType -> Word8
 blockToWord8 = fromIntegral . fromEnum
 
 word8ToBlock :: Word8 -> BlockType
-word8ToBlock = toEnum . fromIntegral
+word8ToBlock w
+  | w <= fromIntegral (fromEnum (maxBound :: BlockType)) = toEnum (fromIntegral w)
+  | otherwise = Air  -- unknown block types default to Air (forward compatibility)
 
 -- | Six faces of a cube
 data BlockFace
@@ -101,6 +107,9 @@ blockProperties = \case
   StoneBrick   -> BlockProperties True  False 0  1.5
   Brick        -> BlockProperties True  False 0  2.0
   TNT          -> BlockProperties True  False 0  0
+  BlastFurnace -> BlockProperties True  False 0  3.5
+  Smoker       -> BlockProperties True  False 0  3.5
+  Hopper       -> BlockProperties True  False 0  3.0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -156,3 +165,14 @@ blockFaceTexCoords blockType face = case blockType of
     FaceTop    -> V2 9 0
     FaceBottom -> V2 10 0
     _          -> V2 8 0
+  BlastFurnace -> case face of
+    FaceTop    -> V2 14 3
+    FaceBottom -> V2 14 3
+    FaceSouth  -> V2 12 3  -- blast furnace front
+    _          -> V2 13 3  -- blast furnace side
+  Smoker      -> case face of
+    FaceTop    -> V2 14 3
+    FaceBottom -> V2 14 3
+    FaceSouth  -> V2 12 4  -- smoker front
+    _          -> V2 13 4  -- smoker side
+  Hopper      -> V2 14 4   -- all faces same (iron-colored)
