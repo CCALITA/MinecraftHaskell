@@ -33,8 +33,12 @@ import Entity.Mob (MobType(..), MobInfo(..), updateMobAI, AIState(..), mobInfo, 
 import Entity.Spawn
 import Game.Save
 import Game.DroppedItem
+import Game.Particle
+import Game.TileEntity hiding (BlastFurnace)
+import qualified Game.TileEntity as TE
 
 import Control.Monad (unless, when, forM_)
+import Data.Maybe (isNothing, catMaybes)
 import Control.Concurrent.STM (readTVarIO, atomically, writeTVar)
 import Control.Exception (finally)
 import System.IO (hSetBuffering, stdout, BufferMode(..))
@@ -53,7 +57,7 @@ import System.Environment (getArgs)
 import Data.Char (isDigit)
 
 -- | Game UI mode
-data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen
+data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | FurnaceOpen
   deriving stock (Show, Eq)
 
 -- | Fixed timestep for physics (20 ticks per second, like Minecraft)
@@ -136,7 +140,6 @@ main = do
 
     -- Player (try to load from save, else default)
     let spawnPos = V3 0 80 0
-    -- World save management: use world1 as default, create saveDirRef for dynamic switching
     saveDirRef <- newIORef (savesRoot </> "world1")
     let defaultSaveDir = savesRoot </> "world1"
     mSavedPlayer <- loadPlayer defaultSaveDir
@@ -148,7 +151,6 @@ main = do
     cursorItemRef <- newIORef (Nothing :: Maybe ItemStack)  -- item held by mouse cursor
     craftingGridRef <- newIORef (emptyCraftingGrid 3)
     debugOverlayRef <- newIORef False
-    targetBlockRef <- newIORef (Nothing :: Maybe (V3 Int))
     dayNightRef <- newIORef newDayNightCycle
     fluidState <- newFluidState
     droppedItems <- newDroppedItems
@@ -158,6 +160,12 @@ main = do
     spawnRngRef <- newIORef =<< System.Random.newStdGen
     spawnCooldownRef <- newIORef (0.0 :: Float)
     aiStatesRef <- newIORef (HM.empty :: HM.HashMap Int AIState)
+    particleSys <- newParticleSystem
+    damageFlashRef <- newIORef (0.0 :: Float)  -- remaining flash time
+    lastHealthRef <- newIORef (20 :: Int)       -- track health changes for flash trigger
+    bobTimerRef <- newIORef (0.0 :: Float)      -- camera walk bob timer
+    tileEntityRef <- newTileEntityMap             -- furnaces, hoppers, etc.
+    openFurnacePosRef <- newIORef (Nothing :: Maybe (V3 Int))  -- which furnace is open
 
     -- Give player some starting blocks
     let startInv = selectHotbar (foldl (\i (item, cnt) -> fst $ addItem i item cnt) emptyInventory
@@ -167,6 +175,9 @@ main = do
           , (BlockItem Dirt, 64)
           , (BlockItem OakPlanks, 64)
           , (BlockItem Torch, 16)
+          , (BlockItem CraftingTable, 1)
+          , (BlockItem Furnace, 1)
+          , (BlockItem CoalOre, 16)
           ]) 2  -- select first block slot
     writeIORef inventoryRef startInv
 
@@ -174,6 +185,7 @@ main = do
     loaded <- loadWorld defaultSaveDir world
     if loaded
       then do
+        loadTileEntities defaultSaveDir tileEntityRef
         chunkCount <- loadedChunkCount world
         putStrLn $ "Loaded " ++ show chunkCount ++ " saved chunks"
       else do
@@ -237,21 +249,21 @@ main = do
       case mode of
         MainMenu -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
-          (winW, winH) <- getWindowSize wh
+          (winW, winH) <- getWindowScreenSize wh
           let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
               ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
           -- "New World" button
           when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= -0.12 && ndcY <= 0.07) $ do
-            -- Create a new world with a unique save name
             newName <- nextSaveName
             let newDir = savesRoot </> newName
             writeIORef saveDirRef newDir
-            -- Reset world chunks (clear old data)
+            -- Reset world chunks
             atomically $ writeTVar (worldChunks world) HM.empty
             -- Generate fresh chunks around spawn
             _ <- updateLoadedChunks world spawnPos
-            -- Reset player to spawn
+            -- Reset player and tile entities
             writeIORef playerRef (defaultPlayer spawnPos)
+            writeIORef tileEntityRef HM.empty
             -- Rebuild chunk meshes
             rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
             writeIORef gameModeRef Playing
@@ -264,30 +276,29 @@ main = do
             case saves of
               [] -> putStrLn "No saved worlds found"
               _  -> do
-                -- Load the last (most recent by name) save
                 let saveName = last saves
                     sd = savesRoot </> saveName
                 writeIORef saveDirRef sd
-                -- Clear and reload world
                 atomically $ writeTVar (worldChunks world) HM.empty
-                loaded <- loadWorld sd world
-                when loaded $ do
+                ldOk <- loadWorld sd world
+                when ldOk $ do
                   mPlayer <- loadPlayer sd
                   case mPlayer of
                     Just p -> writeIORef playerRef p
                     Nothing -> pure ()
+                  loadTileEntities sd tileEntityRef
                   rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
                   putStrLn $ "Loaded world: " ++ saveName
-                writeIORef gameModeRef Playing
-                GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
-                writeIORef lastCursorRef Nothing
+            writeIORef gameModeRef Playing
+            GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
+            writeIORef lastCursorRef Nothing
           -- "Quit" button: centered, y = 0.3 to 0.4
           when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= 0.32 && ndcY <= 0.49) $
             GLFW.setWindowShouldClose (whWindow wh) True
 
         Paused -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
-          (winW, winH) <- getWindowSize wh
+          (winW, winH) <- getWindowScreenSize wh
           let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
               ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
           -- Resume button (larger hit area)
@@ -301,6 +312,7 @@ main = do
             sd <- readIORef saveDirRef
             savePlayer sd player
             saveWorld sd world
+            saveTileEntities sd tileEntityRef
             putStrLn "World saved."
             writeIORef gameModeRef MainMenu
           -- Quit Game button
@@ -309,7 +321,7 @@ main = do
 
         InventoryOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
-          (winW, winH) <- getWindowSize wh
+          (winW, winH) <- getWindowScreenSize wh
           let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
               ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
               -- Check which inventory slot was clicked
@@ -326,7 +338,7 @@ main = do
 
         CraftingOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
-          (winW, winH) <- getWindowSize wh
+          (winW, winH) <- getWindowScreenSize wh
           let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
               ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
               mSlot = hitCraftingSlot ndcX ndcY
@@ -356,9 +368,12 @@ main = do
                   case cursor of
                     Nothing -> do
                       writeIORef cursorItemRef (Just (ItemStack item count))
-                      -- Clear grid (consume ingredients)
                       writeIORef craftingGridRef (emptyCraftingGrid 3)
-                    _ -> pure ()  -- cursor occupied
+                    Just (ItemStack ci cc)
+                      | ci == item && cc + count <= itemStackLimit item -> do
+                          writeIORef cursorItemRef (Just (ItemStack item (cc + count)))
+                          writeIORef craftingGridRef (emptyCraftingGrid 3)
+                      | otherwise -> pure ()  -- cursor full or different item
                 CraftFailure -> pure ()
             Just (CraftInvSlot idx) -> do
               inv <- readIORef inventoryRef
@@ -367,6 +382,62 @@ main = do
               writeIORef inventoryRef (setSlot inv idx cursor)
               writeIORef cursorItemRef slotContent
             Nothing -> pure ()
+
+        FurnaceOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
+          (mx, my) <- readIORef mousePosRef
+          (winW, winH) <- getWindowScreenSize wh
+          let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+              ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
+              mSlot = hitFurnaceSlot ndcX ndcY
+          mFurnacePos <- readIORef openFurnacePosRef
+          case (mSlot, mFurnacePos) of
+            (Just FurnaceInput, Just fPos) -> do
+              cursor <- readIORef cursorItemRef
+              mTE <- getTileEntity tileEntityRef fPos
+              case mTE of
+                Just (TEFurnace fs) -> do
+                  let slotContent = fsInput fs
+                      sameItem = case (cursor, fsInput fs) of
+                        (Just (ItemStack ci _), Just (ItemStack fi _)) -> ci == fi
+                        _ -> False
+                      newProgress = if sameItem then fsSmeltProgress fs else 0
+                  setTileEntity tileEntityRef fPos (TEFurnace fs { fsInput = cursor, fsSmeltProgress = newProgress })
+                  writeIORef cursorItemRef slotContent
+                _ -> pure ()
+            (Just FurnaceFuel, Just fPos) -> do
+              cursor <- readIORef cursorItemRef
+              mTE <- getTileEntity tileEntityRef fPos
+              case mTE of
+                Just (TEFurnace fs) -> do
+                  case cursor of
+                    Just (ItemStack fItem _) | isNothing (fuelBurnTime fItem) -> pure ()
+                    _ -> do
+                      let slotContent = fsFuel fs
+                      setTileEntity tileEntityRef fPos (TEFurnace fs { fsFuel = cursor })
+                      writeIORef cursorItemRef slotContent
+                _ -> pure ()
+            (Just FurnaceOutput, Just fPos) -> do
+              cursor <- readIORef cursorItemRef
+              mTE <- getTileEntity tileEntityRef fPos
+              case mTE of
+                Just (TEFurnace fs) -> case (cursor, fsOutput fs) of
+                  (Nothing, Just outStack) -> do
+                    writeIORef cursorItemRef (Just outStack)
+                    setTileEntity tileEntityRef fPos (TEFurnace fs { fsOutput = Nothing })
+                  (Just (ItemStack ci cc), Just (ItemStack oi oc))
+                    | ci == oi && cc + oc <= itemStackLimit ci -> do
+                        writeIORef cursorItemRef (Just (ItemStack ci (cc + oc)))
+                        setTileEntity tileEntityRef fPos (TEFurnace fs { fsOutput = Nothing })
+                    | otherwise -> pure ()
+                  _ -> pure ()
+                _ -> pure ()
+            (Just (FurnaceInvSlot idx), _) -> do
+              inv <- readIORef inventoryRef
+              cursor <- readIORef cursorItemRef
+              let slotContent' = getSlot inv idx
+              writeIORef inventoryRef (setSlot inv idx cursor)
+              writeIORef cursorItemRef slotContent'
+            _ -> pure ()
 
         Playing -> do
           when (button == GLFW.MouseButton'1) $
@@ -392,7 +463,7 @@ main = do
       when (button == GLFW.MouseButton'1 && action == GLFW.MouseButtonState'Released) $
         writeIORef miningRef Nothing  -- stop mining on release
 
-      when (action == GLFW.MouseButtonState'Pressed) $ do
+      when (mode == Playing && action == GLFW.MouseButtonState'Pressed) $ do
         player <- readIORef playerRef
         let eyePos = plPos player + V3 0 1.62 0
             dir = dirFromPlayer player
@@ -409,12 +480,26 @@ main = do
               GLFW.MouseButton'1 -> do  -- Left click: start mining
                 writeIORef miningRef (Just (V3 bx by bz, 0.0))
               GLFW.MouseButton'2 -> do  -- Right click: interact or place
-                -- Check if clicking on a crafting table
+                -- Check if clicking on an interactive block
                 hitBlock <- worldGetBlock world (V3 bx by bz)
                 if hitBlock == CraftingTable
                   then do
                     writeIORef gameModeRef CraftingOpen
                     writeIORef craftingGridRef (emptyCraftingGrid 3)
+                    GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+                    writeIORef lastCursorRef Nothing
+                else if hitBlock `elem` [Furnace, BlastFurnace, Smoker]
+                  then do
+                    writeIORef gameModeRef FurnaceOpen
+                    writeIORef openFurnacePosRef (Just (V3 bx by bz))
+                    -- Create tile entity if it doesn't exist yet
+                    mTE <- getTileEntity tileEntityRef (V3 bx by bz)
+                    when (isNothing mTE) $ do
+                      let variant = case hitBlock of
+                            BlastFurnace -> TE.BlastFurnace
+                            Smoker       -> TE.SmokerFurnace
+                            _            -> NormalFurnace
+                      setTileEntity tileEntityRef (V3 bx by bz) (TEFurnace (newFurnaceState variant))
                     GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
                     writeIORef lastCursorRef Nothing
                   else do
@@ -431,6 +516,18 @@ main = do
                           when (removed > 0) $ do
                             writeIORef inventoryRef inv'
                             worldSetBlock world placePos bt
+                            -- Create tile entity for furnace/hopper blocks
+                            case bt of
+                              Furnace -> setTileEntity tileEntityRef placePos
+                                           (TEFurnace (newFurnaceState NormalFurnace))
+                              BlastFurnace -> setTileEntity tileEntityRef placePos
+                                                (TEFurnace (newFurnaceState TE.BlastFurnace))
+                              Smoker -> setTileEntity tileEntityRef placePos
+                                          (TEFurnace (newFurnaceState TE.SmokerFurnace))
+                              Hopper -> do
+                                let hopperDir = faceToHopperDirection (rhFaceNormal hit)
+                                setTileEntity tileEntityRef placePos (TEHopper (newHopperState hopperDir))
+                              _ -> pure ()
                             putStrLn $ "Placed " ++ show bt ++ " at " ++ show placePos
                             let V3 px' _ pz' = placePos
                             rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
@@ -471,6 +568,7 @@ main = do
               sd <- readIORef saveDirRef
               savePlayer sd player
               saveWorld sd world
+              saveTileEntities sd tileEntityRef
               putStrLn "Quick-saved!"
             GLFW.Key'F9 -> do
               sd <- readIORef saveDirRef
@@ -478,6 +576,7 @@ main = do
               case mPlayer of
                 Just p -> do
                   writeIORef playerRef p
+                  loadTileEntities sd tileEntityRef
                   putStrLn "Quick-loaded!"
                 Nothing -> putStrLn "No save found."
             _ -> pure ()
@@ -488,9 +587,10 @@ main = do
               GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
               writeIORef lastCursorRef Nothing
             _ -> pure ()
-          _ -> case key of  -- InventoryOpen or CraftingOpen
+          _ -> case key of  -- InventoryOpen, CraftingOpen, or FurnaceOpen
             GLFW.Key'Escape -> do
               writeIORef gameModeRef Playing
+              writeIORef openFurnacePosRef Nothing
               GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
               writeIORef lastCursorRef Nothing
               -- Return cursor item to inventory if any
@@ -502,6 +602,7 @@ main = do
                 Nothing -> pure ()
             GLFW.Key'E -> do
               writeIORef gameModeRef Playing
+              writeIORef openFurnacePosRef Nothing
               GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
               writeIORef lastCursorRef Nothing
               mCursor <- readIORef cursorItemRef
@@ -516,9 +617,6 @@ main = do
     frameRef <- newIORef (0 :: Int)
     lastTimeRef <- newIORef =<< maybe 0 id <$> GLFW.getTime
     accumRef <- newIORef (0.0 :: Float)
-    fpsCounterRef <- newIORef (0 :: Int)       -- frames since last FPS update
-    fpsTimerRef   <- newIORef (0.0 :: Float)   -- time since last FPS update
-    fpsDisplayRef <- newIORef (0 :: Int)       -- displayed FPS value
 
     -- Block queries for physics
     let blockQuery :: BlockQuery
@@ -544,16 +642,6 @@ main = do
             writeIORef lastTimeRef now
             let rawDt = realToFrac (now - lastTime) :: Float
                 dt = min rawDt 0.25  -- cap to avoid spiral of death
-
-            -- FPS counter (update once per second)
-            modifyIORef' fpsCounterRef (+ 1)
-            modifyIORef' fpsTimerRef (+ dt)
-            fpsTimer <- readIORef fpsTimerRef
-            when (fpsTimer >= 1.0) $ do
-              fpsCount <- readIORef fpsCounterRef
-              writeIORef fpsDisplayRef fpsCount
-              writeIORef fpsCounterRef 0
-              writeIORef fpsTimerRef (fpsTimer - 1.0)
 
             -- Skip gameplay input when UI is open
             gameMode <- readIORef gameModeRef
@@ -629,6 +717,21 @@ main = do
                           let drops = blockDrops bt
                               V3 bxf byf bzf = fmap fromIntegral blockPos :: V3 Float
                           mapM_ (\(item, cnt) -> spawnDrop droppedItems item cnt (V3 bxf byf bzf)) drops
+                          -- Spawn break particles
+                          let (pr, pg, pb, pa) = itemColor (BlockItem bt)
+                          spawnBlockBreakParticles particleSys (V3 bxf byf bzf) (pr, pg, pb, pa)
+                          -- Drop tile entity contents if any
+                          mTE <- getTileEntity tileEntityRef blockPos
+                          case mTE of
+                            Just (TEFurnace fs) -> do
+                              let teDrops = catMaybes [fsInput fs, fsFuel fs, fsOutput fs]
+                              mapM_ (\(ItemStack di dc) -> spawnDrop droppedItems di dc (V3 bxf byf bzf)) teDrops
+                              removeTileEntity tileEntityRef blockPos
+                            Just (TEHopper hs) -> do
+                              let teDrops = catMaybes (V.toList (hsSlots hs))
+                              mapM_ (\(ItemStack di dc) -> spawnDrop droppedItems di dc (V3 bxf byf bzf)) teDrops
+                              removeTileEntity tileEntityRef blockPos
+                            Nothing -> pure ()
                           -- Consume tool durability
                           inv' <- readIORef inventoryRef
                           let inv'' = case getSlot inv' (invSelected inv') of
@@ -648,10 +751,16 @@ main = do
             -- Tick fluid simulation every physics update
             tickFluids fluidState world
 
+            -- Tick tile entities (furnaces smelt, hoppers transfer)
+            tickTileEntities dt tileEntityRef
+            frameIdxTE <- readIORef frameRef
+            when (frameIdxTE `mod` 8 == 0) $
+              tickHoppers tileEntityRef (worldGetBlock world)
+
             -- Update dropped items (gravity, friction) and auto-collect nearby
             updateDroppedItems dt droppedItems
             do player' <- readIORef playerRef
-               collected <- collectNearby droppedItems (plPos player') 1.5
+               collected <- collectNearby droppedItems (plPos player') 2.5
                unless (null collected) $ do
                  inv' <- readIORef inventoryRef
                  let inv'' = foldl (\i (item, cnt) -> fst $ addItem i item cnt) inv' collected
@@ -710,6 +819,7 @@ main = do
               sd <- readIORef saveDirRef
               savePlayer sd player
               saveWorld sd world
+              saveTileEntities sd tileEntityRef
 
             -- Update chunks periodically
             when (frameIdx `mod` 60 == 0) $ do
@@ -722,6 +832,17 @@ main = do
 
             -- Render
             player <- readIORef playerRef
+            -- Camera bob effect when walking on ground
+            let V3 vx _ vz = plVelocity player
+                speed = sqrt (vx * vx + vz * vz)
+                isMoving = speed > 0.5 && plOnGround player
+            bobTimer <- readIORef bobTimerRef
+            let bobRate = if plSprinting player then 14.0 else 10.0
+                bobTimer' = if isMoving then bobTimer + rawDt * bobRate else 0
+            writeIORef bobTimerRef bobTimer'
+            let bobOffset = if isMoving then sin bobTimer' * 0.04 else 0
+                baseCam = cameraFromPlayer player
+                cam = baseCam { camPosition = camPosition baseCam + V3 0 bobOffset 0 }
             let currentFrame = frameIdx `mod` maxFrames
             let cmdBuf = cmdBuffers V.! currentFrame
             let sync   = syncObjects V.! currentFrame
@@ -730,8 +851,7 @@ main = do
             sc' <- readIORef scRef
             dayNightVal <- readIORef dayNightRef
             let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
-            let cam = cameraFromPlayer player
-                aspect = fromIntegral extW / fromIntegral extH
+            let aspect = fromIntegral extW / fromIntegral extH
                 V3 sx sy sz = getSunDirection dayNightVal
                 ubo = UniformBufferObject
                   { uboModel        = transpose identity
@@ -756,36 +876,103 @@ main = do
                              , isAABBInFrustum frustum minCorner maxCorner
                              ]
 
-            -- Compute sky color from day/night cycle
-            let V4 skyR skyG skyB skyA = getSkyColor dayNightVal
-
-            -- Per-frame raycast for block target highlight
-            do let eyePos = plPos player + V3 0 1.62 0
-                   dir = dirFromPlayer player
-                   bqCb bx by bz = do
-                     bt <- worldGetBlock world (V3 bx by bz)
-                     pure (World.Block.isSolid bt)
-               mHit <- raycastBlock bqCb eyePos dir maxReach
-               writeIORef targetBlockRef (fmap rhBlockPos mHit)
+            -- Compute sky color from day/night cycle, with underwater tint
+            player' <- readIORef playerRef
+            let eyeWorld = plPos player' + V3 0 1.62 0
+                V3 hbx hby hbz = fmap floor eyeWorld :: V3 Int
+            headBlock <- worldGetBlock world (V3 hbx hby hbz)
+            let isUnderwater = headBlock == Water
+                V4 baseSkyR baseSkyG baseSkyB baseSkyA = getSkyColor dayNightVal
+                (skyR, skyG, skyB, skyA) = if isUnderwater
+                  then (0.05, 0.15, 0.35, 1.0)  -- dark blue underwater
+                  else (baseSkyR, baseSkyG, baseSkyB, baseSkyA)
 
             -- Update HUD vertices with current inventory, mining progress, and health
             inv <- readIORef inventoryRef
             mining <- readIORef miningRef
-            player' <- readIORef playerRef
             let miningProgress = case mining of
                   Just (_, p) -> p
                   Nothing     -> 0
             mode <- readIORef gameModeRef
             cursorItem <- readIORef cursorItemRef
             craftGrid <- readIORef craftingGridRef
+            -- Compute block placement preview ghost
+            placementGhostVerts <- if mode == Playing
+              then do
+                let plEye = plPos player' + V3 0 1.62 0
+                    plDir = dirFromPlayer player'
+                    solidCb bx' by' bz' = do
+                      bt' <- worldGetBlock world (V3 bx' by' bz')
+                      pure (World.Block.isSolid bt')
+                mHit <- raycastBlock solidCb plEye plDir maxReach
+                case mHit of
+                  Nothing -> pure []
+                  Just hit -> do
+                    let V3 hx hy hz = rhBlockPos hit
+                        V3 fnx fny fnz = rhFaceNormal hit
+                        placePos = V3 (hx + fnx) (hy + fny) (hz + fnz)
+                    -- Check if player has a placeable block selected
+                    invNow <- readIORef inventoryRef
+                    case selectedItem invNow of
+                      Just (ItemStack item _) | itemIsBlock item ->
+                        pure $ projectBlockWireframe vp placePos
+                      _ -> pure []
+              else pure []
+            -- Update & render particles
+            updateParticles particleSys rawDt
+            particleVerts <- renderParticles particleSys vp
+            -- F3 debug overlay
             showDebug <- readIORef debugOverlayRef
-            fpsVal <- readIORef fpsDisplayRef
-            chunks <- readTVarIO (worldChunks world)
-            targetBlock <- readIORef targetBlockRef
-            let debugInfo = if showDebug
-                  then Just (plPos player', plYaw player', plPitch player', fpsVal, HM.size chunks)
-                  else Nothing
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid debugInfo (fmap (\tb -> (tb, vp)) targetBlock)
+            let debugOverlayVerts = if showDebug && mode == Playing
+                  then let V3 px py pz = plPos player'
+                           fpsText = "FPS: " ++ show (round (1.0 / max rawDt 0.001) :: Int)
+                           posText = "XYZ: " ++ showF1 px ++ " / " ++ showF1 py ++ " / " ++ showF1 pz
+                           chunkText = "Chunk: " ++ show (floor px `div` 16 :: Int) ++ " " ++ show (floor pz `div` 16 :: Int)
+                           facingText = "Facing: yaw=" ++ showF1 (plYaw player') ++ " pitch=" ++ showF1 (plPitch player')
+                           white = (1.0, 1.0, 1.0, 1.0)
+                           textScale = 0.7
+                           lineH = 0.04
+                           bg = hudQuad (-1.0) (-1.0) (-0.35) (-1.0 + lineH * 5) (0.0, 0.0, 0.0, 0.5)
+                       in bg
+                          ++ renderText (-0.98) (-0.98) textScale white fpsText
+                          ++ renderText (-0.98) (-0.98 + lineH) textScale white posText
+                          ++ renderText (-0.98) (-0.98 + lineH * 2) textScale white chunkText
+                          ++ renderText (-0.98) (-0.98 + lineH * 3) textScale white facingText
+                  else []
+            -- Read furnace state if furnace UI is open
+            mFurnace <- do
+              mPos <- readIORef openFurnacePosRef
+              case mPos of
+                Just fPos -> do
+                  mTE <- getTileEntity tileEntityRef fPos
+                  pure $ case mTE of
+                    Just (TEFurnace fs) -> Just fs
+                    _                   -> Nothing
+                Nothing -> pure Nothing
+            -- Mouse position in NDC for cursor-follows-mouse and hover highlights
+            (mx, my) <- readIORef mousePosRef
+            (screenW, screenH) <- getWindowScreenSize wh
+            let mouseNdcX = realToFrac mx / fromIntegral screenW * 2.0 - 1.0 :: Float
+                mouseNdcY = realToFrac my / fromIntegral screenH * 2.0 - 1.0 :: Float
+            let hudBase = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid mFurnace mouseNdcX mouseNdcY
+                -- Add underwater overlay (full-screen semi-transparent blue tint)
+                underwaterOverlay = if isUnderwater
+                  then VS.fromList $ hudQuad (-1) (-1) 1 1 (0.05, 0.2, 0.55, 0.35)
+                  else VS.empty
+            -- Damage flash detection and rendering
+            lastHealth <- readIORef lastHealthRef
+            let curHealth = plHealth player'
+            when (curHealth < lastHealth) $ writeIORef damageFlashRef 0.3
+            writeIORef lastHealthRef curHealth
+            flashTime <- readIORef damageFlashRef
+            when (flashTime > 0) $ writeIORef damageFlashRef (max 0 (flashTime - rawDt))
+            let damageOverlay = if flashTime > 0
+                  then VS.fromList $ hudQuad (-1) (-1) 1 1 (0.8, 0.0, 0.0, 0.3 * (flashTime / 0.3))
+                  else VS.empty
+            let hudVerts = hudBase VS.++ underwaterOverlay VS.++ damageOverlay
+                           VS.++ (if null particleVerts then VS.empty else VS.fromList particleVerts)
+                           VS.++ (if null placementGhostVerts then VS.empty else VS.fromList placementGhostVerts)
+                           VS.++ (if null debugOverlayVerts then VS.empty else VS.fromList debugOverlayVerts)
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
             when (hudVC > 0) $ do
@@ -995,7 +1182,91 @@ hitCraftingSlot nx ny
   -- Output slot
   | nx >= 0.15 && nx <= 0.25 && ny >= -0.25 && ny <= -0.15 = Just CraftOutput
   -- Inventory slots below
-  | otherwise = fmap CraftInvSlot (hitInventorySlot nx (ny + 0.3))
+  | otherwise = fmap CraftInvSlot (hitInventorySlot nx (ny - 0.6))
+
+-- | Check if an item is a placeable block
+itemIsBlock :: Item -> Bool
+itemIsBlock (BlockItem _) = True
+itemIsBlock _             = False
+
+-- | Show a float with 1 decimal place
+showF1 :: Float -> String
+showF1 f = let n = round (f * 10) :: Int
+               (whole, frac) = n `divMod` 10
+               sign = if n < 0 && whole == 0 then "-" else ""
+           in sign ++ show whole ++ "." ++ show (abs frac)
+
+-- | Project a block wireframe to screen-space HUD quads.
+--   Draws 12 edges of a cube as thin quads in NDC.
+projectBlockWireframe :: M44 Float -> V3 Int -> [Float]
+projectBlockWireframe vpMat (V3 bx by bz) =
+  let fx = fromIntegral bx :: Float
+      fy = fromIntegral by :: Float
+      fz = fromIntegral bz :: Float
+      -- 8 corners of the block
+      corners = [ V4 fx fy fz 1
+                , V4 (fx+1) fy fz 1
+                , V4 (fx+1) (fy+1) fz 1
+                , V4 fx (fy+1) fz 1
+                , V4 fx fy (fz+1) 1
+                , V4 (fx+1) fy (fz+1) 1
+                , V4 (fx+1) (fy+1) (fz+1) 1
+                , V4 fx (fy+1) (fz+1) 1
+                ]
+      -- Project to NDC
+      projected = map (projectPoint vpMat) corners
+      -- 12 edges: pairs of corner indices
+      edges = [(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),(0,4),(1,5),(2,6),(3,7)]
+      -- Draw each visible edge as a thin line quad
+      lineColor = (1.0, 1.0, 1.0, 0.4)
+  in concatMap (\(i,j) -> drawEdge lineColor (projected !! i) (projected !! j)) edges
+
+-- | Project a 4D homogeneous point through VP matrix to (ndcX, ndcY, visible)
+projectPoint :: M44 Float -> V4 Float -> (Float, Float, Bool)
+projectPoint vpMat p =
+  let V4 cx cy _cz cw = vpMat !* p
+  in if cw <= 0.01
+     then (0, 0, False)
+     else (cx / cw, cy / cw, True)
+
+-- | Draw a line between two projected points as a thin quad
+drawEdge :: (Float, Float, Float, Float) -> (Float, Float, Bool) -> (Float, Float, Bool) -> [Float]
+drawEdge _ (_, _, False) _ = []
+drawEdge _ _ (_, _, False) = []
+drawEdge (r, g, b, a) (x0, y0, _) (x1, y1, _)
+  | abs x0 > 2 || abs y0 > 2 || abs x1 > 2 || abs y1 > 2 = []  -- off-screen
+  | otherwise =
+    let -- Perpendicular direction for line thickness
+        dx = x1 - x0
+        dy = y1 - y0
+        len = sqrt (dx * dx + dy * dy)
+        thickness = 0.003
+    in if len < 0.001 then [] else
+      let nx = (-dy) / len * thickness
+          ny = dx / len * thickness
+      in [ x0 + nx, y0 + ny, r, g, b, a
+         , x0 - nx, y0 - ny, r, g, b, a
+         , x1 - nx, y1 - ny, r, g, b, a
+         , x0 + nx, y0 + ny, r, g, b, a
+         , x1 - nx, y1 - ny, r, g, b, a
+         , x1 + nx, y1 + ny, r, g, b, a
+         ]
+
+-- | Furnace slot types
+data FurnaceSlot = FurnaceInput | FurnaceFuel | FurnaceOutput | FurnaceInvSlot !Int
+  deriving stock (Show, Eq)
+
+-- | Check if NDC coordinates hit a furnace slot
+hitFurnaceSlot :: Float -> Float -> Maybe FurnaceSlot
+hitFurnaceSlot nx ny
+  -- Input slot (top center)
+  | nx >= -0.15 && nx <= -0.03 && ny >= -0.35 && ny <= -0.23 = Just FurnaceInput
+  -- Fuel slot (bottom left)
+  | nx >= -0.15 && nx <= -0.03 && ny >= -0.05 && ny <= 0.07 = Just FurnaceFuel
+  -- Output slot (right side)
+  | nx >= 0.12 && nx <= 0.24 && ny >= -0.22 && ny <= -0.10 = Just FurnaceOutput
+  -- Inventory slots below
+  | otherwise = fmap FurnaceInvSlot (hitInventorySlot nx (ny - 0.67))
 
 -- | Parse mob type from entity tag string
 readMobType :: String -> MobType
@@ -1009,17 +1280,27 @@ readMobType "Sheep"    = Sheep
 readMobType "Chicken"  = Chicken
 readMobType _          = Pig
 
+-- | Generate a colored quad (2 triangles, 6 vertices × 6 floats each)
+hudQuad :: Float -> Float -> Float -> Float -> (Float, Float, Float, Float) -> [Float]
+hudQuad x0 y0 x1 y1 (r, g, b, a) =
+  [ x0, y0, r, g, b, a
+  , x1, y0, r, g, b, a
+  , x1, y1, r, g, b, a
+  , x0, y0, r, g, b, a
+  , x1, y1, r, g, b, a
+  , x0, y1, r, g, b, a
+  ]
+
 -- | Build HUD vertices from current state
--- debugInfo: Just (pos, yaw, pitch, fps, chunkCount) when F3 overlay is active
--- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
-buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid debugInfo targetInfo = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe FurnaceState -> Float -> Float -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mFurnace mouseNdcX mouseNdcY = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
-    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ handVerts ++ debugVerts ++ highlightVerts
-    InventoryOpen -> invScreenVerts ++ cursorVerts
-    CraftingOpen  -> craftScreenVerts ++ cursorVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ handVerts
+    InventoryOpen -> invScreenVerts ++ invHoverVerts ++ cursorVerts
+    CraftingOpen  -> craftScreenVerts ++ craftHoverVerts ++ cursorVerts
+    FurnaceOpen   -> furnaceScreenVerts ++ furnaceHoverVerts ++ cursorVerts
   where
     -- Crosshair: white + at center
     cs = 0.015 :: Float  -- size
@@ -1129,92 +1410,6 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid debu
           itemBlock = quad (armX + 0.02) (armY - 0.12) (armX + 0.18) armY heldColor
       in arm ++ itemBlock
 
-    -- F3 debug overlay: position, direction, FPS, chunk count
-    debugVerts = case debugInfo of
-      Nothing -> []
-      Just (V3 px py pz, yaw, pitch, fps, chunkCount) ->
-        let dc = (1.0, 1.0, 1.0, 0.9)  -- white text
-            bgc = (0.0, 0.0, 0.0, 0.5)  -- semi-transparent background
-            sc = 0.7 :: Float
-            lh = 0.07 :: Float  -- line height
-            x0 = -0.98 :: Float -- left margin
-            y0 = -0.95 :: Float -- top (Vulkan NDC: -1 = top)
-            showF1 f = let n = round (f * 10) :: Int
-                           s = show (div n 10) ++ "." ++ show (mod (abs n) 10)
-                       in if f < 0 && n > -10 then "-" ++ s else s
-            lines' = [ "FPS: " ++ show fps
-                     , "XYZ: " ++ showF1 px ++ " / " ++ showF1 py ++ " / " ++ showF1 pz
-                     , "YAW: " ++ showF1 yaw ++ "  PITCH: " ++ showF1 pitch
-                     , "CHUNKS: " ++ show chunkCount
-                     ]
-            bgW = 0.75 :: Float
-            bgH = fromIntegral (length lines') * lh + 0.02
-            bg = quad x0 y0 (x0 + bgW) (y0 + bgH) bgc
-            textVerts = concatMap (\(i, line) ->
-              renderText (x0 + 0.01) (y0 + 0.01 + fromIntegral i * lh) sc dc line
-              ) (zip [0 :: Int ..] lines')
-        in bg ++ textVerts
-
-    -- Block target highlight: project 3D block edges to 2D NDC and render wireframe
-    highlightVerts = case targetInfo of
-      Nothing -> []
-      Just (V3 bx by bz, vpMat) ->
-        let -- Block corners in world space (slightly expanded to avoid z-fighting)
-            e = 0.002 :: Float  -- expansion
-            x0 = fromIntegral bx - e
-            y0 = fromIntegral by - e
-            z0 = fromIntegral bz - e
-            x1 = fromIntegral bx + 1 + e
-            y1 = fromIntegral by + 1 + e
-            z1 = fromIntegral bz + 1 + e
-            -- Project a 3D point to 2D NDC via the VP matrix
-            -- Vulkan clip correction: Y-flip is in the projection matrix,
-            -- so projected Y is already in Vulkan NDC (-1=top, +1=bottom)
-            projectPt (V3 wx wy wz) =
-              let V4 cx cy cz cw = vpMat !* V4 wx wy wz 1
-              in if cw > 0.01
-                 then Just (cx / cw, cy / cw, cz / cw)
-                 else Nothing  -- behind camera
-            -- 8 corners of the block
-            corners =
-              [ V3 x0 y0 z0, V3 x1 y0 z0, V3 x1 y0 z1, V3 x0 y0 z1  -- bottom
-              , V3 x0 y1 z0, V3 x1 y1 z0, V3 x1 y1 z1, V3 x0 y1 z1  -- top
-              ]
-            projected = map projectPt corners
-            -- 12 edges of a cube (index pairs)
-            edges = [ (0,1),(1,2),(2,3),(3,0)   -- bottom face
-                    , (4,5),(5,6),(6,7),(7,4)   -- top face
-                    , (0,4),(1,5),(2,6),(3,7)   -- vertical edges
-                    ]
-            -- Draw a thin quad between two NDC points (line thickness in NDC)
-            lineColor = (0.1, 0.1, 0.1, 0.6)
-            lineT = 0.003 :: Float  -- line thickness in NDC
-            drawEdge (i, j) =
-              case (projected !! i, projected !! j) of
-                (Just (ax, ay, _), Just (bx', by', _)) ->
-                  -- Only draw if both points are in front of camera and on-screen
-                  if abs ax < 1.5 && abs ay < 1.5 && abs bx' < 1.5 && abs by' < 1.5
-                  then
-                    let dx = bx' - ax
-                        dy = by' - ay
-                        len = sqrt (dx * dx + dy * dy)
-                        -- Perpendicular direction for thickness
-                        (nx, ny) = if len > 0.001
-                                   then (-dy * lineT / len, dx * lineT / len)
-                                   else (lineT, 0)
-                        -- Four corners of the line quad
-                        (r, g, b, a) = lineColor
-                    in [ ax + nx, ay + ny, r, g, b, a
-                       , bx' + nx, by' + ny, r, g, b, a
-                       , bx' - nx, by' - ny, r, g, b, a
-                       , ax + nx, ay + ny, r, g, b, a
-                       , bx' - nx, by' - ny, r, g, b, a
-                       , ax - nx, ay - ny, r, g, b, a
-                       ]
-                  else []
-                _ -> []
-        in concatMap drawEdge edges
-
     -- Inventory screen: dark overlay + 4x9 slot grid
     invScreenVerts =
       -- Full-screen dark overlay
@@ -1300,12 +1495,149 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid debu
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
 
-    -- Cursor item (follows mouse position — simplified to center for now)
+    -- Furnace screen: input/fuel/output slots + flame/arrow indicators + inventory
+    furnaceScreenVerts =
+      quad (-1) (-1) 1 1 (0, 0, 0, 0.5)
+      -- Panel background
+      ++ quad (-0.35) (-0.45) 0.35 0.08 (0.3, 0.3, 0.3, 0.9)
+      -- Title label
+      ++ renderTextCentered (-0.42) 0.9 (1,1,1,1) furnaceLabel
+      -- Input slot background (top center-left)
+      ++ quad (-0.15) (-0.35) (-0.03) (-0.23) (0.15, 0.15, 0.15, 0.8)
+      ++ renderFurnaceItem (fsInput =<< mFurnace) (-0.15) (-0.35) 0.12
+      -- Fuel slot background (below input)
+      ++ quad (-0.15) (-0.05) (-0.03) 0.07 (0.15, 0.15, 0.15, 0.8)
+      ++ renderFurnaceItem (fsFuel =<< mFurnace) (-0.15) (-0.05) 0.12
+      -- Flame icon between input and fuel (fuel level indicator)
+      ++ furnaceFlame
+      -- Arrow icon (smelt progress indicator)
+      ++ furnaceArrow
+      -- Output slot background (right side, larger)
+      ++ quad 0.12 (-0.22) 0.24 (-0.10) (0.2, 0.2, 0.15, 0.9)
+      ++ renderFurnaceItem (fsOutput =<< mFurnace) 0.12 (-0.22) 0.12
+      -- Inventory grid below
+      ++ quad (invGridX0 - 0.02) 0.15 (invGridX0 + 9 * invSlotW + 0.02) (0.15 + 4 * invSlotH + 0.02) (0.3, 0.3, 0.3, 0.9)
+      ++ concatMap renderFurnaceInvSlot [0..35]
+      where
+        furnaceLabel = case mFurnace of
+          Just fs -> furnaceVariantName (fsType fs)
+          Nothing -> "Furnace"
+
+        renderFurnaceItem mStack x y sz = case mStack of
+          Nothing -> []
+          Just (ItemStack item cnt) ->
+            let colors = itemMiniIcon item
+                pixW = sz / 3; pixH = sz / 3
+                iconVerts = concatMap (\(r, c, clr) ->
+                  quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                       (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+                countText = if cnt > 1
+                  then renderText (x + sz - 0.025) (y + sz - 0.02) 0.6 (1,1,1,1) (show cnt)
+                  else []
+            in iconVerts ++ countText
+
+        -- Flame: yellow/orange indicator showing remaining fuel
+        furnaceFlame =
+          let flameX = -0.12; flameY = -0.20
+              flameW = 0.06; flameH = 0.10
+              fuelFrac = case mFurnace of
+                Just fs | fsFuelTotal fs > 0 -> fsFuelRemaining fs / fsFuelTotal fs
+                _                            -> 0
+              -- Background (dark)
+              bg = quad flameX flameY (flameX + flameW) (flameY + flameH) (0.2, 0.15, 0.1, 0.6)
+              -- Fill from bottom up
+              fillH = flameH * fuelFrac
+              fill = if fuelFrac > 0
+                then quad flameX (flameY + flameH - fillH) (flameX + flameW) (flameY + flameH) (1.0, 0.6, 0.1, 0.9)
+                else []
+          in bg ++ fill
+
+        -- Arrow: white progress indicator showing smelt progress
+        furnaceArrow =
+          let arrX = 0.0; arrY = -0.20
+              arrW = 0.10; arrH = 0.04
+              progress = case mFurnace of
+                Just fs -> fsSmeltProgress fs
+                Nothing -> 0
+              bg = quad arrX arrY (arrX + arrW) (arrY + arrH) (0.3, 0.3, 0.3, 0.6)
+              fillW = arrW * min 1.0 progress
+              fill = if progress > 0
+                then quad arrX arrY (arrX + fillW) (arrY + arrH) (1.0, 1.0, 1.0, 0.9)
+                else []
+          in bg ++ fill
+
+        renderFurnaceInvSlot idx =
+          let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
+              col = if idx < 9 then idx else (idx - 9) `mod` 9
+              x = invGridX0 + fromIntegral col * invSlotW + invSlotPad
+              y = 0.17 + fromIntegral row * invSlotH + invSlotPad
+              sw = invSlotW - 2 * invSlotPad
+              sh = invSlotH - 2 * invSlotPad
+              slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
+          in case getSlot inv idx of
+            Nothing -> slotBg
+            Just (ItemStack item _) ->
+              let colors = itemMiniIcon item
+                  pixW = sw / 3; pixH = sh / 3
+              in slotBg ++ concatMap (\(r, c, clr) ->
+                   quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                        (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
+    -- Hover highlight for inventory screen
+    invHoverVerts = case hitInventorySlot mouseNdcX mouseNdcY of
+      Nothing -> []
+      Just idx ->
+        let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
+            col = if idx < 9 then idx else (idx - 9) `mod` 9
+            x = invGridX0 + fromIntegral col * invSlotW + invSlotPad
+            y = invGridY0 + fromIntegral row * invSlotH + invSlotPad
+            sw = invSlotW - 2 * invSlotPad
+            sh = invSlotH - 2 * invSlotPad
+        in quad x y (x + sw) (y + sh) (1, 1, 1, 0.2)
+
+    -- Hover highlight for crafting screen
+    craftHoverVerts = case hitCraftingSlot mouseNdcX mouseNdcY of
+      Just (CraftGrid row col) ->
+        let x = -0.3 + fromIntegral col * 0.1 + 0.005
+            y = -0.35 + fromIntegral row * 0.1 + 0.005
+        in quad x y (x + 0.09) (y + 0.09) (1, 1, 1, 0.2)
+      Just CraftOutput ->
+        quad 0.15 (-0.27) (0.15 + 0.12) (-0.27 + 0.12) (1, 1, 1, 0.2)
+      Just (CraftInvSlot idx) ->
+        let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
+            col = if idx < 9 then idx else (idx - 9) `mod` 9
+            x = invGridX0 + fromIntegral col * invSlotW + invSlotPad
+            y = 0.1 + fromIntegral row * invSlotH + invSlotPad
+            sw = invSlotW - 2 * invSlotPad
+            sh = invSlotH - 2 * invSlotPad
+        in quad x y (x + sw) (y + sh) (1, 1, 1, 0.2)
+      Nothing -> []
+
+    -- Hover highlight for furnace screen
+    furnaceHoverVerts = case hitFurnaceSlot mouseNdcX mouseNdcY of
+      Just FurnaceInput ->
+        quad (-0.15) (-0.35) (-0.03) (-0.23) (1, 1, 1, 0.2)
+      Just FurnaceFuel ->
+        quad (-0.15) (-0.05) (-0.03) 0.07 (1, 1, 1, 0.2)
+      Just FurnaceOutput ->
+        quad 0.12 (-0.22) 0.24 (-0.10) (1, 1, 1, 0.2)
+      Just (FurnaceInvSlot idx) ->
+        let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
+            col = if idx < 9 then idx else (idx - 9) `mod` 9
+            x = invGridX0 + fromIntegral col * invSlotW + invSlotPad
+            y = 0.17 + fromIntegral row * invSlotH + invSlotPad
+            sw = invSlotW - 2 * invSlotPad
+            sh = invSlotH - 2 * invSlotPad
+        in quad x y (x + sw) (y + sh) (1, 1, 1, 0.2)
+      Nothing -> []
+
+    -- Cursor item follows mouse position
     cursorVerts = case cursorItem of
       Nothing -> []
       Just (ItemStack item _) ->
         let colors = itemMiniIcon item
-            x = -0.05; y = -0.05; sw = 0.1; sh = 0.1; pixW = sw/3; pixH = sh/3
+            sw = 0.1; sh = 0.1; pixW = sw / 3; pixH = sh / 3
+            x = mouseNdcX; y = mouseNdcY  -- top-left at cursor
         in concatMap (\(r, c, clr) ->
              quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                   (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
@@ -1367,12 +1699,22 @@ itemColor (BlockItem bt) = case bt of
   GoldOre     -> (1.0, 0.85, 0.0, 1.0)
   DiamondOre  -> (0.3, 0.8, 0.95, 1.0)
   Snow        -> (0.95, 0.95, 0.95, 1.0)
+  BlastFurnace -> (0.55, 0.55, 0.6, 1.0)
+  Smoker      -> (0.5, 0.4, 0.3, 1.0)
+  Hopper      -> (0.4, 0.4, 0.45, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)
 itemColor (ToolItem Axe _ _)     = (0.6, 0.5, 0.3, 1.0)
 itemColor (ToolItem Shovel _ _)  = (0.5, 0.4, 0.25, 1.0)
 itemColor (ToolItem Hoe _ _)     = (0.5, 0.5, 0.3, 1.0)
+itemColor (MaterialItem mt) = case mt of
+  IronIngot  -> (0.85, 0.85, 0.85, 1.0)
+  GoldIngot  -> (1.0, 0.85, 0.2, 1.0)
+  Charcoal   -> (0.2, 0.2, 0.2, 1.0)
+  CookedPork -> (0.7, 0.45, 0.3, 1.0)
+  CookedBeef -> (0.65, 0.35, 0.2, 1.0)
+  BrickItem  -> (0.7, 0.35, 0.25, 1.0)
 
 -- | 3x3 mini-icon for item (row, col, color) — used in hotbar slot rendering
 itemMiniIcon :: Item -> [(Int, Int, (Float, Float, Float, Float))]
@@ -1428,3 +1770,16 @@ itemMiniIcon (BlockItem bt) = blockMiniIcon bt
       where st = (0.5,0.5,0.5,1); ore = (0.3,0.8,0.95,1)
     blockMiniIcon Snow = fill (0.95,0.95,0.95,1)
     blockMiniIcon _ = fill (itemColor (BlockItem bt))
+itemMiniIcon (MaterialItem mt) = case mt of
+  IronIngot  -> [(0,0,c),(0,1,c),(0,2,c), (1,0,c),(1,1,h),(1,2,c)]
+    where c = (0.85,0.85,0.85,1); h = (0.95,0.95,0.95,1)
+  GoldIngot  -> [(0,0,c),(0,1,c),(0,2,c), (1,0,c),(1,1,h),(1,2,c)]
+    where c = (1.0,0.85,0.2,1); h = (1.0,0.95,0.5,1)
+  Charcoal   -> [(0,1,c), (1,0,c),(1,1,c),(1,2,c), (2,1,c)]
+    where c = (0.2,0.2,0.2,1)
+  CookedPork -> [(0,1,c), (1,0,c),(1,1,c),(1,2,c), (2,0,c),(2,1,c)]
+    where c = (0.7,0.45,0.3,1)
+  CookedBeef -> [(0,0,c),(0,1,c), (1,0,c),(1,1,c),(1,2,c), (2,1,c),(2,2,c)]
+    where c = (0.65,0.35,0.2,1)
+  BrickItem  -> [(0,0,c),(0,1,c),(0,2,c), (2,0,c),(2,1,c),(2,2,c)]
+    where c = (0.7,0.35,0.25,1)

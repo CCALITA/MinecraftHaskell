@@ -16,6 +16,7 @@ module Game.Inventory
 
 import Game.Item (Item(..), itemStackLimit)
 import qualified Data.Vector as V
+import GHC.Generics (Generic)
 
 -- | Default maximum stack size
 stackLimit :: Int
@@ -33,7 +34,7 @@ inventorySlots = 36
 data ItemStack = ItemStack
   { isItem  :: !Item
   , isCount :: !Int
-  } deriving stock (Show, Eq)
+  } deriving stock (Show, Eq, Generic)
 
 -- | Player inventory: 36 slots (0-8 = hotbar, 9-35 = main inventory)
 data Inventory = Inventory

@@ -4,21 +4,27 @@ module Game.Save
   , loadWorld
   , savePlayer
   , loadPlayer
-  , worldSavePath
-  , playerSavePath
+  , saveTileEntities
+  , loadTileEntities
   , listSaves
   , nextSaveName
+  , worldSavePath
+  , playerSavePath
   ) where
 
 import World.Block (BlockType(..))
 import World.Chunk (Chunk(..), ChunkPos, chunkWidth, chunkDepth, chunkHeight, newChunk, blockIndex, freezeBlocks)
 import World.World (World(..))
 import Game.Player (Player(..))
+import Game.Item (Item(..), ToolType(..), ToolMaterial(..), MaterialType(..))
+import Game.Inventory (ItemStack(..))
+import Game.TileEntity
 
-import Control.Monad (unless, mapM_, filterM)
+import Control.Monad (unless, when, mapM_, filterM)
 
 import Control.Concurrent.STM (readTVarIO, atomically, writeTVar)
 import qualified Data.HashMap.Strict as HM
+import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as UV
 import qualified Data.Vector.Unboxed.Mutable as MV
 import Data.IORef
@@ -30,6 +36,29 @@ import System.FilePath ((</>), takeExtension)
 import Data.List (sort, stripPrefix)
 import Linear (V2(..), V3(..))
 import GHC.Generics (Generic)
+
+-- Binary instances for tile entity serialization
+instance Binary BlockType
+instance Binary ToolType
+instance Binary ToolMaterial
+instance Binary MaterialType
+instance Binary Item
+instance Binary ItemStack
+instance Binary FurnaceVariant
+instance Binary FurnaceState
+instance Binary HopperDirection
+instance Binary TileEntity
+
+instance Binary HopperState where
+  put hs = do
+    put (V.toList (hsSlots hs))
+    put (hsDirection hs)
+    put (hsCooldown hs)
+  get = do
+    slots <- get
+    dir <- get
+    cd <- get
+    pure HopperState { hsSlots = V.fromList slots, hsDirection = dir, hsCooldown = cd }
 
 -- | Top-level save data
 data SaveData = SaveData
@@ -150,6 +179,34 @@ loadPlayer saveDir = do
             }
       pure (Just player)
 
+-- | Serialized tile entity data
+data TileEntitySave = TileEntitySave
+  { tesEntries :: ![(Int, Int, Int, TileEntity)]  -- (x, y, z, tile entity)
+  } deriving stock (Show, Eq, Generic)
+
+instance Binary TileEntitySave
+
+-- | Save tile entities to disk
+saveTileEntities :: FilePath -> TileEntityMap -> IO ()
+saveTileEntities saveDir teRef = do
+  teMap <- readIORef teRef
+  let entries = [(x, y, z, te) | (V3 x y z, te) <- HM.toList teMap]
+      tes = TileEntitySave entries
+      path = saveDir </> "tile_entities.dat"
+  createDirectoryIfMissing True saveDir
+  BL.writeFile path (encode tes)
+
+-- | Load tile entities from disk
+loadTileEntities :: FilePath -> TileEntityMap -> IO ()
+loadTileEntities saveDir teRef = do
+  let path = saveDir </> "tile_entities.dat"
+  exists <- doesFileExist path
+  when exists $ do
+    bytes <- BL.readFile path
+    let tes = decode bytes :: TileEntitySave
+        teMap = HM.fromList [(V3 x y z, te) | (x, y, z, te) <- tesEntries tes]
+    writeIORef teRef teMap
+
 -- | List available save directories under "saves/"
 listSaves :: IO [String]
 listSaves = do
@@ -159,7 +216,6 @@ listSaves = do
     then pure []
     else do
       dirs <- listDirectory savesRoot
-      -- Filter to directories that have a player.dat or world/ subdirectory
       validDirs <- filterM (\d -> do
         let path = savesRoot </> d
         isDir <- doesDirectoryExist path

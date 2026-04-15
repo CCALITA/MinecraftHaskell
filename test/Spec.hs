@@ -12,8 +12,11 @@ import Game.Item
 import Game.Crafting
 import Game.Player
 import Game.DroppedItem
+import Game.Particle
+import Game.TileEntity hiding (BlastFurnace)
+import qualified Game.TileEntity as TE
 
-import Linear (V2(..), V3(..))
+import Linear (V2(..), V3(..), V4(..), identity, (!*!))
 import qualified Data.Vector as V
 
 main :: IO ()
@@ -27,6 +30,11 @@ main = hspec $ do
   itemSpec
   droppedItemSpec
   playerInputSpec
+  particleSpec
+  materialItemSpec
+  smeltingSpec
+  furnaceTickSpec
+  hopperSpec
 
 -- =========================================================================
 -- Block
@@ -353,3 +361,175 @@ droppedItemSpec = describe "Game.DroppedItem" $ do
     spawnDrop di (BlockItem Dirt) 1 (V3 100 65 100)
     collected <- collectNearby di (V3 0 65 0) 5.0
     collected `shouldBe` []
+
+-- =========================================================================
+-- Particles
+-- =========================================================================
+particleSpec :: Spec
+particleSpec = describe "Game.Particle" $ do
+  it "new particle system has no particles" $ do
+    ps <- newParticleSystem
+    verts <- renderParticles ps identity
+    verts `shouldBe` []
+
+  it "spawning block break particles adds particles" $ do
+    ps <- newParticleSystem
+    spawnBlockBreakParticles ps (V3 0 0 0.5) (0.5, 0.5, 0.5, 1.0)
+    -- With identity VP, particles near origin should render (within NDC)
+    verts <- renderParticles ps identity
+    length verts `shouldSatisfy` (> 0)
+
+  it "particles die after sufficient time" $ do
+    ps <- newParticleSystem
+    spawnBlockBreakParticles ps (V3 0 0 0) (1.0, 0.0, 0.0, 1.0)
+    -- Advance time well past max lifetime (0.7s)
+    updateParticles ps 2.0
+    verts <- renderParticles ps identity
+    verts `shouldBe` []
+
+  it "particles behind camera produce no vertices" $ do
+    ps <- newParticleSystem
+    spawnBlockBreakParticles ps (V3 0 0 100) (0.5, 0.5, 0.5, 1.0)
+    -- VP that mimics perspective: w = -z, so z=100 gives w=-100 (behind camera)
+    let vp = V4 (V4 1 0 0 0) (V4 0 1 0 0) (V4 0 0 (-1) 0) (V4 0 0 (-1) 0)
+    verts <- renderParticles ps vp
+    verts `shouldBe` []
+
+-- =========================================================================
+-- Material items
+-- =========================================================================
+materialItemSpec :: Spec
+materialItemSpec = describe "Game.Item MaterialItem" $ do
+  it "MaterialItem stacks to 64" $ do
+    itemStackLimit (MaterialItem IronIngot) `shouldBe` 64
+    itemStackLimit (MaterialItem Charcoal) `shouldBe` 64
+
+  it "MaterialItem does not convert to block" $ do
+    itemToBlock (MaterialItem IronIngot) `shouldBe` Nothing
+    itemToBlock (MaterialItem GoldIngot) `shouldBe` Nothing
+
+  it "MaterialItem is not a block item" $ do
+    isBlockItem (MaterialItem IronIngot) `shouldBe` False
+    isBlockItem (MaterialItem BrickItem) `shouldBe` False
+
+-- =========================================================================
+-- Smelting recipes
+-- =========================================================================
+smeltingSpec :: Spec
+smeltingSpec = describe "Game.TileEntity smelting" $ do
+  it "iron ore has a smelting recipe" $ do
+    findSmeltingRecipe NormalFurnace (BlockItem IronOre) `shouldSatisfy` \case
+      Just r  -> srOutput r == MaterialItem IronIngot
+      Nothing -> False
+
+  it "gold ore has a smelting recipe" $ do
+    findSmeltingRecipe NormalFurnace (BlockItem GoldOre) `shouldSatisfy` \case
+      Just r  -> srOutput r == MaterialItem GoldIngot
+      Nothing -> False
+
+  it "blast furnace rejects non-ore recipes" $ do
+    findSmeltingRecipe TE.BlastFurnace (BlockItem Sand) `shouldBe` Nothing
+    findSmeltingRecipe TE.BlastFurnace (BlockItem OakLog) `shouldBe` Nothing
+
+  it "blast furnace accepts ore recipes" $ do
+    findSmeltingRecipe TE.BlastFurnace (BlockItem IronOre) `shouldSatisfy` \case
+      Just _  -> True
+      Nothing -> False
+
+  it "smoker rejects non-food recipes" $ do
+    findSmeltingRecipe SmokerFurnace (BlockItem IronOre) `shouldBe` Nothing
+    findSmeltingRecipe SmokerFurnace (BlockItem Sand) `shouldBe` Nothing
+
+  it "fuel burn time is valid for known fuels" $ do
+    fuelBurnTime (BlockItem OakPlanks) `shouldBe` Just 15.0
+    fuelBurnTime (BlockItem CoalOre) `shouldBe` Just 80.0
+    fuelBurnTime (MaterialItem Charcoal) `shouldBe` Just 80.0
+
+  it "non-fuel items have no burn time" $ do
+    fuelBurnTime (BlockItem Stone) `shouldBe` Nothing
+    fuelBurnTime (MaterialItem IronIngot) `shouldBe` Nothing
+
+-- =========================================================================
+-- Furnace ticking
+-- =========================================================================
+furnaceTickSpec :: Spec
+furnaceTickSpec = describe "Game.TileEntity furnace tick" $ do
+  it "empty furnace does nothing when ticked" $ do
+    let fs = newFurnaceState NormalFurnace
+    teRef <- newTileEntityMap
+    setTileEntity teRef (V3 0 0 0) (TEFurnace fs)
+    tickTileEntities 1.0 teRef
+    mTE <- getTileEntity teRef (V3 0 0 0)
+    case mTE of
+      Just (TEFurnace fs') -> fsOutput fs' `shouldBe` Nothing
+      _ -> expectationFailure "Expected furnace"
+
+  it "furnace with input and fuel produces output after enough ticks" $ do
+    let fs = (newFurnaceState NormalFurnace)
+              { fsInput = Just (ItemStack (BlockItem IronOre) 1)
+              , fsFuel  = Just (ItemStack (BlockItem OakPlanks) 1)
+              }
+    teRef <- newTileEntityMap
+    setTileEntity teRef (V3 0 0 0) (TEFurnace fs)
+    -- Tick for 11 seconds (smelt time = 10s)
+    mapM_ (\_ -> tickTileEntities 1.0 teRef) [1..11 :: Int]
+    mTE <- getTileEntity teRef (V3 0 0 0)
+    case mTE of
+      Just (TEFurnace fs') -> do
+        fsOutput fs' `shouldBe` Just (ItemStack (MaterialItem IronIngot) 1)
+        fsInput fs' `shouldBe` Nothing
+      _ -> expectationFailure "Expected furnace with output"
+
+  it "blast furnace smelts ore at 2x speed" $ do
+    let fs = (newFurnaceState TE.BlastFurnace)
+              { fsInput = Just (ItemStack (BlockItem IronOre) 1)
+              , fsFuel  = Just (ItemStack (BlockItem CoalOre) 1)
+              }
+    teRef <- newTileEntityMap
+    setTileEntity teRef (V3 0 0 0) (TEFurnace fs)
+    -- Tick for 6 seconds (blast furnace: 10s / 2x = 5s needed)
+    mapM_ (\_ -> tickTileEntities 1.0 teRef) [1..6 :: Int]
+    mTE <- getTileEntity teRef (V3 0 0 0)
+    case mTE of
+      Just (TEFurnace fs') -> fsOutput fs' `shouldBe` Just (ItemStack (MaterialItem IronIngot) 1)
+      _ -> expectationFailure "Expected blast furnace with output"
+
+-- =========================================================================
+-- Hopper
+-- =========================================================================
+hopperSpec :: Spec
+hopperSpec = describe "Game.TileEntity hopper" $ do
+  it "new hopper has 5 empty slots" $ do
+    let hs = newHopperState HopperDown
+    V.length (hsSlots hs) `shouldBe` 5
+    V.all (== Nothing) (hsSlots hs) `shouldBe` True
+
+  it "hopper pulls from furnace output" $ do
+    let fs = (newFurnaceState NormalFurnace)
+              { fsOutput = Just (ItemStack (MaterialItem IronIngot) 3) }
+        hs = newHopperState HopperDown
+    case hopperPullFrom hs (TEFurnace fs) of
+      Just (hs', TEFurnace fs') -> do
+        hsSlots hs' V.! 0 `shouldBe` Just (ItemStack (MaterialItem IronIngot) 1)
+        fsOutput fs' `shouldBe` Just (ItemStack (MaterialItem IronIngot) 2)
+      _ -> expectationFailure "Expected hopper to pull from furnace"
+
+  it "hopper pushes fuel to furnace fuel slot" $ do
+    let hs = (newHopperState HopperDown)
+              { hsSlots = V.fromList [Just (ItemStack (BlockItem OakPlanks) 5), Nothing, Nothing, Nothing, Nothing] }
+        fs = newFurnaceState NormalFurnace
+    case hopperPushTo hs (TEFurnace fs) of
+      Just (hs', TEFurnace fs') -> do
+        hsSlots hs' V.! 0 `shouldBe` Just (ItemStack (BlockItem OakPlanks) 4)
+        fsFuel fs' `shouldBe` Just (ItemStack (BlockItem OakPlanks) 1)
+      _ -> expectationFailure "Expected hopper to push fuel to furnace"
+
+  it "hopper pushes non-fuel to furnace input slot" $ do
+    let hs = (newHopperState HopperDown)
+              { hsSlots = V.fromList [Just (ItemStack (BlockItem IronOre) 3), Nothing, Nothing, Nothing, Nothing] }
+        fs = newFurnaceState NormalFurnace
+    case hopperPushTo hs (TEFurnace fs) of
+      Just (hs', TEFurnace fs') -> do
+        hsSlots hs' V.! 0 `shouldBe` Just (ItemStack (BlockItem IronOre) 2)
+        fsInput fs' `shouldBe` Just (ItemStack (BlockItem IronOre) 1)
+      _ -> expectationFailure "Expected hopper to push input to furnace"

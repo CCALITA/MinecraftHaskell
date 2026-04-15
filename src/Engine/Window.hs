@@ -3,6 +3,7 @@ module Engine.Window
   , pollWindowEvents
   , windowShouldClose
   , getWindowSize
+  , getWindowScreenSize
   , WindowHandle(..)
   ) where
 
@@ -15,6 +16,7 @@ import Data.IORef
 data WindowHandle = WindowHandle
   { whWindow          :: !GLFW.Window
   , whFramebufferSize :: !(IORef (Int, Int))
+  , whWindowSize      :: !(IORef (Int, Int))
   , whResized         :: !(IORef Bool)
   }
 
@@ -36,12 +38,17 @@ withWindow width height title action = do
       throwIO $ userError "Failed to create GLFW window"
     Just window -> do
       sizeRef    <- newIORef (width, height)
+      winSizeRef <- newIORef (width, height)
       resizedRef <- newIORef False
 
       -- Set framebuffer resize callback
       GLFW.setFramebufferSizeCallback window $ Just $ \_win w h -> do
         writeIORef sizeRef (w, h)
         writeIORef resizedRef True
+
+      -- Track window size in screen coordinates (for cursor-to-NDC conversion)
+      GLFW.setWindowSizeCallback window $ Just $ \_win w h ->
+        writeIORef winSizeRef (w, h)
 
       -- Set key callback: ESC to close
       GLFW.setKeyCallback window $ Just $ \_win key _scancode action' _mods ->
@@ -50,7 +57,7 @@ withWindow width height title action = do
             GLFW.setWindowShouldClose window True
           _ -> pure ()
 
-      let handle = WindowHandle window sizeRef resizedRef
+      let handle = WindowHandle window sizeRef winSizeRef resizedRef
       result <- action handle
 
       GLFW.destroyWindow window
@@ -65,6 +72,10 @@ pollWindowEvents = GLFW.pollEvents
 windowShouldClose :: WindowHandle -> IO Bool
 windowShouldClose wh = GLFW.windowShouldClose (whWindow wh)
 
--- | Get current framebuffer size
+-- | Get current framebuffer size (for rendering/swapchain)
 getWindowSize :: WindowHandle -> IO (Int, Int)
 getWindowSize wh = readIORef (whFramebufferSize wh)
+
+-- | Get current window size in screen coordinates (for cursor-to-NDC conversion)
+getWindowScreenSize :: WindowHandle -> IO (Int, Int)
+getWindowScreenSize wh = readIORef (whWindowSize wh)
