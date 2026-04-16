@@ -39,6 +39,7 @@ import Control.Concurrent.STM (readTVarIO, atomically, writeTVar)
 import Control.Exception (finally)
 import System.IO (hSetBuffering, stdout, BufferMode(..))
 import qualified Data.HashMap.Strict as HM
+import qualified Data.IntMap.Strict as IM
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as VS
 import Data.IORef
@@ -49,6 +50,7 @@ import Foreign.Marshal.Utils (copyBytes)
 import Data.Bits ((.|.))
 import System.FilePath ((</>))
 import qualified System.Random
+import System.Random (randomRIO)
 import System.Environment (getArgs)
 import Data.Char (isDigit)
 
@@ -158,6 +160,7 @@ main = do
     spawnRngRef <- newIORef =<< System.Random.newStdGen
     spawnCooldownRef <- newIORef (0.0 :: Float)
     aiStatesRef <- newIORef (HM.empty :: HM.HashMap Int AIState)
+    creeperFuseRef <- newIORef (IM.empty :: IM.IntMap Float)
 
     -- Give player some starting blocks
     let startInv = selectHotbar (foldl (\i (item, cnt) -> fst $ addItem i item cnt) emptyInventory
@@ -672,24 +675,72 @@ main = do
               aiStates <- readIORef aiStatesRef
               forM_ ents $ \ent -> do
                 let eid = entId ent
+                    mobType = readMobType (entTag ent)
                     currentAI = HM.lookupDefault (AIIdle 2.0) eid aiStates
-                (ent', newAI) <- updateMobAI dt ent (readMobType (entTag ent)) (plPos player) blockQuery currentAI spawnRngRef
+                (ent', newAI) <- updateMobAI dt ent mobType (plPos player) blockQuery currentAI spawnRngRef
                 updateEntity entityWorld eid (const ent')
                 modifyIORef' aiStatesRef (HM.insert eid newAI)
-                -- Apply mob attack damage to player
-                case (currentAI, newAI) of
-                  (AIAttack _ cd, AIAttack _ 1.0) | cd <= 0 -> do
-                    let dmg = floor $ miAttackDmg (mobInfo (readMobType (entTag ent)))
-                    when (dmg > 0) $ do
-                      modifyIORef' playerRef (damagePlayer dmg)
-                      putStrLn $ entTag ent ++ " attacked you for " ++ show dmg ++ " damage!"
-                  _ -> pure ()
+
+                -- Creeper fuse / explosion behavior
+                if mobType == Creeper
+                  then do
+                    let info = mobInfo Creeper
+                        creeperPos = entPosition ent'
+                        distToPlayer = distance creeperPos (plPos player)
+                        explosionRadius = 3 :: Int
+                    case newAI of
+                      AIAttack _ _ | distToPlayer < miAttackRange info -> do
+                        fuseMap <- readIORef creeperFuseRef
+                        let oldFuse = IM.findWithDefault 0.0 eid fuseMap
+                            newFuse = oldFuse + dt
+                        if newFuse >= 1.5
+                          then do
+                            putStrLn $ "Creeper exploded at " ++ show creeperPos ++ "!"
+                            explodeAt world creeperPos explosionRadius droppedItems
+                            let dmg = max 0 (floor (miAttackDmg info * (1.0 - distToPlayer / 7.0)) :: Int)
+                            when (dmg > 0) $ do
+                              modifyIORef' playerRef (damagePlayer dmg)
+                              putStrLn $ "Explosion dealt " ++ show dmg ++ " damage!"
+                            updateEntity entityWorld eid (\e -> e { entAlive = False, entHealth = 0 })
+                            destroyEntity entityWorld eid
+                            modifyIORef' aiStatesRef (HM.delete eid)
+                            modifyIORef' creeperFuseRef (IM.delete eid)
+                            -- Rebuild only the chunks that overlap the blast sphere
+                            let V3 cpx _ cpz = creeperPos
+                                bx0 = floor cpx - explosionRadius :: Int
+                                bz0 = floor cpz - explosionRadius :: Int
+                                bx1 = floor cpx + explosionRadius :: Int
+                                bz1 = floor cpz + explosionRadius :: Int
+                                cx0 = bx0 `div` chunkWidth
+                                cz0 = bz0 `div` chunkDepth
+                                cx1 = bx1 `div` chunkWidth
+                                cz1 = bz1 `div` chunkDepth
+                            forM_ [cx0 .. cx1] $ \chx ->
+                              forM_ [cz0 .. cz1] $ \chz -> do
+                                mChunk <- getChunk world (V2 chx chz)
+                                case mChunk of
+                                  Nothing -> pure ()
+                                  Just ch -> meshSingleChunk physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef ch
+                          else
+                            modifyIORef' creeperFuseRef (IM.insert eid newFuse)
+                      _ ->
+                        modifyIORef' creeperFuseRef (IM.delete eid)
+                  else do
+                    -- Non-creeper mob: apply regular attack damage to player
+                    case (currentAI, newAI) of
+                      (AIAttack _ cd, AIAttack _ 1.0) | cd <= 0 -> do
+                        let dmg = floor $ miAttackDmg (mobInfo mobType)
+                        when (dmg > 0) $ do
+                          modifyIORef' playerRef (damagePlayer dmg)
+                          putStrLn $ entTag ent ++ " attacked you for " ++ show dmg ++ " damage!"
+                      _ -> pure ()
+
                 -- Check for mob death and spawn item drops
                 when (entHealth ent' <= 0) $ do
                   destroyEntity entityWorld eid
                   modifyIORef' aiStatesRef (HM.delete eid)
                   let dropPos = entPosition ent'
-                      mobDrop = case readMobType (entTag ent) of
+                      mobDrop = case mobType of
                         Pig      -> Just (BlockItem OakPlanks, 1)
                         Cow      -> Just (BlockItem OakPlanks, 1)
                         Sheep    -> Just (BlockItem OakPlanks, 1)
@@ -996,6 +1047,29 @@ hitCraftingSlot nx ny
   | nx >= 0.15 && nx <= 0.25 && ny >= -0.25 && ny <= -0.15 = Just CraftOutput
   -- Inventory slots below
   | otherwise = fmap CraftInvSlot (hitInventorySlot nx (ny + 0.3))
+
+-- | Explode blocks in a sphere around a position, with a chance to drop items.
+explodeAt :: World -> V3 Float -> Int -> DroppedItems -> IO ()
+explodeAt world (V3 centerX centerY centerZ) radius droppedItemsRef = do
+  let cx = floor centerX :: Int
+      cy = floor centerY :: Int
+      cz = floor centerZ :: Int
+      r  = fromIntegral radius :: Float
+  forM_ [cx - radius .. cx + radius] $ \x ->
+    forM_ [cy - radius .. cy + radius] $ \y ->
+      forM_ [cz - radius .. cz + radius] $ \z -> do
+        let dist = sqrt (fromIntegral ((x - cx) ^ (2 :: Int) + (y - cy) ^ (2 :: Int) + (z - cz) ^ (2 :: Int))) :: Float
+        when (dist <= r) $ do
+          bt <- worldGetBlock world (V3 x y z)
+          when (bt /= Air && bt /= Bedrock && bt /= Water && bt /= Lava) $ do
+            worldSetBlock world (V3 x y z) Air
+            -- 30% chance to drop the block's items
+            roll <- randomRIO (0.0, 1.0 :: Float)
+            when (roll < 0.3) $ do
+              let drops = blockDrops bt
+              forM_ drops $ \(item, count) ->
+                spawnDrop droppedItemsRef item count
+                  (V3 (fromIntegral x + 0.5) (fromIntegral y + 0.5) (fromIntegral z + 0.5))
 
 -- | Parse mob type from entity tag string
 readMobType :: String -> MobType
