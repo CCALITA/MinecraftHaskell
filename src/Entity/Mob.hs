@@ -11,10 +11,10 @@ module Entity.Mob
   ) where
 
 import Entity.ECS
-import Entity.Pathfinding (findPath, PathNode(..))
+import Entity.Pathfinding (findPath)
 import Game.Physics (BlockQuery)
-import Linear (V3(..), normalize, distance, (^*), norm)
-import System.Random (StdGen, randomR, mkStdGen)
+import Linear (V3(..), normalize, distance, (^*))
+import System.Random (StdGen, randomR)
 import Data.IORef
 
 -- | Types of mobs
@@ -31,11 +31,11 @@ data MobType
 
 -- | AI state machine
 data AIState
-  = AIIdle !Float           -- time remaining in idle
-  | AIWander !(V3 Float)    -- target position to wander to
-  | AIChase !EntityId       -- chasing a target (player entity)
-  | AIAttack !EntityId !Float  -- attacking target, cooldown
-  | AIFlee !(V3 Float) !Float  -- fleeing from point, time remaining
+  = AIIdle !Float                                          -- time remaining in idle
+  | AIWander !(V3 Float) !(Maybe [V3 Int])                 -- target, cached path
+  | AIChase !(Maybe [V3 Int]) !Int                         -- cached path, ticks since last pathfind
+  | AIAttack !EntityId !Float                              -- attacking target, cooldown
+  | AIFlee !(V3 Float) !Float                              -- fleeing from point, time remaining
   deriving stock (Show, Eq)
 
 -- | Behavior category
@@ -78,7 +78,7 @@ updateMobAI
   :: Float -> Entity -> MobType -> V3 Float -> BlockQuery
   -> AIState -> IORef StdGen
   -> IO (Entity, AIState)
-updateMobAI dt entity mobType playerPos _blockQuery aiState rngRef = do
+updateMobAI dt entity mobType playerPos blockQuery aiState rngRef = do
   let info = mobInfo mobType
       pos = entPosition entity
       distToPlayer = distance pos playerPos
@@ -86,36 +86,39 @@ updateMobAI dt entity mobType playerPos _blockQuery aiState rngRef = do
   case aiState of
     AIIdle timeLeft
       | timeLeft <= 0 -> do
-          -- Transition: idle → wander or chase
+          -- Transition: idle -> wander or chase
           if isHostile mobType && distToPlayer < miDetectRange info
-            then pure (entity, AIChase 0)  -- 0 = player
+            then do
+              -- Start chasing: compute initial path
+              path <- findPathForMob blockQuery pos playerPos
+              pure (entity, AIChase path 0)
             else do
               -- Pick random wander target
               target <- randomWanderTarget rngRef pos
-              pure (entity, AIWander target)
+              path <- findPathForMob blockQuery pos target
+              pure (entity, AIWander target path)
       | otherwise ->
           pure (entity, AIIdle (timeLeft - dt))
 
-    AIWander target ->
+    AIWander target pathCache -> do
       let dist = distance pos target
-      in if dist < 1.0
+      if dist < 1.0
         then do
           -- Reached target, go idle
           idleTime <- randomIdleTime rngRef
           pure (entity, AIIdle idleTime)
         else do
-          -- Move toward target
-          let dir = normalize (target - pos)
-              speed = miSpeed info
-              newVel = dir ^* speed
-              newPos = pos + newVel ^* dt
-              entity' = entity { entPosition = newPos, entVelocity = newVel }
-          -- Check if should chase player
+          -- Check if should chase player instead
           if isHostile mobType && distToPlayer < miDetectRange info
-            then pure (entity', AIChase 0)
-            else pure (entity', AIWander target)
+            then do
+              path <- findPathForMob blockQuery pos playerPos
+              pure (entity, AIChase path 0)
+            else do
+              -- Follow cached path or fall back to direct movement
+              let (entity', pathCache') = followPath dt info entity target pathCache
+              pure (entity', AIWander target pathCache')
 
-    AIChase _targetId ->
+    AIChase pathCache ticksSincePathfind -> do
       if distToPlayer > miDetectRange info * 1.5
         then do
           -- Lost target, go idle
@@ -124,27 +127,28 @@ updateMobAI dt entity mobType playerPos _blockQuery aiState rngRef = do
         else if distToPlayer < miAttackRange info
           then pure (entity, AIAttack 0 0)  -- start attacking
           else do
-            -- Move toward player
-            let dir = if distToPlayer > 0.1
-                      then normalize (playerPos - pos)
-                      else V3 0 0 0
-                speed = miSpeed info
-                newVel = dir ^* speed
-                newPos = pos + newVel ^* dt
-                -- Face the player
-                yaw = atan2 (v3x dir) (v3z dir) * 180 / pi
-                entity' = entity
-                  { entPosition = newPos
-                  , entVelocity = newVel
-                  , entYaw = yaw
-                  }
-            pure (entity', AIChase 0)
+            -- Repath every 20 ticks or if no path
+            let shouldRepath = ticksSincePathfind >= 20 || maybe True null pathCache
+            newPath <- if shouldRepath
+              then findPathForMob blockQuery pos playerPos
+              else pure pathCache
+            let ticks' = if shouldRepath then 0 else ticksSincePathfind + 1
+            -- Follow the path toward player
+            let (entity', newPath') = followPath dt info entity playerPos newPath
+                -- Face the player (guard against zero-length direction)
+                entity'' = if distToPlayer > 0.1
+                  then let dir = normalize (playerPos - entPosition entity')
+                           yaw = atan2 (v3x dir) (v3z dir) * 180 / pi
+                       in entity' { entYaw = yaw }
+                  else entity'
+            pure (entity'', AIChase newPath' ticks')
 
     AIAttack _targetId cooldown
       | cooldown > 0 ->
           pure (entity, AIAttack 0 (cooldown - dt))
-      | distToPlayer > miAttackRange info * 1.5 ->
-          pure (entity, AIChase 0)
+      | distToPlayer > miAttackRange info * 1.5 -> do
+          path <- findPathForMob blockQuery pos playerPos
+          pure (entity, AIChase path 0)
       | otherwise -> do
           -- Attack! (damage applied externally)
           pure (entity, AIAttack 0 1.0)  -- 1 second cooldown
@@ -162,6 +166,37 @@ updateMobAI dt entity mobType playerPos _blockQuery aiState rngRef = do
               newPos = pos + newVel ^* dt
               entity' = entity { entPosition = newPos, entVelocity = newVel }
           pure (entity', AIFlee fleeFrom (timeLeft - dt))
+
+-- | Compute a path from the mob's current position to a target.
+--   Converts Float positions to block coordinates (Int).
+findPathForMob :: BlockQuery -> V3 Float -> V3 Float -> IO (Maybe [V3 Int])
+findPathForMob blockQuery mobPos targetPos =
+  findPath blockQuery (fmap floor mobPos) (fmap floor targetPos)
+
+-- | Follow a cached path: move toward the next waypoint, popping it when
+--   within horizontal range. Falls back to direct movement when no path exists.
+followPath :: Float -> MobInfo -> Entity -> V3 Float -> Maybe [V3 Int] -> (Entity, Maybe [V3 Int])
+followPath dt info entity fallbackTarget = \case
+    Just (next : rest) ->
+      let target = fmap (\i -> fromIntegral i + 0.5) next :: V3 Float
+          pos = entPosition entity
+          V3 dx _ dz = target - pos
+          horizDist = sqrt (dx * dx + dz * dz)
+      in if horizDist < 0.5
+        then (entity, if null rest then Nothing else Just rest)
+        else
+          let dir = normalize (target - pos)
+              newVel = dir ^* miSpeed info
+              newPos = pos + newVel ^* dt
+          in (entity { entPosition = newPos, entVelocity = newVel }, Just (next : rest))
+    _ ->
+      let pos = entPosition entity
+      in if distance pos fallbackTarget > 0.1
+        then let dir = normalize (fallbackTarget - pos)
+                 newVel = dir ^* miSpeed info
+                 newPos = pos + newVel ^* dt
+             in (entity { entPosition = newPos, entVelocity = newVel }, Nothing)
+        else (entity, Nothing)
 
 -- | Apply damage to an entity
 damageEntity :: Entity -> Float -> Entity
