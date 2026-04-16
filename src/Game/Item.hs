@@ -2,9 +2,9 @@ module Game.Item
   ( Item(..)
   , ToolType(..)
   , ToolMaterial(..)
-  , ToolInfo(..)
   , FoodType(..)
   , MaterialType(..)
+  , ToolInfo(..)
   , ArmorSlot(..)
   , ArmorMaterial(..)
   , itemFromBlock
@@ -21,9 +21,11 @@ module Game.Item
   , foodName
   , materialName
   , armorDefensePoints
+  , mobDrops
   ) where
 
 import World.Block (BlockType(..))
+import System.Random (randomRIO)
 
 -- | Tool types
 data ToolType
@@ -259,3 +261,30 @@ armorDefensePoints slot mat = case (slot, mat) of
   (Chestplate, LeatherArmor) -> 3; (Chestplate, IronArmor) -> 6; (Chestplate, GoldArmor) -> 5; (Chestplate, DiamondArmor) -> 8
   (Leggings, LeatherArmor)  -> 2; (Leggings, IronArmor)  -> 5; (Leggings, GoldArmor)  -> 3; (Leggings, DiamondArmor)  -> 6
   (Boots, LeatherArmor)     -> 1; (Boots, IronArmor)     -> 2; (Boots, GoldArmor)     -> 1; (Boots, DiamondArmor)     -> 3
+
+-- | Loot table for mob deaths. Returns a list of (item, count) pairs
+--   with randomized drop quantities.
+mobDrops :: String -> IO [(Item, Int)]
+mobDrops tag = case tag of
+  "Pig"      -> randomDrops [(FoodItem RawPorkchop, 1, 3)]
+  "Cow"      -> do meat  <- randomDrops [(FoodItem RawBeef, 1, 3)]
+                   leath <- randomDrops [(MaterialItem Leather, 0, 2)]
+                   pure (meat ++ leath)
+  "Chicken"  -> do meat  <- randomDrops [(FoodItem RawChicken, 1, 1)]
+                   feath <- randomDrops [(MaterialItem Feather, 0, 2)]
+                   pure (meat ++ feath)
+  "Sheep"    -> pure [(BlockItem OakPlanks, 1)]  -- wool placeholder
+  "Zombie"   -> randomDrops [(FoodItem RottenFlesh, 0, 2)]
+  "Skeleton" -> do bones  <- randomDrops [(MaterialItem Bone, 0, 2)]
+                   arrows <- randomDrops [(MaterialItem ArrowMat, 0, 2)]
+                   pure (bones ++ arrows)
+  "Creeper"  -> randomDrops [(MaterialItem Gunpowder, 0, 2)]
+  "Spider"   -> randomDrops [(MaterialItem StringMat, 0, 2)]
+  _          -> pure []
+ where
+  randomDrops :: [(Item, Int, Int)] -> IO [(Item, Int)]
+  randomDrops entries = do
+    results <- mapM (\(item, lo, hi) -> do
+      n <- randomRIO (lo, hi)
+      pure (item, n)) entries
+    pure $ filter (\(_, n) -> n > 0) results

@@ -689,20 +689,11 @@ main = do
                   destroyEntity entityWorld eid
                   modifyIORef' aiStatesRef (HM.delete eid)
                   let dropPos = entPosition ent'
-                      mobDrop = case readMobType (entTag ent) of
-                        Pig      -> Just (FoodItem RawPorkchop, 1)
-                        Cow      -> Just (FoodItem RawBeef, 1)
-                        Sheep    -> Just (BlockItem OakPlanks, 1)
-                        Chicken  -> Just (FoodItem RawChicken, 1)
-                        Zombie   -> Just (FoodItem RottenFlesh, 1)
-                        Skeleton -> Just (MaterialItem Bone, 1)
-                        Creeper  -> Just (MaterialItem Gunpowder, 1)
-                        Spider   -> Just (MaterialItem StringMat, 1)
-                  case mobDrop of
-                    Just (item, count) -> do
+                  drops <- mobDrops (entTag ent)
+                  forM_ drops $ \(item, count) ->
+                    when (count > 0) $ do
                       spawnDrop droppedItems item count dropPos
-                      putStrLn $ entTag ent ++ " died and dropped " ++ show item
-                    Nothing -> pure ()
+                      putStrLn $ entTag ent ++ " died and dropped " ++ show count ++ "x " ++ show item
 
             -- Auto-save every ~5 minutes (18000 frames at 60fps)
             when (frameIdx > 0 && frameIdx `mod` 18000 == 0) $ do
@@ -1513,3 +1504,5 @@ itemMiniIcon (BlockItem bt) = blockMiniIcon bt
       where st = (0.5,0.5,0.5,1); ore = (0.3,0.8,0.95,1)
     blockMiniIcon Snow = fill (0.95,0.95,0.95,1)
     blockMiniIcon _ = fill (itemColor (BlockItem bt))
+itemMiniIcon item = fillSolid (itemColor item)
+  where fillSolid c = [(r,col,c) | r <- [0..2], col <- [0..2]]

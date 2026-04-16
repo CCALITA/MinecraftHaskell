@@ -320,6 +320,28 @@ itemSpec = describe "Game.Item" $ do
   it "tool info has correct durability for diamond" $ do
     tiMaxDurability (toolInfo Diamond) `shouldBe` 1561
 
+  it "food items stack to 64" $ do
+    itemStackLimit (FoodItem RawPorkchop) `shouldBe` 64
+    itemStackLimit (FoodItem RottenFlesh) `shouldBe` 64
+
+  it "material items stack to 64" $ do
+    itemStackLimit (MaterialItem Bone) `shouldBe` 64
+    itemStackLimit (MaterialItem Gunpowder) `shouldBe` 64
+
+  it "food items are not block items" $ do
+    isBlockItem (FoodItem RawBeef) `shouldBe` False
+    isBlockItem (FoodItem Apple) `shouldBe` False
+
+  it "material items are not block items" $ do
+    isBlockItem (MaterialItem StringMat) `shouldBe` False
+    isBlockItem (MaterialItem Leather) `shouldBe` False
+
+  it "food items do not convert to block type" $ do
+    itemToBlock (FoodItem RawPorkchop) `shouldBe` Nothing
+
+  it "material items do not convert to block type" $ do
+    itemToBlock (MaterialItem Bone) `shouldBe` Nothing
+
   it "blockDrops returns cobblestone for stone" $ do
     blockDrops Stone `shouldBe` [(BlockItem Cobblestone, 1)]
 
