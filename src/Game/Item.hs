@@ -26,6 +26,8 @@ module Game.Item
 
 import World.Block (BlockType(..))
 import System.Random (randomRIO)
+import Data.Binary (Binary(..), Get)
+import Data.Word (Word8)
 
 -- | Tool types
 data ToolType
@@ -288,3 +290,53 @@ mobDrops tag = case tag of
       n <- randomRIO (lo, hi)
       pure (item, n)) entries
     pure $ filter (\(_, n) -> n > 0) results
+
+-- ---------------------------------------------------------------------------
+-- Binary instances
+-- ---------------------------------------------------------------------------
+
+instance Binary BlockType where
+  put = put . fromEnum
+  get = toEnum <$> get
+
+instance Binary ToolType where
+  put = put . fromEnum
+  get = toEnum <$> get
+
+instance Binary ToolMaterial where
+  put = put . fromEnum
+  get = toEnum <$> get
+
+instance Binary FoodType where
+  put = put . fromEnum
+  get = toEnum <$> get
+
+instance Binary MaterialType where
+  put = put . fromEnum
+  get = toEnum <$> get
+
+instance Binary ArmorSlot where
+  put = put . fromEnum
+  get = toEnum <$> get
+
+instance Binary ArmorMaterial where
+  put = put . fromEnum
+  get = toEnum <$> get
+
+instance Binary Item where
+  put (BlockItem bt) = put (0 :: Word8) >> put bt
+  put (ToolItem tt tm dur) = put (1 :: Word8) >> put tt >> put tm >> put dur
+  put StickItem = put (2 :: Word8)
+  put (FoodItem ft) = put (3 :: Word8) >> put ft
+  put (MaterialItem mt) = put (4 :: Word8) >> put mt
+  put (ArmorItem slot mat dur) = put (5 :: Word8) >> put slot >> put mat >> put dur
+  get = do
+    tag <- get :: Get Word8
+    case tag of
+      0 -> BlockItem <$> get
+      1 -> ToolItem <$> get <*> get <*> get
+      2 -> pure StickItem
+      3 -> FoodItem <$> get
+      4 -> MaterialItem <$> get
+      5 -> ArmorItem <$> get <*> get <*> get
+      _ -> fail "Unknown Item tag"

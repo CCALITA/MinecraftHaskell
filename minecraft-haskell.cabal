@@ -127,3 +127,4 @@ test-suite minecraft-test
     , vector
     , stm
     , unordered-containers
+    , binary
