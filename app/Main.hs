@@ -247,6 +247,10 @@ main = do
                                                 , piMouseDY = piMouseDY inp + dy }
             writeIORef lastCursorRef (Just (xpos, ypos))
 
+    -- Helper: cancel eating (resets timer to 0)
+    let cancelEating = modifyIORef' playerRef (\p -> p { plEatingTimer = 0.0 })
+        selectSlot n = modifyIORef' inventoryRef (`selectHotbar` n) >> cancelEating
+
     -- Scroll wheel callback (cycle hotbar slots)
     GLFW.setScrollCallback (whWindow wh) $ Just $ \_win _dx dy -> do
       mode <- readIORef gameModeRef
@@ -257,11 +261,13 @@ main = do
               | dy > 0    = (cur - 1) `mod` hotbarSlots
               | dy < 0    = (cur + 1) `mod` hotbarSlots
               | otherwise = cur
+        when (newSlot /= cur) cancelEating
         modifyIORef' inventoryRef (`selectHotbar` newSlot)
 
     -- Mining state
     miningRef <- newIORef (Nothing :: Maybe (V3 Int, Float))
     lmbHeldRef <- newIORef False
+    rmbHeldRef <- newIORef False
 
     -- Mouse button callback
     GLFW.setMouseButtonCallback (whWindow wh) $ Just $ \_win button action _mods -> do
@@ -439,6 +445,11 @@ main = do
         Playing -> do
           when (button == GLFW.MouseButton'1) $
             writeIORef lmbHeldRef (action == GLFW.MouseButtonState'Pressed)
+          when (button == GLFW.MouseButton'2) $
+            writeIORef rmbHeldRef (action == GLFW.MouseButtonState'Pressed)
+          -- Cancel eating on RMB release
+          when (button == GLFW.MouseButton'2 && action == GLFW.MouseButtonState'Released)
+            cancelEating
           -- Melee attack: when LMB pressed and holding a sword, damage nearest entity
           when (button == GLFW.MouseButton'1 && action == GLFW.MouseButtonState'Pressed) $ do
             inv <- readIORef inventoryRef
@@ -467,6 +478,15 @@ main = do
             blockQueryCb bx by bz = do
               bt <- worldGetBlock world (V3 bx by bz)
               pure (World.Block.isSolid bt)
+
+        -- RMB: start eating if holding food and hungry
+        when (button == GLFW.MouseButton'2) $ do
+          inv <- readIORef inventoryRef
+          case selectedItem inv of
+            Just (ItemStack (FoodItem _) _)
+              | plHunger player < maxHunger -> do
+                  modifyIORef' playerRef (\p -> p { plEatingTimer = 1.6 })
+            _ -> pure ()
 
         mHit <- raycastBlock blockQueryCb eyePos dir maxReach
         case mHit of
@@ -516,9 +536,12 @@ main = do
                       GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
                       writeIORef lastCursorRef Nothing
                     _ -> do
-                      -- Place block from hotbar
+                      -- Place block from hotbar (skip if eating food)
                       inv <- readIORef inventoryRef
                       case selectedItem inv of
+                        Nothing -> pure ()
+                        Just (ItemStack (FoodItem _) _) -> pure ()  -- eating, don't place
+                        Just (ItemStack item _) -> case itemToBlock item of
                         Nothing -> pure ()
                         Just (ItemStack item _) -> case itemToBlock item of
                           Nothing -> pure ()
@@ -558,15 +581,15 @@ main = do
               writeIORef gameModeRef InventoryOpen
               GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
               writeIORef lastCursorRef Nothing
-            GLFW.Key'1 -> modifyIORef' inventoryRef (`selectHotbar` 0)
-            GLFW.Key'2 -> modifyIORef' inventoryRef (`selectHotbar` 1)
-            GLFW.Key'3 -> modifyIORef' inventoryRef (`selectHotbar` 2)
-            GLFW.Key'4 -> modifyIORef' inventoryRef (`selectHotbar` 3)
-            GLFW.Key'5 -> modifyIORef' inventoryRef (`selectHotbar` 4)
-            GLFW.Key'6 -> modifyIORef' inventoryRef (`selectHotbar` 5)
-            GLFW.Key'7 -> modifyIORef' inventoryRef (`selectHotbar` 6)
-            GLFW.Key'8 -> modifyIORef' inventoryRef (`selectHotbar` 7)
-            GLFW.Key'9 -> modifyIORef' inventoryRef (`selectHotbar` 8)
+            GLFW.Key'1 -> selectSlot 0
+            GLFW.Key'2 -> selectSlot 1
+            GLFW.Key'3 -> selectSlot 2
+            GLFW.Key'4 -> selectSlot 3
+            GLFW.Key'5 -> selectSlot 4
+            GLFW.Key'6 -> selectSlot 5
+            GLFW.Key'7 -> selectSlot 6
+            GLFW.Key'8 -> selectSlot 7
+            GLFW.Key'9 -> selectSlot 8
             GLFW.Key'F5 -> do
               player <- readIORef playerRef
               inv <- readIORef inventoryRef
@@ -758,6 +781,31 @@ main = do
                           rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
                           writeIORef miningRef Nothing
                         else writeIORef miningRef (Just (blockPos, newProgress))
+
+            -- Eating tick: advance eating timer while RMB held with food
+            when (gameMode == Playing) $ do
+              player' <- readIORef playerRef
+              let timer = plEatingTimer player'
+              when (timer > 0) $ do
+                rmbHeld <- readIORef rmbHeldRef
+                if not rmbHeld
+                  then cancelEating
+                  else do
+                    let newTimer = timer - dt
+                    if newTimer <= 0
+                      then do
+                        -- Eating complete: restore hunger, consume food item
+                        inv <- readIORef inventoryRef
+                        case selectedItem inv of
+                          Just (ItemStack (FoodItem ft) _) -> do
+                            let restore = foodHungerRestore ft
+                                newHunger = min maxHunger (plHunger player' + restore)
+                                (inv', _) = removeItem inv (FoodItem ft) 1
+                            writeIORef inventoryRef inv'
+                            modifyIORef' playerRef (\p -> p { plHunger = newHunger, plEatingTimer = 0.0 })
+                            putStrLn $ "Ate " ++ show ft ++ ", restored " ++ show restore ++ " hunger"
+                          _ -> cancelEating
+                      else modifyIORef' playerRef (\p -> p { plEatingTimer = newTimer })
 
             -- Update day/night cycle
             modifyIORef' dayNightRef (updateDayNight dt)
@@ -1894,6 +1942,7 @@ playerFromSaveData sd =
     , plHealth    = sdHealth sd
     , plHunger    = sdHunger sd
     , plFallDist  = sdFallDist sd
+    , plEatingTimer = 0.0
     }
 
 -- | Restore player, inventory, and day/night state from SaveData into IORefs
