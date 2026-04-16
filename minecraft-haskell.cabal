@@ -110,6 +110,7 @@ executable minecraft
     , filepath
     , stm
     , unordered-containers
+    , containers
     , random
 
 test-suite minecraft-test

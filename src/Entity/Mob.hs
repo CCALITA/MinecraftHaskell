@@ -58,7 +58,7 @@ mobInfo :: MobType -> MobInfo
 mobInfo = \case
   Zombie   -> MobInfo Zombie   Hostile 20 4.0  3.0 16.0 1.5
   Skeleton -> MobInfo Skeleton Hostile 20 4.0  2.0 16.0 15.0  -- ranged
-  Creeper  -> MobInfo Creeper  Hostile 20 3.0  0.0 16.0 3.0   -- explodes
+  Creeper  -> MobInfo Creeper  Hostile 20 3.0  49.0 16.0 3.0  -- explodes
   Spider   -> MobInfo Spider   Neutral 16 5.0  2.0 16.0 1.5
   Pig      -> MobInfo Pig      Passive 10 2.5  0.0 0.0  0.0
   Cow      -> MobInfo Cow      Passive 10 2.5  0.0 0.0  0.0
