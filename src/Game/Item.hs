@@ -2,6 +2,7 @@ module Game.Item
   ( Item(..)
   , ToolType(..)
   , ToolMaterial(..)
+  , MaterialType(..)
   , ToolInfo(..)
   , itemFromBlock
   , itemToBlock
@@ -34,10 +35,19 @@ data ToolMaterial
   | Diamond
   deriving stock (Show, Eq, Ord, Enum, Bounded)
 
--- | An item in the inventory — either a placeable block or a tool
+-- | Material types obtained from smelting or mining
+data MaterialType
+  = Coal
+  | DiamondGem
+  | IronIngot
+  | GoldIngot
+  deriving stock (Show, Eq, Ord, Enum, Bounded)
+
+-- | An item in the inventory — a placeable block, a tool, or a material
 data Item
-  = BlockItem !BlockType
-  | ToolItem  !ToolType !ToolMaterial !Int  -- tool type, material, remaining durability
+  = BlockItem    !BlockType
+  | ToolItem     !ToolType !ToolMaterial !Int  -- tool type, material, remaining durability
+  | MaterialItem !MaterialType
   deriving stock (Show, Eq)
 
 -- | Tool properties
@@ -70,18 +80,20 @@ itemFromBlock = BlockItem
 
 -- | Try to convert an item to a block type (for placement)
 itemToBlock :: Item -> Maybe BlockType
-itemToBlock (BlockItem bt) = Just bt
-itemToBlock (ToolItem {})  = Nothing
+itemToBlock (BlockItem bt)    = Just bt
+itemToBlock (ToolItem {})     = Nothing
+itemToBlock (MaterialItem {}) = Nothing
 
 -- | Is this a placeable block item?
 isBlockItem :: Item -> Bool
 isBlockItem (BlockItem _) = True
 isBlockItem _             = False
 
--- | Stack limit for an item (tools stack to 1, blocks to 64)
+-- | Stack limit for an item (tools stack to 1, blocks/materials to 64)
 itemStackLimit :: Item -> Int
-itemStackLimit (BlockItem _) = 64
-itemStackLimit (ToolItem {}) = 1
+itemStackLimit (BlockItem _)    = 64
+itemStackLimit (ToolItem {})    = 1
+itemStackLimit (MaterialItem _) = 64
 
 -- | What items a block drops when broken. Returns (item, count).
 --   Some blocks require a minimum harvest level to drop anything.
