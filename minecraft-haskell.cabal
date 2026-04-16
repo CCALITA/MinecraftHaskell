@@ -61,6 +61,7 @@ library
     World.Fluid
     Game.Physics
     Game.Player
+    Game.BlockEntity
     Game.Inventory
     Game.Item
     Game.Crafting
