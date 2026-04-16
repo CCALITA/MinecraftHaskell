@@ -44,6 +44,9 @@ data MaterialType
   | CookedPork
   | CookedBeef
   | BrickItem
+  | Stick
+  | Coal
+  | DiamondGem
   deriving stock (Show, Eq, Ord, Enum, Bounded, Generic)
 
 -- | An item in the inventory — either a placeable block, a tool, or a material
@@ -117,9 +120,9 @@ blockDrops = \case
   Glass       -> []  -- glass breaks without dropping
   Bedrock     -> []
   IronOre     -> [(BlockItem IronOre, 1)]  -- needs smelting for ingot
-  CoalOre     -> [(BlockItem CoalOre, 1)]
+  CoalOre     -> [(MaterialItem Coal, 1)]
   GoldOre     -> [(BlockItem GoldOre, 1)]
-  DiamondOre  -> [(BlockItem DiamondOre, 1)]
+  DiamondOre  -> [(MaterialItem DiamondGem, 1)]
   Snow        -> [(BlockItem Snow, 1)]
   Clay        -> [(BlockItem Clay, 1)]
   CraftingTable -> [(BlockItem CraftingTable, 1)]

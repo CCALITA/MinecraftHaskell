@@ -335,6 +335,12 @@ itemSpec = describe "Game.Item" $ do
   it "blockDrops returns nothing for air" $ do
     blockDrops Air `shouldBe` []
 
+  it "coal ore drops coal item" $ do
+    blockDrops CoalOre `shouldBe` [(MaterialItem Coal, 1)]
+
+  it "diamond ore drops diamond item" $ do
+    blockDrops DiamondOre `shouldBe` [(MaterialItem DiamondGem, 1)]
+
 -- =========================================================================
 -- Dropped items
 -- =========================================================================
@@ -442,7 +448,7 @@ smeltingSpec = describe "Game.TileEntity smelting" $ do
 
   it "fuel burn time is valid for known fuels" $ do
     fuelBurnTime (BlockItem OakPlanks) `shouldBe` Just 15.0
-    fuelBurnTime (BlockItem CoalOre) `shouldBe` Just 80.0
+    fuelBurnTime (MaterialItem Coal) `shouldBe` Just 80.0
     fuelBurnTime (MaterialItem Charcoal) `shouldBe` Just 80.0
 
   it "non-fuel items have no burn time" $ do
@@ -483,7 +489,7 @@ furnaceTickSpec = describe "Game.TileEntity furnace tick" $ do
   it "blast furnace smelts ore at 2x speed" $ do
     let fs = (newFurnaceState TE.BlastFurnace)
               { fsInput = Just (ItemStack (BlockItem IronOre) 1)
-              , fsFuel  = Just (ItemStack (BlockItem CoalOre) 1)
+              , fsFuel  = Just (ItemStack (MaterialItem Coal) 1)
               }
     teRef <- newTileEntityMap
     setTileEntity teRef (V3 0 0 0) (TEFurnace fs)

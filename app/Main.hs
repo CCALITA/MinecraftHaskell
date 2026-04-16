@@ -1715,6 +1715,9 @@ itemColor (MaterialItem mt) = case mt of
   CookedPork -> (0.7, 0.45, 0.3, 1.0)
   CookedBeef -> (0.65, 0.35, 0.2, 1.0)
   BrickItem  -> (0.7, 0.35, 0.25, 1.0)
+  Stick      -> (0.5, 0.35, 0.15, 1.0)
+  Coal       -> (0.2, 0.2, 0.2, 1.0)
+  DiamondGem -> (0.3, 0.8, 0.95, 1.0)
 
 -- | 3x3 mini-icon for item (row, col, color) — used in hotbar slot rendering
 itemMiniIcon :: Item -> [(Int, Int, (Float, Float, Float, Float))]
@@ -1783,3 +1786,9 @@ itemMiniIcon (MaterialItem mt) = case mt of
     where c = (0.65,0.35,0.2,1)
   BrickItem  -> [(0,0,c),(0,1,c),(0,2,c), (2,0,c),(2,1,c),(2,2,c)]
     where c = (0.7,0.35,0.25,1)
+  Stick      -> [(0,1,c), (1,1,c), (2,1,c)]
+    where c = (0.5,0.35,0.15,1)
+  Coal       -> [(0,1,c), (1,0,c),(1,1,c),(1,2,c), (2,0,c),(2,1,c)]
+    where c = (0.2,0.2,0.2,1)
+  DiamondGem -> [(0,1,c), (1,0,c),(1,1,h),(1,2,c), (2,1,c)]
+    where c = (0.3,0.8,0.95,1); h = (0.6,0.9,1.0,1)
