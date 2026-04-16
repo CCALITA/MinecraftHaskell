@@ -5,6 +5,7 @@ module World.Block
   , blockProperties
   , isTransparent
   , isSolid
+  , isGravityAffected
   , blockFaceTexCoords
   , allBlockFaces
   ) where
@@ -107,6 +108,12 @@ isTransparent = bpTransparent . blockProperties
 
 isSolid :: BlockType -> Bool
 isSolid = bpSolid . blockProperties
+
+-- | Whether a block is affected by gravity (falls when air is below)
+isGravityAffected :: BlockType -> Bool
+isGravityAffected Sand   = True
+isGravityAffected Gravel = True
+isGravityAffected _      = False
 
 -- | Texture atlas coordinates for each block face.
 --   Returns (u, v) tile position in a 16x16 texture atlas.
