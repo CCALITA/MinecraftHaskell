@@ -690,14 +690,14 @@ main = do
                   modifyIORef' aiStatesRef (HM.delete eid)
                   let dropPos = entPosition ent'
                       mobDrop = case readMobType (entTag ent) of
-                        Pig      -> Just (BlockItem OakPlanks, 1)
-                        Cow      -> Just (BlockItem OakPlanks, 1)
+                        Pig      -> Just (FoodItem RawPorkchop, 1)
+                        Cow      -> Just (FoodItem RawBeef, 1)
                         Sheep    -> Just (BlockItem OakPlanks, 1)
-                        Chicken  -> Just (BlockItem OakPlanks, 1)
-                        Zombie   -> Just (BlockItem IronOre, 1)
-                        Skeleton -> Just (BlockItem CoalOre, 1)
-                        Creeper  -> Just (BlockItem Cobblestone, 1)
-                        Spider   -> Just (BlockItem Cobblestone, 1)
+                        Chicken  -> Just (FoodItem RawChicken, 1)
+                        Zombie   -> Just (FoodItem RottenFlesh, 1)
+                        Skeleton -> Just (MaterialItem Bone, 1)
+                        Creeper  -> Just (MaterialItem Gunpowder, 1)
+                        Spider   -> Just (MaterialItem StringMat, 1)
                   case mobDrop of
                     Just (item, count) -> do
                       spawnDrop droppedItems item count dropPos
@@ -1367,12 +1367,50 @@ itemColor (BlockItem bt) = case bt of
   GoldOre     -> (1.0, 0.85, 0.0, 1.0)
   DiamondOre  -> (0.3, 0.8, 0.95, 1.0)
   Snow        -> (0.95, 0.95, 0.95, 1.0)
+  Obsidian    -> (0.12, 0.08, 0.16, 1.0)
+  OakDoorClosed -> (0.6, 0.4, 0.2, 1.0)
+  OakDoorOpen -> (0.6, 0.4, 0.2, 1.0)
+  Ladder      -> (0.5, 0.35, 0.15, 1.0)
+  Bed         -> (0.7, 0.15, 0.15, 1.0)
+  OakFence    -> (0.55, 0.4, 0.2, 1.0)
+  Farmland    -> (0.35, 0.22, 0.1, 1.0)
+  WheatCrop   -> (0.6, 0.7, 0.2, 1.0)
+  OakSapling  -> (0.2, 0.55, 0.15, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)
 itemColor (ToolItem Axe _ _)     = (0.6, 0.5, 0.3, 1.0)
 itemColor (ToolItem Shovel _ _)  = (0.5, 0.4, 0.25, 1.0)
 itemColor (ToolItem Hoe _ _)     = (0.5, 0.5, 0.3, 1.0)
+itemColor StickItem              = (0.6, 0.4, 0.2, 1.0)
+itemColor (FoodItem ft) = case ft of
+  RawPorkchop    -> (0.9, 0.6, 0.6, 1.0)
+  CookedPorkchop -> (0.7, 0.4, 0.2, 1.0)
+  RawBeef        -> (0.9, 0.6, 0.6, 1.0)
+  Steak          -> (0.7, 0.4, 0.2, 1.0)
+  RawChicken     -> (0.9, 0.6, 0.6, 1.0)
+  CookedChicken  -> (0.7, 0.4, 0.2, 1.0)
+  Bread          -> (0.8, 0.7, 0.4, 1.0)
+  Apple          -> (0.9, 0.2, 0.2, 1.0)
+  RottenFlesh    -> (0.5, 0.6, 0.3, 1.0)
+itemColor (MaterialItem mt) = case mt of
+  Coal       -> (0.2, 0.2, 0.2, 1.0)
+  DiamondGem -> (0.4, 0.9, 0.9, 1.0)
+  IronIngot  -> (0.8, 0.8, 0.8, 1.0)
+  GoldIngot  -> (0.9, 0.8, 0.3, 1.0)
+  Bone       -> (0.9, 0.9, 0.85, 1.0)
+  ArrowMat   -> (0.6, 0.55, 0.45, 1.0)
+  StringMat  -> (0.9, 0.9, 0.9, 1.0)
+  Gunpowder  -> (0.25, 0.25, 0.25, 1.0)
+  Feather    -> (0.95, 0.95, 0.95, 1.0)
+  Leather    -> (0.6, 0.35, 0.15, 1.0)
+  WheatSeeds -> (0.3, 0.6, 0.2, 1.0)
+  Wheat      -> (0.9, 0.8, 0.3, 1.0)
+itemColor (ArmorItem _ mat _) = case mat of
+  LeatherArmor -> (0.6, 0.35, 0.15, 1.0)
+  IronArmor    -> (0.75, 0.75, 0.75, 1.0)
+  GoldArmor    -> (0.9, 0.8, 0.3, 1.0)
+  DiamondArmor -> (0.4, 0.9, 0.9, 1.0)
 
 -- | 3x3 mini-icon for item (row, col, color) — used in hotbar slot rendering
 itemMiniIcon :: Item -> [(Int, Int, (Float, Float, Float, Float))]
@@ -1391,6 +1429,53 @@ itemMiniIcon (ToolItem Shovel _ _) =
 itemMiniIcon (ToolItem Hoe _ _) =
   [(0,1,m),(0,2,m), (1,1,s), (2,1,s)]
   where m = (0.5,0.5,0.3,1); s = (0.5,0.35,0.15,1)
+itemMiniIcon StickItem =
+  [(0,1,s), (1,1,s), (2,1,s)]
+  where s = (0.6,0.4,0.2,1)
+itemMiniIcon (FoodItem ft) = case ft of
+  RawPorkchop    -> fill (0.9,0.6,0.6,1)
+  CookedPorkchop -> fill (0.7,0.4,0.2,1)
+  RawBeef        -> fill (0.9,0.6,0.6,1)
+  Steak          -> fill (0.7,0.4,0.2,1)
+  RawChicken     -> fill (0.9,0.6,0.6,1)
+  CookedChicken  -> fill (0.7,0.4,0.2,1)
+  Bread          -> [(1,0,c),(1,1,c),(1,2,c), (2,0,c),(2,1,c),(2,2,c)]
+    where c = (0.8,0.7,0.4,1)
+  Apple          -> [(0,1,g), (1,0,c),(1,1,c),(1,2,c), (2,1,c)]
+    where c = (0.9,0.2,0.2,1); g = (0.3,0.6,0.2,1)
+  RottenFlesh    -> fill (0.5,0.6,0.3,1)
+  where fill c = [(r,col,c) | r <- [0..2], col <- [0..2]]
+itemMiniIcon (MaterialItem mt) = case mt of
+  Coal       -> [(0,1,c), (1,0,c),(1,1,c),(1,2,c), (2,1,c)]
+    where c = (0.2,0.2,0.2,1)
+  DiamondGem -> [(0,1,c), (1,0,c),(1,1,c),(1,2,c), (2,1,c)]
+    where c = (0.4,0.9,0.9,1)
+  IronIngot  -> [(0,0,c),(0,1,c),(0,2,c), (1,1,c),(1,2,c), (2,1,c),(2,2,c)]
+    where c = (0.8,0.8,0.8,1)
+  GoldIngot  -> [(0,0,c),(0,1,c),(0,2,c), (1,1,c),(1,2,c), (2,1,c),(2,2,c)]
+    where c = (0.9,0.8,0.3,1)
+  Bone       -> [(0,1,c), (1,1,c), (2,1,c)]
+    where c = (0.9,0.9,0.85,1)
+  ArrowMat   -> [(0,1,t), (1,1,s), (2,1,f)]
+    where t = (0.5,0.5,0.5,1); s = (0.6,0.4,0.2,1); f = (0.9,0.9,0.9,1)
+  StringMat  -> [(0,2,c), (1,1,c), (2,0,c)]
+    where c = (0.9,0.9,0.9,1)
+  Gunpowder  -> [(1,0,c),(1,1,c),(1,2,c), (2,1,c)]
+    where c = (0.25,0.25,0.25,1)
+  Feather    -> [(0,1,c), (1,0,c),(1,1,c), (2,1,c)]
+    where c = (0.95,0.95,0.95,1)
+  Leather    -> fill (0.6,0.35,0.15,1)
+  WheatSeeds -> [(1,0,c),(1,2,c), (2,1,c)]
+    where c = (0.3,0.6,0.2,1)
+  Wheat      -> [(0,1,c), (1,0,c),(1,1,c),(1,2,c), (2,1,c)]
+    where c = (0.9,0.8,0.3,1)
+  where fill c = [(r,col,c) | r <- [0..2], col <- [0..2]]
+itemMiniIcon (ArmorItem slot mat dur) = case slot of
+  Helmet     -> [(0,0,c),(0,1,c),(0,2,c), (1,0,c),(1,2,c)]
+  Chestplate -> [(0,0,c),(0,1,c),(0,2,c), (1,0,c),(1,1,c),(1,2,c), (2,0,c),(2,2,c)]
+  Leggings   -> [(0,0,c),(0,1,c),(0,2,c), (1,0,c),(1,2,c), (2,0,c),(2,2,c)]
+  Boots      -> [(1,0,c),(1,2,c), (2,0,c),(2,2,c)]
+  where c = itemColor (ArmorItem slot mat dur)
 itemMiniIcon (BlockItem bt) = blockMiniIcon bt
   where
     fill c = [(r,col,c) | r <- [0..2], col <- [0..2]]

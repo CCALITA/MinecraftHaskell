@@ -107,6 +107,16 @@ tileFull tileIdx lx ly = case tileIdx of
   72 -> clayPattern lx ly      -- clay (V2 8 4)
   -- Row 5: tileIdx 80+
   80 -> torchPattern lx ly     -- torch (V2 0 5)
+  -- New block textures (tiles 27-38)
+  27 -> obsidianPattern lx ly      -- obsidian (V2 11 1)
+  28 -> oakDoorClosedPattern lx ly -- oak door closed (V2 12 1)
+  29 -> oakDoorOpenPattern lx ly   -- oak door open (V2 13 1)
+  30 -> ladderPattern lx ly        -- ladder (V2 14 1)
+  31 -> bedPattern lx ly           -- bed (V2 15 1)
+  35 -> oakFencePattern lx ly      -- oak fence (V2 3 2)
+  36 -> farmlandPattern lx ly      -- farmland (V2 4 2)
+  37 -> wheatCropPattern lx ly     -- wheat crop (V2 5 2)
+  38 -> oakSaplingPattern lx ly    -- oak sapling (V2 6 2)
   -- Fallback: checkerboard pattern so missing tiles are visible
   _  -> let checker = (lx + ly) `mod` 2 == 0
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
@@ -275,6 +285,80 @@ tileFull tileIdx lx ly = case tileIdx of
       in if isFlame then (255, 200, 50, 255)
          else if isStick then (120, 90, 40, 255)
          else (0, 0, 0, 0)  -- transparent
+
+    -- Obsidian: very dark purple/black with faint purple streaks
+    obsidianPattern x y =
+      let n = pixHash x y 2000 `mod` 100
+          streak = pixHash (x `div` 3) (y `div` 2) 2001 `mod` 10 < 2
+          (r, g, b) = if streak then (30, 10, 40) else if n < 30 then (15, 10, 20) else (20, 15, 25)
+      in (r, g, b, 255)
+
+    -- Oak door closed: brown planks with border and doorknob
+    oakDoorClosedPattern x y =
+      let border = x == 0 || x == 15 || y == 0 || y == 15
+          knob = x >= 11 && x <= 13 && y >= 7 && y <= 9
+          plank = y `mod` 4 == 0
+      in if knob then (180, 160, 40, 255)
+         else if border then (80, 55, 25, 255)
+         else if plank then (120, 85, 40, 255)
+         else (150, 110, 55, 255)
+
+    -- Oak door open: thin brown edge (door seen from side)
+    oakDoorOpenPattern x y =
+      let isDoor = x >= 6 && x <= 9
+      in if isDoor then (140, 100, 50, 255)
+         else (0, 0, 0, 0)  -- transparent
+
+    -- Ladder: brown cross-hatch pattern (rungs)
+    ladderPattern x y =
+      let isRail = x == 2 || x == 13
+          isRung = y `mod` 4 == 0 && x >= 2 && x <= 13
+      in if isRail || isRung then (120, 85, 40, 255)
+         else (0, 0, 0, 0)  -- transparent
+
+    -- Bed: red top with white pillow area
+    bedPattern x y =
+      let isPillow = y >= 1 && y <= 5 && x >= 2 && x <= 13
+          border = x == 0 || x == 15 || y == 0 || y == 15
+      in if border then (100, 60, 30, 255)
+         else if isPillow then (220, 220, 220, 255)
+         else (180, 40, 40, 255)
+
+    -- Oak fence: brown vertical post with cross rails
+    oakFencePattern x y =
+      let isPost = x >= 6 && x <= 9
+          isRail = (y >= 3 && y <= 5) || (y >= 10 && y <= 12)
+      in if isPost then (130, 95, 45, 255)
+         else if isRail then (120, 85, 40, 255)
+         else (0, 0, 0, 0)  -- transparent
+
+    -- Farmland: dark brown rows (tilled earth)
+    farmlandPattern x y =
+      let row = y `mod` 4 < 2
+          n = pixHash x y 2100 `mod` 20
+          v = if row then 70 + n else 55 + n
+      in (fromIntegral v, fromIntegral (v * 45 `div` 70), fromIntegral (v * 25 `div` 70), 255)
+
+    -- Wheat crop: green/yellow stalks on transparent background
+    wheatCropPattern x y =
+      let isStalk = x `mod` 3 == 1 && y >= 3
+          n = pixHash x y 2200 `mod` 50
+          green = (80 + fromIntegral n, 140 + fromIntegral (n `div` 2), 20, 255)
+          gold = (180 + fromIntegral (n `div` 3), 160, 30, 255)
+          tip = y <= 5
+      in if isStalk then (if tip then gold else green)
+         else (0, 0, 0, 0)
+
+    -- Oak sapling: small green cross on brown stem
+    oakSaplingPattern x y =
+      let isStem = x >= 7 && x <= 8 && y >= 10 && y <= 15
+          isLeaf = (x >= 5 && x <= 10 && y >= 4 && y <= 10)
+                   && not (x == 5 && y == 4) && not (x == 10 && y == 4)
+                   && not (x == 5 && y == 10) && not (x == 10 && y == 10)
+          n = pixHash x y 2300 `mod` 30
+      in if isLeaf then (30 + fromIntegral n, 120 + fromIntegral n, 20, 255)
+         else if isStem then (100, 70, 30, 255)
+         else (0, 0, 0, 0)
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels

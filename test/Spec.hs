@@ -27,6 +27,8 @@ main = hspec $ do
   itemSpec
   droppedItemSpec
   playerInputSpec
+  newBlockSpec
+  newItemSpec
 
 -- =========================================================================
 -- Block
@@ -245,7 +247,7 @@ craftingSpec = describe "Game.Crafting" $ do
 
   it "wood pickaxe recipe works" $ do
     let p = Just (BlockItem OakPlanks)
-        s = Just (BlockItem OakLog)  -- stick placeholder
+        s = Just StickItem
         grid = setCraftingSlot (setCraftingSlot (setCraftingSlot
               (setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3)
                 0 0 p) 0 1 p) 0 2 p) 1 1 s) 2 1 s
@@ -353,3 +355,97 @@ droppedItemSpec = describe "Game.DroppedItem" $ do
     spawnDrop di (BlockItem Dirt) 1 (V3 100 65 100)
     collected <- collectNearby di (V3 0 65 0) 5.0
     collected `shouldBe` []
+
+-- =========================================================================
+-- New block types
+-- =========================================================================
+newBlockSpec :: Spec
+newBlockSpec = describe "New block types (WU-00)" $ do
+  it "Obsidian is solid and opaque" $ do
+    isSolid Obsidian `shouldBe` True
+    isTransparent Obsidian `shouldBe` False
+
+  it "Obsidian has hardness 50" $ do
+    bpHardness (blockProperties Obsidian) `shouldBe` 50.0
+
+  it "Ladder is transparent and not solid" $ do
+    isTransparent Ladder `shouldBe` True
+    isSolid Ladder `shouldBe` False
+
+  it "OakDoorOpen is transparent and not solid" $ do
+    isTransparent OakDoorOpen `shouldBe` True
+    isSolid OakDoorOpen `shouldBe` False
+
+  it "OakDoorClosed is solid" $ do
+    isSolid OakDoorClosed `shouldBe` True
+
+  it "OakFence is solid and transparent" $ do
+    isSolid OakFence `shouldBe` True
+    isTransparent OakFence `shouldBe` True
+
+  it "WheatCrop is not solid and transparent" $ do
+    isSolid WheatCrop `shouldBe` False
+    isTransparent WheatCrop `shouldBe` True
+
+  it "OakSapling is not solid and transparent" $ do
+    isSolid OakSapling `shouldBe` False
+    isTransparent OakSapling `shouldBe` True
+
+  it "Farmland is solid and opaque" $ do
+    isSolid Farmland `shouldBe` True
+    isTransparent Farmland `shouldBe` False
+
+  it "new block types roundtrip through Enum" $ do
+    fromEnum Obsidian `shouldBe` 27
+    fromEnum OakSapling `shouldBe` 35
+    toEnum 27 `shouldBe` (Obsidian :: BlockType)
+    toEnum 35 `shouldBe` (OakSapling :: BlockType)
+
+-- =========================================================================
+-- New item types
+-- =========================================================================
+newItemSpec :: Spec
+newItemSpec = describe "New item types (WU-00)" $ do
+  it "StickItem stacks to 64" $ do
+    itemStackLimit StickItem `shouldBe` 64
+
+  it "FoodItem stacks to 64" $ do
+    itemStackLimit (FoodItem Bread) `shouldBe` 64
+
+  it "MaterialItem stacks to 64" $ do
+    itemStackLimit (MaterialItem Coal) `shouldBe` 64
+
+  it "ArmorItem stacks to 1" $ do
+    itemStackLimit (ArmorItem Helmet IronArmor 100) `shouldBe` 1
+
+  it "StickItem is not a block item" $ do
+    isBlockItem StickItem `shouldBe` False
+    itemToBlock StickItem `shouldBe` Nothing
+
+  it "FoodItem is not a block item" $ do
+    isBlockItem (FoodItem Apple) `shouldBe` False
+
+  it "CoalOre drops Coal material item" $ do
+    blockDrops CoalOre `shouldBe` [(MaterialItem Coal, 1)]
+
+  it "DiamondOre drops DiamondGem material item" $ do
+    blockDrops DiamondOre `shouldBe` [(MaterialItem DiamondGem, 1)]
+
+  it "Obsidian requires diamond harvest level" $ do
+    blockRequiredHarvestLevel Obsidian `shouldBe` 4
+
+  it "stick crafting recipe produces StickItem" $ do
+    let p = Just (BlockItem OakPlanks)
+        grid = setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3) 0 0 p) 1 0 p
+    tryCraft grid `shouldBe` CraftSuccess StickItem 4
+
+  it "food hunger restore values are correct" $ do
+    foodHungerRestore CookedPorkchop `shouldBe` 8
+    foodHungerRestore Apple `shouldBe` 4
+    foodHungerRestore Bread `shouldBe` 5
+    foodHungerRestore RawBeef `shouldBe` 3
+
+  it "armor defense points are correct" $ do
+    armorDefensePoints Chestplate DiamondArmor `shouldBe` 8
+    armorDefensePoints Helmet LeatherArmor `shouldBe` 1
+    armorDefensePoints Boots IronArmor `shouldBe` 2

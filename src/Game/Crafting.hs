@@ -10,7 +10,7 @@ module Game.Crafting
   ) where
 
 import World.Block (BlockType(..))
-import Game.Item (Item(..), ToolType(..), ToolMaterial(..), toolInfo, ToolInfo(..))
+import Game.Item (Item(..), ToolType(..), ToolMaterial(..), toolInfo, ToolInfo(..), MaterialType(..), FoodType(..))
 import qualified Data.Vector as V
 
 -- | Crafting grid (2x2 or 3x3)
@@ -109,6 +109,10 @@ matchesPattern recipe grid =
 bi :: BlockType -> Maybe Item
 bi = Just . BlockItem
 
+-- | Helper for non-block item pattern entries
+ji :: Item -> Maybe Item
+ji = Just
+
 -- | All crafting recipes
 allRecipes :: [Recipe]
 allRecipes =
@@ -126,11 +130,11 @@ allRecipes =
       , rcResult  = BlockItem CraftingTable
       , rcCount   = 1
       }
-  -- Sticks from 2 planks (vertical) — using OakLog as "stick" placeholder
+  -- Sticks from 2 planks (vertical)
   , Recipe
       { rcPattern = [[bi OakPlanks]
                     ,[bi OakPlanks]]
-      , rcResult  = BlockItem OakLog
+      , rcResult  = StickItem
       , rcCount   = 4
       }
   -- Furnace from 8 cobblestone
@@ -149,10 +153,10 @@ allRecipes =
       , rcResult  = BlockItem Chest
       , rcCount   = 1
       }
-  -- Torch from coal + stick (OakLog placeholder)
+  -- Torch from coal material + stick
   , Recipe
-      { rcPattern = [[bi CoalOre]
-                    ,[bi OakLog]]
+      { rcPattern = [[ji (MaterialItem Coal)]
+                    ,[ji StickItem]]
       , rcResult  = BlockItem Torch
       , rcCount   = 4
       }
@@ -184,6 +188,42 @@ allRecipes =
       , rcResult  = BlockItem TNT
       , rcCount   = 1
       }
+  -- Oak door: 6 planks in 2x3
+  , Recipe
+      { rcPattern = [[bi OakPlanks, bi OakPlanks]
+                    ,[bi OakPlanks, bi OakPlanks]
+                    ,[bi OakPlanks, bi OakPlanks]]
+      , rcResult  = BlockItem OakDoorClosed
+      , rcCount   = 1
+      }
+  -- Ladder: sticks in H-pattern (3x3)
+  , Recipe
+      { rcPattern = [[ji StickItem, Nothing,       ji StickItem]
+                    ,[ji StickItem, ji StickItem,   ji StickItem]
+                    ,[ji StickItem, Nothing,       ji StickItem]]
+      , rcResult  = BlockItem Ladder
+      , rcCount   = 3
+      }
+  -- Oak fence: alternating planks and sticks in 2 rows
+  , Recipe
+      { rcPattern = [[bi OakPlanks, ji StickItem, bi OakPlanks]
+                    ,[bi OakPlanks, ji StickItem, bi OakPlanks]]
+      , rcResult  = BlockItem OakFence
+      , rcCount   = 3
+      }
+  -- Bed: 3 planks bottom + 3 planks top (wool placeholder)
+  , Recipe
+      { rcPattern = [[bi OakPlanks, bi OakPlanks, bi OakPlanks]
+                    ,[bi OakPlanks, bi OakPlanks, bi OakPlanks]]
+      , rcResult  = BlockItem Bed
+      , rcCount   = 1
+      }
+  -- Bread: 3 wheat in a row
+  , Recipe
+      { rcPattern = [[ji (MaterialItem Wheat), ji (MaterialItem Wheat), ji (MaterialItem Wheat)]]
+      , rcResult  = FoodItem Bread
+      , rcCount   = 1
+      }
   ] ++ toolRecipes
 
 -- | Helper to create a tool item with full durability
@@ -194,7 +234,7 @@ tool tt tm = ToolItem tt tm (tiMaxDurability (toolInfo tm))
 toolRecipes :: [Recipe]
 toolRecipes = concatMap tierRecipes [(Wood, OakPlanks), (StoneTier, Cobblestone), (Iron, IronOre), (Diamond, DiamondOre)]
   where
-    stick = bi OakLog  -- OakLog as stick placeholder
+    stick = ji StickItem
     tierRecipes (mat, matBlock) =
       let m = bi matBlock
       in [ -- Pickaxe: 3 material on top, 2 sticks below
