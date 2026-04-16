@@ -16,7 +16,7 @@ import Engine.Vulkan.Command
 import Engine.Vulkan.Memory
 import Engine.Vulkan.Descriptor
 import Engine.Vulkan.Texture
-import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid)
+import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid, isGravityAffected)
 import World.Chunk
 import World.Generation
 import World.World
@@ -34,7 +34,7 @@ import Entity.Spawn
 import Game.Save
 import Game.DroppedItem
 
-import Control.Monad (unless, when, forM_, forM)
+import Control.Monad (unless, when, forM_, forM, void)
 import Control.Concurrent.STM (readTVarIO, atomically, writeTVar)
 import Control.Exception (finally)
 import System.IO (hSetBuffering, stdout, BufferMode(..))
@@ -209,6 +209,8 @@ main = do
 
     -- Per-chunk mesh cache: ChunkPos -> (vertBuf, idxBuf, indexCount)
     meshCacheRef <- newIORef (HM.empty :: HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
+    -- Settle gravity-affected blocks in all initially loaded chunks
+    settleAllLoadedChunks world
     rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
 
     -- Input state
@@ -270,7 +272,8 @@ main = do
             _ <- updateLoadedChunks world spawnPos
             -- Reset player to spawn
             writeIORef playerRef (defaultPlayer spawnPos)
-            -- Rebuild chunk meshes
+            -- Settle gravity and rebuild chunk meshes
+            settleAllLoadedChunks world
             rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
             writeIORef gameModeRef Playing
             GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
@@ -294,6 +297,7 @@ main = do
                   case mPlayer of
                     Just p -> writeIORef playerRef p
                     Nothing -> pure ()
+                  settleAllLoadedChunks world
                   rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
                   putStrLn $ "Loaded world: " ++ saveName
                 writeIORef gameModeRef Playing
@@ -470,6 +474,9 @@ main = do
                               worldSetBlock world placePos bt
                               putStrLn $ "Placed " ++ show bt ++ " at " ++ show placePos
                               let V3 px' _ pz' = placePos
+                              -- If placed block is gravity-affected, let it fall
+                              when (isGravityAffected bt) $
+                                void $ settleGravityBlock world placePos
                               rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
               _ -> pure ()
 
@@ -680,6 +687,9 @@ main = do
                                 _ -> inv'
                           writeIORef inventoryRef inv''
                           putStrLn $ "Broke " ++ show bt ++ " at " ++ show blockPos
+                          -- Trigger falling blocks above the broken block
+                          void $ triggerGravityAbove world blockPos
+                          -- Rebuild chunk mesh once (covers both the break and any gravity cascade)
                           rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
                           writeIORef miningRef Nothing
                         else writeIORef miningRef (Just (blockPos, newProgress))
@@ -837,6 +847,9 @@ main = do
             when (frameIdx `mod` 60 == 0) $ do
               player <- readIORef playerRef
               newChunks <- updateLoadedChunks world (plPos player)
+              -- Settle gravity-affected blocks in newly generated chunks
+              forM_ newChunks $ \c ->
+                void $ settleChunkGravity world c
               -- Mesh only newly loaded chunks
               mapM_ (\c -> meshSingleChunk physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef c) newChunks
               -- Remove meshes for unloaded chunks
@@ -1017,6 +1030,12 @@ rebuildAllChunkMeshes
 rebuildAllChunkMeshes world physDevice device cmdPool queue cacheRef = do
   chunks <- HM.elems <$> readTVarIO (worldChunks world)
   mapM_ (meshSingleChunk physDevice device cmdPool queue cacheRef) chunks
+
+-- | Settle gravity-affected blocks in all currently loaded chunks
+settleAllLoadedChunks :: World -> IO ()
+settleAllLoadedChunks world = do
+  chunks <- HM.elems <$> readTVarIO (worldChunks world)
+  mapM_ (settleChunkGravity world) chunks
 
 -- | Build GPU mesh for a single chunk and insert into cache
 meshSingleChunk

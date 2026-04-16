@@ -125,3 +125,5 @@ test-suite minecraft-test
     , QuickCheck       >= 2.14
     , linear
     , vector
+    , stm
+    , unordered-containers

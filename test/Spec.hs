@@ -6,7 +6,8 @@ import Test.QuickCheck
 import World.Block
 import World.Chunk
 import World.Noise
-import World.World (worldToChunkLocal)
+import World.World (worldToChunkLocal, World(..), newWorld, worldGetBlock, worldSetBlock, triggerGravityAbove, settleGravityBlock, settleChunkGravity)
+import World.Generation (defaultGenConfig)
 import Game.Inventory
 import Game.Item
 import Game.Crafting
@@ -15,6 +16,8 @@ import Game.DroppedItem
 
 import Linear (V2(..), V3(..))
 import qualified Data.Vector as V
+import Control.Concurrent.STM (atomically, readTVar, writeTVar)
+import qualified Data.HashMap.Strict as HM
 
 main :: IO ()
 main = hspec $ do
@@ -29,6 +32,7 @@ main = hspec $ do
   playerInputSpec
   newBlockSpec
   newItemSpec
+  gravitySpec
 
 -- =========================================================================
 -- Block
@@ -509,3 +513,106 @@ newItemSpec = describe "New item types (WU-00)" $ do
     armorDefensePoints Chestplate DiamondArmor `shouldBe` 8
     armorDefensePoints Helmet LeatherArmor `shouldBe` 1
     armorDefensePoints Boots IronArmor `shouldBe` 2
+
+-- =========================================================================
+-- Falling block gravity
+-- =========================================================================
+
+-- | Create a test world with a single chunk at (0,0) for gravity tests
+makeTestWorld :: IO World
+makeTestWorld = do
+  world <- newWorld defaultGenConfig 4
+  chunk <- newChunk (V2 0 0)
+  atomically $ writeTVar (worldChunks world) (HM.singleton (V2 0 0) chunk)
+  pure world
+
+gravitySpec :: Spec
+gravitySpec = describe "Falling block gravity" $ do
+  it "Sand is gravity-affected" $
+    isGravityAffected Sand `shouldBe` True
+
+  it "Gravel is gravity-affected" $
+    isGravityAffected Gravel `shouldBe` True
+
+  it "Stone is not gravity-affected" $
+    isGravityAffected Stone `shouldBe` False
+
+  it "Air is not gravity-affected" $
+    isGravityAffected Air `shouldBe` False
+
+  it "triggerGravityAbove drops sand into air below" $ do
+    world <- makeTestWorld
+    -- Place stone at y=5, sand at y=7, air at y=6
+    worldSetBlock world (V3 1 5 1) Stone
+    worldSetBlock world (V3 1 7 1) Sand
+    -- Trigger gravity from y=6 (already air)
+    moved <- triggerGravityAbove world (V3 1 6 1)
+    -- Sand at y=7 should have fallen to y=6
+    btAt6 <- worldGetBlock world (V3 1 6 1)
+    btAt7 <- worldGetBlock world (V3 1 7 1)
+    btAt6 `shouldBe` Sand
+    btAt7 `shouldBe` Air
+    moved `shouldBe` True
+
+  it "triggerGravityAbove cascades multiple sand blocks" $ do
+    world <- makeTestWorld
+    -- Stack: stone at y=3, air at y=4, sand at y=5, sand at y=6
+    worldSetBlock world (V3 2 3 2) Stone
+    worldSetBlock world (V3 2 5 2) Sand
+    worldSetBlock world (V3 2 6 2) Sand
+    -- Trigger gravity from y=4 (air gap)
+    _ <- triggerGravityAbove world (V3 2 4 2)
+    -- Sand should cascade: y=5 sand -> y=4, y=6 sand -> y=5
+    btAt4 <- worldGetBlock world (V3 2 4 2)
+    btAt5 <- worldGetBlock world (V3 2 5 2)
+    btAt6 <- worldGetBlock world (V3 2 6 2)
+    btAt4 `shouldBe` Sand
+    btAt5 `shouldBe` Sand
+    btAt6 `shouldBe` Air
+
+  it "triggerGravityAbove does nothing when block above is not gravity-affected" $ do
+    world <- makeTestWorld
+    worldSetBlock world (V3 3 5 3) Stone
+    moved <- triggerGravityAbove world (V3 3 4 3)
+    btAt4 <- worldGetBlock world (V3 3 4 3)
+    btAt5 <- worldGetBlock world (V3 3 5 3)
+    btAt4 `shouldBe` Air
+    btAt5 `shouldBe` Stone
+    moved `shouldBe` False
+
+  it "settleGravityBlock drops sand to lowest air" $ do
+    world <- makeTestWorld
+    -- Stone floor at y=2, air at y=3 and y=4, sand at y=5
+    worldSetBlock world (V3 4 2 4) Stone
+    worldSetBlock world (V3 4 5 4) Sand
+    moved <- settleGravityBlock world (V3 4 5 4)
+    moved `shouldBe` True
+    btAt3 <- worldGetBlock world (V3 4 3 4)
+    btAt5 <- worldGetBlock world (V3 4 5 4)
+    btAt3 `shouldBe` Sand
+    btAt5 `shouldBe` Air
+
+  it "settleGravityBlock does not move block on solid ground" $ do
+    world <- makeTestWorld
+    worldSetBlock world (V3 5 3 5) Stone
+    worldSetBlock world (V3 5 4 5) Sand
+    moved <- settleGravityBlock world (V3 5 4 5)
+    moved `shouldBe` False
+    btAt4 <- worldGetBlock world (V3 5 4 5)
+    btAt4 `shouldBe` Sand
+
+  it "settleChunkGravity settles floating sand in a chunk" $ do
+    world <- makeTestWorld
+    -- Place stone floor and floating sand
+    worldSetBlock world (V3 6 2 6) Stone
+    worldSetBlock world (V3 6 8 6) Sand
+    chunks <- atomically $ readTVar (worldChunks world)
+    case HM.lookup (V2 0 0) chunks of
+      Nothing -> expectationFailure "Chunk not found"
+      Just chunk -> do
+        moved <- settleChunkGravity world chunk
+        moved `shouldBe` True
+        btAt3 <- worldGetBlock world (V3 6 3 6)
+        btAt8 <- worldGetBlock world (V3 6 8 6)
+        btAt3 `shouldBe` Sand
+        btAt8 `shouldBe` Air
