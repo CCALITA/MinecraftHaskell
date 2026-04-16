@@ -163,12 +163,6 @@ allRecipes =
       , rcResult  = BlockItem StoneBrick
       , rcCount   = 4
       }
-  -- Glass from sand (smelting placeholder - 1:1)
-  , Recipe
-      { rcPattern = [[bi Sand]]
-      , rcResult  = BlockItem Glass
-      , rcCount   = 1
-      }
   -- Bricks from clay
   , Recipe
       { rcPattern = [[bi Clay, bi Clay]
