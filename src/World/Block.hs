@@ -41,6 +41,15 @@ data BlockType
   | StoneBrick
   | Brick
   | TNT
+  | Obsidian
+  | OakDoorClosed
+  | OakDoorOpen
+  | Ladder
+  | Bed
+  | OakFence
+  | Farmland
+  | WheatCrop
+  | OakSapling
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -101,6 +110,15 @@ blockProperties = \case
   StoneBrick   -> BlockProperties True  False 0  1.5
   Brick        -> BlockProperties True  False 0  2.0
   TNT          -> BlockProperties True  False 0  0
+  Obsidian     -> BlockProperties True  False 0  50.0
+  OakDoorClosed -> BlockProperties True  False 0  3.0
+  OakDoorOpen  -> BlockProperties False True  0  3.0
+  Ladder       -> BlockProperties False True  0  0.4
+  Bed          -> BlockProperties True  False 0  0.2
+  OakFence     -> BlockProperties True  True  0  2.0
+  Farmland     -> BlockProperties True  False 0  0.6
+  WheatCrop    -> BlockProperties False True  0  0
+  OakSapling   -> BlockProperties False True  0  0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -156,3 +174,15 @@ blockFaceTexCoords blockType face = case blockType of
     FaceTop    -> V2 9 0
     FaceBottom -> V2 10 0
     _          -> V2 8 0
+  Obsidian    -> V2 11 1
+  OakDoorClosed -> V2 12 1
+  OakDoorOpen -> V2 13 1
+  Ladder      -> V2 14 1
+  Bed         -> V2 15 1
+  OakFence    -> V2 3 2
+  Farmland    -> case face of
+    FaceTop    -> V2 4 2
+    FaceBottom -> V2 2 0  -- dirt bottom
+    _          -> V2 2 0  -- dirt sides
+  WheatCrop   -> V2 5 2
+  OakSapling  -> V2 6 2
