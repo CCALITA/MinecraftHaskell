@@ -151,7 +151,7 @@ allRecipes =
       }
   -- Torch from coal + stick (OakLog placeholder)
   , Recipe
-      { rcPattern = [[bi CoalOre]
+      { rcPattern = [[mi Coal]
                     ,[bi OakLog]]
       , rcResult  = BlockItem Torch
       , rcCount   = 4
@@ -229,7 +229,7 @@ toolRecipes = concatMap tierRecipes
   [ (Wood,      bi OakPlanks)
   , (StoneTier, bi Cobblestone)
   , (Iron,      mi IronIngot)
-  , (Diamond,   bi DiamondOre)
+  , (Diamond,   mi DiamondGem)
   ]
   where
     stick = bi OakLog  -- OakLog as stick placeholder

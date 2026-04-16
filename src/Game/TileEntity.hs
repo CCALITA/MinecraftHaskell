@@ -120,9 +120,9 @@ fuelBurnTime = \case
     B.OakLog        -> Just 15.0
     B.CraftingTable -> Just 15.0
     B.Chest         -> Just 15.0
-    B.CoalOre       -> Just 80.0
     _               -> Nothing
   MaterialItem Charcoal -> Just 80.0
+  MaterialItem Coal     -> Just 80.0
   _                     -> Nothing
 
 -- | Create a new empty tile entity map
