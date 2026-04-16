@@ -356,8 +356,14 @@ main = do
                   case cursor of
                     Nothing -> do
                       writeIORef cursorItemRef (Just (ItemStack item count))
-                      -- Clear grid (consume ingredients)
-                      writeIORef craftingGridRef (emptyCraftingGrid 3)
+                      -- Consume 1 item per occupied slot (not clearing entire stacks)
+                      let size = cgSize grid
+                          consumed = foldl (\g (r, c) ->
+                            case getCraftingSlot g r c of
+                              Just _  -> setCraftingSlot g r c Nothing
+                              Nothing -> g
+                            ) grid [(r, c) | r <- [0..size-1], c <- [0..size-1]]
+                      writeIORef craftingGridRef consumed
                     _ -> pure ()  -- cursor occupied
                 CraftFailure -> pure ()
             Just (CraftInvSlot idx) -> do
