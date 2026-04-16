@@ -44,6 +44,8 @@ data MaterialType
   | CookedPork
   | CookedBeef
   | BrickItem
+  | RawPork
+  | RawBeef
   deriving stock (Show, Eq, Ord, Enum, Bounded, Generic)
 
 -- | An item in the inventory — either a placeable block, a tool, or a material
