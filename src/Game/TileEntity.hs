@@ -97,6 +97,8 @@ smeltingRecipes =
   , SmeltingRecipe (BlockItem B.OakLog)       (MaterialItem Charcoal)   10.0 CatMisc
   , SmeltingRecipe (BlockItem B.Clay)         (MaterialItem BrickItem)  10.0 CatMisc
   , SmeltingRecipe (BlockItem B.Cobblestone)  (BlockItem B.Stone)       10.0 CatMisc
+  , SmeltingRecipe (MaterialItem RawPork)     (MaterialItem CookedPork)  10.0 CatFood
+  , SmeltingRecipe (MaterialItem RawBeef)     (MaterialItem CookedBeef)  10.0 CatFood
   ]
 
 -- | Find a smelting recipe for a given input item and furnace variant
