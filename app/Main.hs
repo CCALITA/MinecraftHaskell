@@ -689,20 +689,11 @@ main = do
                   destroyEntity entityWorld eid
                   modifyIORef' aiStatesRef (HM.delete eid)
                   let dropPos = entPosition ent'
-                      mobDrop = case readMobType (entTag ent) of
-                        Pig      -> Just (BlockItem OakPlanks, 1)
-                        Cow      -> Just (BlockItem OakPlanks, 1)
-                        Sheep    -> Just (BlockItem OakPlanks, 1)
-                        Chicken  -> Just (BlockItem OakPlanks, 1)
-                        Zombie   -> Just (BlockItem IronOre, 1)
-                        Skeleton -> Just (BlockItem CoalOre, 1)
-                        Creeper  -> Just (BlockItem Cobblestone, 1)
-                        Spider   -> Just (BlockItem Cobblestone, 1)
-                  case mobDrop of
-                    Just (item, count) -> do
+                  drops <- mobDrops (entTag ent)
+                  forM_ drops $ \(item, count) ->
+                    when (count > 0) $ do
                       spawnDrop droppedItems item count dropPos
-                      putStrLn $ entTag ent ++ " died and dropped " ++ show item
-                    Nothing -> pure ()
+                      putStrLn $ entTag ent ++ " died and dropped " ++ show count ++ "x " ++ show item
 
             -- Auto-save every ~5 minutes (18000 frames at 60fps)
             when (frameIdx > 0 && frameIdx `mod` 18000 == 0) $ do
@@ -1373,6 +1364,29 @@ itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)
 itemColor (ToolItem Axe _ _)     = (0.6, 0.5, 0.3, 1.0)
 itemColor (ToolItem Shovel _ _)  = (0.5, 0.4, 0.25, 1.0)
 itemColor (ToolItem Hoe _ _)     = (0.5, 0.5, 0.3, 1.0)
+itemColor (FoodItem ft) = case ft of
+  RawPorkchop    -> (0.9, 0.6, 0.6, 1.0)
+  CookedPorkchop -> (0.7, 0.4, 0.2, 1.0)
+  RawBeef        -> (0.9, 0.6, 0.6, 1.0)
+  Steak          -> (0.7, 0.4, 0.2, 1.0)
+  RawChicken     -> (0.9, 0.6, 0.6, 1.0)
+  CookedChicken  -> (0.7, 0.4, 0.2, 1.0)
+  Bread          -> (0.8, 0.7, 0.4, 1.0)
+  Apple          -> (0.9, 0.2, 0.15, 1.0)
+  RottenFlesh    -> (0.5, 0.55, 0.3, 1.0)
+itemColor (MaterialItem mt) = case mt of
+  Coal       -> (0.2, 0.2, 0.2, 1.0)
+  DiamondGem -> (0.3, 0.8, 0.95, 1.0)
+  IronIngot  -> (0.8, 0.8, 0.8, 1.0)
+  GoldIngot  -> (1.0, 0.85, 0.0, 1.0)
+  Bone       -> (0.9, 0.9, 0.85, 1.0)
+  ArrowMat   -> (0.6, 0.6, 0.6, 1.0)
+  StringMat  -> (0.9, 0.9, 0.9, 1.0)
+  Gunpowder  -> (0.25, 0.25, 0.25, 1.0)
+  Feather    -> (0.95, 0.95, 0.95, 1.0)
+  Leather    -> (0.6, 0.3, 0.1, 1.0)
+  WheatSeeds -> (0.4, 0.6, 0.2, 1.0)
+  Wheat      -> (0.85, 0.75, 0.3, 1.0)
 
 -- | 3x3 mini-icon for item (row, col, color) — used in hotbar slot rendering
 itemMiniIcon :: Item -> [(Int, Int, (Float, Float, Float, Float))]
@@ -1428,3 +1442,5 @@ itemMiniIcon (BlockItem bt) = blockMiniIcon bt
       where st = (0.5,0.5,0.5,1); ore = (0.3,0.8,0.95,1)
     blockMiniIcon Snow = fill (0.95,0.95,0.95,1)
     blockMiniIcon _ = fill (itemColor (BlockItem bt))
+itemMiniIcon item = fillSolid (itemColor item)
+  where fillSolid c = [(r,col,c) | r <- [0..2], col <- [0..2]]

@@ -2,6 +2,8 @@ module Game.Item
   ( Item(..)
   , ToolType(..)
   , ToolMaterial(..)
+  , FoodType(..)
+  , MaterialType(..)
   , ToolInfo(..)
   , itemFromBlock
   , itemToBlock
@@ -13,9 +15,11 @@ module Game.Item
   , blockDrops
   , blockRequiredHarvestLevel
   , blockPreferredTool
+  , mobDrops
   ) where
 
 import World.Block (BlockType(..))
+import System.Random (randomRIO)
 
 -- | Tool types
 data ToolType
@@ -34,10 +38,41 @@ data ToolMaterial
   | Diamond
   deriving stock (Show, Eq, Ord, Enum, Bounded)
 
--- | An item in the inventory — either a placeable block or a tool
+-- | Food item types (raw/cooked meats, bread, etc.)
+data FoodType
+  = RawPorkchop
+  | CookedPorkchop
+  | RawBeef
+  | Steak
+  | RawChicken
+  | CookedChicken
+  | Bread
+  | Apple
+  | RottenFlesh
+  deriving stock (Show, Eq, Ord, Enum, Bounded)
+
+-- | Material item types (crafting/drop materials)
+data MaterialType
+  = Coal
+  | DiamondGem
+  | IronIngot
+  | GoldIngot
+  | Bone
+  | ArrowMat
+  | StringMat
+  | Gunpowder
+  | Feather
+  | Leather
+  | WheatSeeds
+  | Wheat
+  deriving stock (Show, Eq, Ord, Enum, Bounded)
+
+-- | An item in the inventory — block, tool, food, or material
 data Item
-  = BlockItem !BlockType
-  | ToolItem  !ToolType !ToolMaterial !Int  -- tool type, material, remaining durability
+  = BlockItem    !BlockType
+  | ToolItem     !ToolType !ToolMaterial !Int  -- tool type, material, remaining durability
+  | FoodItem     !FoodType
+  | MaterialItem !MaterialType
   deriving stock (Show, Eq)
 
 -- | Tool properties
@@ -70,18 +105,20 @@ itemFromBlock = BlockItem
 
 -- | Try to convert an item to a block type (for placement)
 itemToBlock :: Item -> Maybe BlockType
-itemToBlock (BlockItem bt) = Just bt
-itemToBlock (ToolItem {})  = Nothing
+itemToBlock (BlockItem bt)    = Just bt
+itemToBlock (ToolItem {})     = Nothing
+itemToBlock (FoodItem _)      = Nothing
+itemToBlock (MaterialItem _)  = Nothing
 
 -- | Is this a placeable block item?
 isBlockItem :: Item -> Bool
 isBlockItem (BlockItem _) = True
 isBlockItem _             = False
 
--- | Stack limit for an item (tools stack to 1, blocks to 64)
+-- | Stack limit for an item (tools stack to 1, everything else to 64)
 itemStackLimit :: Item -> Int
-itemStackLimit (BlockItem _) = 64
-itemStackLimit (ToolItem {}) = 1
+itemStackLimit (ToolItem {})    = 1
+itemStackLimit _                = 64
 
 -- | What items a block drops when broken. Returns (item, count).
 --   Some blocks require a minimum harvest level to drop anything.
@@ -152,3 +189,30 @@ blockPreferredTool = \case
   CraftingTable -> Just Axe
   Chest       -> Just Axe
   _           -> Nothing
+
+-- | Loot table for mob deaths. Returns a list of (item, count) pairs
+--   with randomized drop quantities.
+mobDrops :: String -> IO [(Item, Int)]
+mobDrops tag = case tag of
+  "Pig"      -> randomDrops [(FoodItem RawPorkchop, 1, 3)]
+  "Cow"      -> do meat  <- randomDrops [(FoodItem RawBeef, 1, 3)]
+                   leath <- randomDrops [(MaterialItem Leather, 0, 2)]
+                   pure (meat ++ leath)
+  "Chicken"  -> do meat  <- randomDrops [(FoodItem RawChicken, 1, 1)]
+                   feath <- randomDrops [(MaterialItem Feather, 0, 2)]
+                   pure (meat ++ feath)
+  "Sheep"    -> pure [(BlockItem OakPlanks, 1)]  -- wool placeholder
+  "Zombie"   -> randomDrops [(FoodItem RottenFlesh, 0, 2)]
+  "Skeleton" -> do bones  <- randomDrops [(MaterialItem Bone, 0, 2)]
+                   arrows <- randomDrops [(MaterialItem ArrowMat, 0, 2)]
+                   pure (bones ++ arrows)
+  "Creeper"  -> randomDrops [(MaterialItem Gunpowder, 0, 2)]
+  "Spider"   -> randomDrops [(MaterialItem StringMat, 0, 2)]
+  _          -> pure []
+ where
+  randomDrops :: [(Item, Int, Int)] -> IO [(Item, Int)]
+  randomDrops entries = do
+    results <- mapM (\(item, lo, hi) -> do
+      n <- randomRIO (lo, hi)
+      pure (item, n)) entries
+    pure $ filter (\(_, n) -> n > 0) results
