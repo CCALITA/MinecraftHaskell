@@ -51,6 +51,13 @@ blockSpec = describe "World.Block" $ do
     isSolid Glass `shouldBe` True
     isTransparent Glass `shouldBe` True
 
+  it "Bed is solid and not transparent" $ do
+    isSolid Bed `shouldBe` True
+    isTransparent Bed `shouldBe` False
+
+  it "Bed has low hardness" $ do
+    bpHardness (blockProperties Bed) `shouldBe` 0.2
+
   it "all block types roundtrip through Enum" $
     property $ \i -> let idx = abs i `mod` (fromEnum (maxBound :: BlockType) + 1)
                          bt = toEnum idx :: BlockType

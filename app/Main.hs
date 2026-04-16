@@ -161,6 +161,8 @@ main = do
     debugOverlayRef <- newIORef False
     targetBlockRef <- newIORef (Nothing :: Maybe (V3 Int))
     dayNightRef <- newIORef newDayNightCycle
+    spawnPointRef <- newIORef spawnPos
+    sleepMessageRef <- newIORef (Nothing :: Maybe Float)
     fluidState <- newFluidState
     droppedItems <- newDroppedItems
 
@@ -425,6 +427,7 @@ main = do
               GLFW.MouseButton'1 -> do  -- Left click: start mining
                 writeIORef miningRef (Just (V3 bx by bz, 0.0))
               GLFW.MouseButton'2 -> do  -- Right click: interact or place
+                -- Check if clicking on an interactable block
                 hitBlock <- worldGetBlock world (V3 bx by bz)
                 let doorToggle = case hitBlock of
                       OakDoorClosed -> Just OakDoorOpen
@@ -435,6 +438,17 @@ main = do
                     worldSetBlock world (V3 bx by bz) newDoor
                     rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
                   Nothing -> case hitBlock of
+                    Bed -> do
+                      dnc <- readIORef dayNightRef
+                      if isNight dnc
+                        then do
+                          -- Set spawn point on top of bed
+                          writeIORef spawnPointRef (fmap fromIntegral (V3 bx by bz) + V3 0.5 1.0 0.5)
+                          -- Skip to dawn and increment day count
+                          modifyIORef' dayNightRef (\d -> d { dncTime = 0.25, dncDayCount = dncDayCount d + 1 })
+                          putStrLn "Sleeping... spawn point set."
+                        else
+                          writeIORef sleepMessageRef (Just 3.0)
                     CraftingTable -> do
                       writeIORef gameModeRef CraftingOpen
                       writeIORef craftingGridRef (emptyCraftingGrid 3)
@@ -617,7 +631,8 @@ main = do
             do p <- readIORef playerRef
                when (isPlayerDead p) $ do
                  putStrLn "You died! Respawning..."
-                 writeIORef playerRef (respawnPlayer spawnPos p)
+                 sp <- readIORef spawnPointRef
+                 writeIORef playerRef (respawnPlayer sp p)
 
             let physicsTickRan = accum' >= tickRate
 
@@ -889,10 +904,15 @@ main = do
             fpsVal <- readIORef fpsDisplayRef
             chunks <- readTVarIO (worldChunks world)
             targetBlock <- readIORef targetBlockRef
+            sleepMsg <- readIORef sleepMessageRef
+            let showSleepMsg = maybe False (> 0) sleepMsg
+            case sleepMsg of
+              Just t  -> writeIORef sleepMessageRef (if t - dt > 0 then Just (t - dt) else Nothing)
+              Nothing -> pure ()
             let debugInfo = if showDebug
                   then Just (plPos player', plYaw player', plPitch player', fpsVal, HM.size chunks)
                   else Nothing
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid debugInfo (fmap (\tb -> (tb, vp)) targetBlock)
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
             when (hudVC > 0) $ do
@@ -1142,12 +1162,13 @@ readMobType _          = Pig
 -- | Build HUD vertices from current state
 -- debugInfo: Just (pos, yaw, pitch, fps, chunkCount) when F3 overlay is active
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
-buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid debugInfo targetInfo = VS.fromList $
+-- showSleepMsg: True when "You can only sleep at night" should be shown
+buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> Bool -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid debugInfo targetInfo showSleepMsg = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
-    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ handVerts ++ debugVerts ++ highlightVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts
   where
@@ -1344,6 +1365,14 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid debu
                   else []
                 _ -> []
         in concatMap drawEdge edges
+
+    -- "You can only sleep at night" message
+    sleepMsgVerts
+      | showSleepMsg =
+          let msgBg = quad (-0.55) 0.25 0.55 0.38 (0.0, 0.0, 0.0, 0.6)
+              msgText = renderTextCentered 0.28 1.0 (1, 1, 1, 1) "YOU CAN ONLY SLEEP AT NIGHT"
+          in msgBg ++ msgText
+      | otherwise = []
 
     -- Inventory screen: dark overlay + 4x9 slot grid
     invScreenVerts =
