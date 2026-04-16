@@ -90,6 +90,8 @@ tileFull tileIdx lx ly = case tileIdx of
   21 -> logTop lx ly           -- oak log cross-section (V2 5 1)
   22 -> leavesPattern lx ly    -- oak leaves (V2 6 1)
   25 -> chestPattern lx ly     -- chest (V2 9 1)
+  30 -> bedSide lx ly          -- bed side (V2 14 1)
+  31 -> bedTop lx ly           -- bed top (V2 15 1)
   -- Row 2: tileIdx 32-47
   32 -> orePattern lx ly (255, 215, 0)    -- gold ore (V2 0 2)
   33 -> orePattern lx ly (200, 170, 130)  -- iron ore (V2 1 2)
@@ -275,6 +277,22 @@ tileFull tileIdx lx ly = case tileIdx of
       in if isFlame then (255, 200, 50, 255)
          else if isStick then (120, 90, 40, 255)
          else (0, 0, 0, 0)  -- transparent
+
+    -- Bed top: red blanket on bottom portion, white pillow on top, wooden frame border
+    bedTop x y =
+      let border = x == 0 || y == 0 || x == 15 || y == 15
+          pillow = y <= 4 && x >= 2 && x <= 13
+          n = pixHash x y 1800 `mod` 20
+      in if border then (100, 70, 35, 255)           -- wooden frame
+         else if pillow then (fromIntegral (230 + n), fromIntegral (230 + n), fromIntegral (230 + n), 255) -- white pillow
+         else (fromIntegral (180 + n), fromIntegral (40 + n `div` 2), fromIntegral (40 + n `div` 2), 255) -- red blanket
+
+    -- Bed side: wooden frame bottom, red blanket top portion
+    bedSide x y =
+      let frame = y >= 12
+          n = pixHash x y 1850 `mod` 15
+      in if frame then (fromIntegral (90 + n), fromIntegral (60 + n), fromIntegral (30 + n), 255) -- wood frame
+         else (fromIntegral (180 + n), fromIntegral (40 + n `div` 2), fromIntegral (40 + n `div` 2), 255) -- red blanket
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels

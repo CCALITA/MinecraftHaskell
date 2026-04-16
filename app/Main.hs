@@ -150,6 +150,8 @@ main = do
     debugOverlayRef <- newIORef False
     targetBlockRef <- newIORef (Nothing :: Maybe (V3 Int))
     dayNightRef <- newIORef newDayNightCycle
+    spawnPointRef <- newIORef spawnPos
+    sleepMessageRef <- newIORef (Nothing :: Maybe Float)
     fluidState <- newFluidState
     droppedItems <- newDroppedItems
 
@@ -409,15 +411,26 @@ main = do
               GLFW.MouseButton'1 -> do  -- Left click: start mining
                 writeIORef miningRef (Just (V3 bx by bz, 0.0))
               GLFW.MouseButton'2 -> do  -- Right click: interact or place
-                -- Check if clicking on a crafting table
+                -- Check if clicking on an interactable block
                 hitBlock <- worldGetBlock world (V3 bx by bz)
-                if hitBlock == CraftingTable
-                  then do
+                case hitBlock of
+                  Bed -> do
+                    dnc <- readIORef dayNightRef
+                    if isNight dnc
+                      then do
+                        -- Set spawn point on top of bed
+                        writeIORef spawnPointRef (fmap fromIntegral (V3 bx by bz) + V3 0.5 1.0 0.5)
+                        -- Skip to dawn and increment day count
+                        modifyIORef' dayNightRef (\d -> d { dncTime = 0.25, dncDayCount = dncDayCount d + 1 })
+                        putStrLn "Sleeping... spawn point set."
+                      else
+                        writeIORef sleepMessageRef (Just 3.0)
+                  CraftingTable -> do
                     writeIORef gameModeRef CraftingOpen
                     writeIORef craftingGridRef (emptyCraftingGrid 3)
                     GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
                     writeIORef lastCursorRef Nothing
-                  else do
+                  _ -> do
                     -- Place block from hotbar
                     inv <- readIORef inventoryRef
                     case selectedItem inv of
@@ -590,7 +603,8 @@ main = do
             do p <- readIORef playerRef
                when (isPlayerDead p) $ do
                  putStrLn "You died! Respawning..."
-                 writeIORef playerRef (respawnPlayer spawnPos p)
+                 sp <- readIORef spawnPointRef
+                 writeIORef playerRef (respawnPlayer sp p)
 
             let physicsTickRan = accum' >= tickRate
 
@@ -782,10 +796,15 @@ main = do
             fpsVal <- readIORef fpsDisplayRef
             chunks <- readTVarIO (worldChunks world)
             targetBlock <- readIORef targetBlockRef
+            sleepMsg <- readIORef sleepMessageRef
+            let showSleepMsg = maybe False (> 0) sleepMsg
+            case sleepMsg of
+              Just t  -> writeIORef sleepMessageRef (if t - dt > 0 then Just (t - dt) else Nothing)
+              Nothing -> pure ()
             let debugInfo = if showDebug
                   then Just (plPos player', plYaw player', plPitch player', fpsVal, HM.size chunks)
                   else Nothing
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid debugInfo (fmap (\tb -> (tb, vp)) targetBlock)
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
             when (hudVC > 0) $ do
@@ -1012,12 +1031,13 @@ readMobType _          = Pig
 -- | Build HUD vertices from current state
 -- debugInfo: Just (pos, yaw, pitch, fps, chunkCount) when F3 overlay is active
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
-buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid debugInfo targetInfo = VS.fromList $
+-- showSleepMsg: True when "You can only sleep at night" should be shown
+buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> Bool -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid debugInfo targetInfo showSleepMsg = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
-    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ handVerts ++ debugVerts ++ highlightVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts
   where
@@ -1215,6 +1235,14 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid debu
                 _ -> []
         in concatMap drawEdge edges
 
+    -- "You can only sleep at night" message
+    sleepMsgVerts
+      | showSleepMsg =
+          let msgBg = quad (-0.55) 0.25 0.55 0.38 (0.0, 0.0, 0.0, 0.6)
+              msgText = renderTextCentered 0.28 1.0 (1, 1, 1, 1) "YOU CAN ONLY SLEEP AT NIGHT"
+          in msgBg ++ msgText
+      | otherwise = []
+
     -- Inventory screen: dark overlay + 4x9 slot grid
     invScreenVerts =
       -- Full-screen dark overlay
@@ -1367,6 +1395,7 @@ itemColor (BlockItem bt) = case bt of
   GoldOre     -> (1.0, 0.85, 0.0, 1.0)
   DiamondOre  -> (0.3, 0.8, 0.95, 1.0)
   Snow        -> (0.95, 0.95, 0.95, 1.0)
+  Bed         -> (0.7, 0.15, 0.15, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)
@@ -1427,4 +1456,7 @@ itemMiniIcon (BlockItem bt) = blockMiniIcon bt
       [(0,0,st),(0,1,ore),(0,2,st), (1,0,st),(1,1,ore),(1,2,st), (2,0,ore),(2,1,st),(2,2,ore)]
       where st = (0.5,0.5,0.5,1); ore = (0.3,0.8,0.95,1)
     blockMiniIcon Snow = fill (0.95,0.95,0.95,1)
+    blockMiniIcon Bed =
+      [(0,0,wh),(0,1,wh),(0,2,wh), (1,0,rd),(1,1,rd),(1,2,rd), (2,0,wd),(2,1,wd),(2,2,wd)]
+      where wh = (0.9,0.9,0.9,1); rd = (0.7,0.15,0.15,1); wd = (0.5,0.35,0.15,1)
     blockMiniIcon _ = fill (itemColor (BlockItem bt))

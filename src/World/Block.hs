@@ -41,6 +41,7 @@ data BlockType
   | StoneBrick
   | Brick
   | TNT
+  | Bed
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -101,6 +102,7 @@ blockProperties = \case
   StoneBrick   -> BlockProperties True  False 0  1.5
   Brick        -> BlockProperties True  False 0  2.0
   TNT          -> BlockProperties True  False 0  0
+  Bed          -> BlockProperties True  False 0  0.2
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -156,3 +158,7 @@ blockFaceTexCoords blockType face = case blockType of
     FaceTop    -> V2 9 0
     FaceBottom -> V2 10 0
     _          -> V2 8 0
+  Bed         -> case face of
+    FaceTop    -> V2 15 1   -- bed top (red blanket + white pillow)
+    FaceBottom -> V2 4 0    -- planks bottom
+    _          -> V2 14 1   -- bed side

@@ -184,7 +184,18 @@ allRecipes =
       , rcResult  = BlockItem TNT
       , rcCount   = 1
       }
-  ] ++ toolRecipes
+  ] ++ toolRecipes ++ bedRecipes
+
+-- | Bed recipe: 3 planks top + 3 planks bottom (wool placeholder)
+bedRecipes :: [Recipe]
+bedRecipes =
+  [ Recipe
+      { rcPattern = [[bi OakPlanks, bi OakPlanks, bi OakPlanks]
+                    ,[bi OakPlanks, bi OakPlanks, bi OakPlanks]]
+      , rcResult  = BlockItem Bed
+      , rcCount   = 1
+      }
+  ]
 
 -- | Helper to create a tool item with full durability
 tool :: ToolType -> ToolMaterial -> Item
