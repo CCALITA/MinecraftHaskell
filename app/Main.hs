@@ -34,11 +34,12 @@ import Entity.Spawn
 import Game.Save
 import Game.DroppedItem
 
-import Control.Monad (unless, when, forM_)
+import Control.Monad (unless, when, forM_, forM)
 import Control.Concurrent.STM (readTVarIO, atomically, writeTVar)
 import Control.Exception (finally)
 import System.IO (hSetBuffering, stdout, BufferMode(..))
 import qualified Data.HashMap.Strict as HM
+import Data.Maybe (catMaybes)
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as VS
 import Data.IORef
@@ -55,6 +56,14 @@ import Data.Char (isDigit)
 -- | Game UI mode
 data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen
   deriving stock (Show, Eq)
+
+-- | Arrow projectile fired by Skeletons
+data Projectile = Projectile
+  { projPos      :: !(V3 Float)
+  , projVelocity :: !(V3 Float)
+  , projAge      :: !Float
+  , projDamage   :: !Int
+  }
 
 -- | Fixed timestep for physics (20 ticks per second, like Minecraft)
 tickRate :: Float
@@ -158,6 +167,10 @@ main = do
     spawnRngRef <- newIORef =<< System.Random.newStdGen
     spawnCooldownRef <- newIORef (0.0 :: Float)
     aiStatesRef <- newIORef (HM.empty :: HM.HashMap Int AIState)
+
+    -- Skeleton ranged attack state
+    projectilesRef <- newIORef ([] :: [Projectile])
+    skeletonCooldownRef <- newIORef (HM.empty :: HM.HashMap Int Float)
 
     -- Give player some starting blocks
     let startInv = selectHotbar (foldl (\i (item, cnt) -> fst $ addItem i item cnt) emptyInventory
@@ -672,24 +685,49 @@ main = do
               aiStates <- readIORef aiStatesRef
               forM_ ents $ \ent -> do
                 let eid = entId ent
+                    mobType = readMobType (entTag ent)
                     currentAI = HM.lookupDefault (AIIdle 2.0) eid aiStates
-                (ent', newAI) <- updateMobAI dt ent (readMobType (entTag ent)) (plPos player) blockQuery currentAI spawnRngRef
+                (ent', newAI) <- updateMobAI dt ent mobType (plPos player) blockQuery currentAI spawnRngRef
                 updateEntity entityWorld eid (const ent')
                 modifyIORef' aiStatesRef (HM.insert eid newAI)
-                -- Apply mob attack damage to player
-                case (currentAI, newAI) of
-                  (AIAttack _ cd, AIAttack _ 1.0) | cd <= 0 -> do
-                    let dmg = floor $ miAttackDmg (mobInfo (readMobType (entTag ent)))
-                    when (dmg > 0) $ do
-                      modifyIORef' playerRef (damagePlayer dmg)
-                      putStrLn $ entTag ent ++ " attacked you for " ++ show dmg ++ " damage!"
-                  _ -> pure ()
+                -- Skeleton ranged attack: fire arrows instead of melee
+                case mobType of
+                  Skeleton -> case newAI of
+                    AIAttack _ _ -> do
+                      cooldowns <- readIORef skeletonCooldownRef
+                      let cd = HM.lookupDefault 0 eid cooldowns
+                          cd' = cd + dt
+                      if cd' >= 2.0
+                        then do
+                          modifyIORef' skeletonCooldownRef (HM.insert eid 0)
+                          arrowDmg <- System.Random.randomRIO (2 :: Int, 5)
+                          let skelPos = entPosition ent'
+                              dir = normalize (plPos player - skelPos)
+                              vel = dir ^* 20.0 + V3 0 3.0 0
+                              arrow = Projectile
+                                { projPos = skelPos + V3 0 1.5 0
+                                , projVelocity = vel
+                                , projAge = 0
+                                , projDamage = arrowDmg
+                                }
+                          modifyIORef' projectilesRef (arrow :)
+                        else modifyIORef' skeletonCooldownRef (HM.insert eid cd')
+                    _ -> modifyIORef' skeletonCooldownRef (HM.delete eid)
+                  -- Apply melee attack damage for non-Skeleton mobs
+                  _ -> case (currentAI, newAI) of
+                    (AIAttack _ cd, AIAttack _ 1.0) | cd <= 0 -> do
+                      let dmg = floor $ miAttackDmg (mobInfo mobType)
+                      when (dmg > 0) $ do
+                        modifyIORef' playerRef (damagePlayer dmg)
+                        putStrLn $ entTag ent ++ " attacked you for " ++ show dmg ++ " damage!"
+                    _ -> pure ()
                 -- Check for mob death and spawn item drops
                 when (entHealth ent' <= 0) $ do
                   destroyEntity entityWorld eid
                   modifyIORef' aiStatesRef (HM.delete eid)
+                  modifyIORef' skeletonCooldownRef (HM.delete eid)
                   let dropPos = entPosition ent'
-                      mobDrop = case readMobType (entTag ent) of
+                      mobDrop = case mobType of
                         Pig      -> Just (BlockItem OakPlanks, 1)
                         Cow      -> Just (BlockItem OakPlanks, 1)
                         Sheep    -> Just (BlockItem OakPlanks, 1)
@@ -703,6 +741,28 @@ main = do
                       spawnDrop droppedItems item count dropPos
                       putStrLn $ entTag ent ++ " died and dropped " ++ show item
                     Nothing -> pure ()
+
+            -- Tick arrow projectiles (every frame)
+            do projectiles <- readIORef projectilesRef
+               player <- readIORef playerRef
+               let gravity = V3 0 (-20.0) 0
+               newProjectiles <- fmap catMaybes $ forM projectiles $ \proj -> do
+                 let newVel = projVelocity proj + gravity ^* dt
+                     newPos = projPos proj + newVel ^* dt
+                     newAge = projAge proj + dt
+                     playerDist = norm (newPos - plPos player)
+                 if newAge > 5.0 then pure Nothing         -- despawn after 5 seconds
+                 else if playerDist < 1.0 then do          -- hit player
+                   modifyIORef' playerRef (damagePlayer (projDamage proj))
+                   putStrLn $ "Arrow hit you for " ++ show (projDamage proj) ++ " damage!"
+                   pure Nothing
+                 else do
+                   let blockPos = fmap floor newPos :: V3 Int
+                   bt <- worldGetBlock world blockPos
+                   if isSolid bt
+                     then pure Nothing                      -- stuck in block
+                     else pure (Just proj { projPos = newPos, projVelocity = newVel, projAge = newAge })
+               writeIORef projectilesRef newProjectiles
 
             -- Auto-save every ~5 minutes (18000 frames at 60fps)
             when (frameIdx > 0 && frameIdx `mod` 18000 == 0) $ do
