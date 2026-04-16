@@ -33,6 +33,7 @@ import Entity.Mob (MobType(..), MobInfo(..), updateMobAI, AIState(..), mobInfo, 
 import Entity.Spawn
 import Game.Save
 import Game.DroppedItem
+import Game.BlockEntity
 
 import Control.Monad (unless, when, forM_, forM, void)
 import Control.Concurrent.STM (readTVarIO, atomically, writeTVar)
@@ -56,7 +57,7 @@ import System.Environment (getArgs)
 import Data.Char (isDigit)
 
 -- | Game UI mode
-data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen
+data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen
   deriving stock (Show, Eq)
 
 -- | Arrow projectile fired by Skeletons
@@ -169,6 +170,10 @@ main = do
     sleepMessageRef <- newIORef (Nothing :: Maybe Float)
     fluidState <- newFluidState
     droppedItems <- newDroppedItems
+
+    -- Block entity storage (chests)
+    blockEntityMapRef <- newBlockEntityMap
+    chestPosRef <- newIORef (Nothing :: Maybe (V3 Int))
 
     -- Entity system
     entityWorld <- newEntityWorld
@@ -400,6 +405,37 @@ main = do
               writeIORef cursorItemRef slotContent
             Nothing -> pure ()
 
+        ChestOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
+          (mx, my) <- readIORef mousePosRef
+          (winW, winH) <- getWindowSize wh
+          let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+              ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
+              mSlot = hitChestSlot ndcX ndcY
+          case mSlot of
+            Just (ChestSlot idx) -> do
+              -- Click on chest slot (0-26): swap with cursor
+              mChestPos <- readIORef chestPosRef
+              case mChestPos of
+                Nothing -> pure ()
+                Just cPos -> do
+                  mChestInv <- getChestInventory blockEntityMapRef cPos
+                  case mChestInv of
+                    Nothing -> pure ()
+                    Just chestInv -> do
+                      cursor <- readIORef cursorItemRef
+                      let slotContent = getChestSlot chestInv idx
+                          newChestInv = setChestSlot chestInv idx cursor
+                      setChestInventory blockEntityMapRef cPos newChestInv
+                      writeIORef cursorItemRef slotContent
+            Just (ChestInvSlot idx) -> do
+              -- Click on player inventory slot: swap with cursor
+              inv <- readIORef inventoryRef
+              cursor <- readIORef cursorItemRef
+              let slotContent = getSlot inv idx
+              writeIORef inventoryRef (setSlot inv idx cursor)
+              writeIORef cursorItemRef slotContent
+            Nothing -> pure ()
+
         Playing -> do
           when (button == GLFW.MouseButton'1) $
             writeIORef lmbHeldRef (action == GLFW.MouseButtonState'Pressed)
@@ -463,6 +499,17 @@ main = do
                           putStrLn "Sleeping... spawn point set."
                         else
                           writeIORef sleepMessageRef (Just 3.0)
+                    Chest -> do
+                      -- Open chest: create inventory if it doesn't exist yet
+                      let chestPos = V3 bx by bz
+                      mExisting <- getChestInventory blockEntityMapRef chestPos
+                      case mExisting of
+                        Nothing -> setChestInventory blockEntityMapRef chestPos emptyChestInventory
+                        Just _  -> pure ()
+                      writeIORef chestPosRef (Just chestPos)
+                      writeIORef gameModeRef ChestOpen
+                      GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+                      writeIORef lastCursorRef Nothing
                     CraftingTable -> do
                       writeIORef gameModeRef CraftingOpen
                       writeIORef craftingGridRef (emptyCraftingGrid 3)
@@ -544,29 +591,24 @@ main = do
               GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
               writeIORef lastCursorRef Nothing
             _ -> pure ()
-          _ -> case key of  -- InventoryOpen or CraftingOpen
-            GLFW.Key'Escape -> do
-              writeIORef gameModeRef Playing
-              GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
-              writeIORef lastCursorRef Nothing
-              -- Return cursor item to inventory if any
-              mCursor <- readIORef cursorItemRef
-              case mCursor of
-                Just (ItemStack item cnt) -> do
-                  modifyIORef' inventoryRef (\inv -> fst $ addItem inv item cnt)
-                  writeIORef cursorItemRef Nothing
-                Nothing -> pure ()
-            GLFW.Key'E -> do
-              writeIORef gameModeRef Playing
-              GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
-              writeIORef lastCursorRef Nothing
-              mCursor <- readIORef cursorItemRef
-              case mCursor of
-                Just (ItemStack item cnt) -> do
-                  modifyIORef' inventoryRef (\inv -> fst $ addItem inv item cnt)
-                  writeIORef cursorItemRef Nothing
-                Nothing -> pure ()
+          _ -> case key of  -- InventoryOpen, CraftingOpen, or ChestOpen
+            GLFW.Key'Escape -> closeUIScreen
+            GLFW.Key'E      -> closeUIScreen
             _ -> pure ()
+            where
+              closeUIScreen = do
+                curMode <- readIORef gameModeRef
+                when (curMode == ChestOpen) $
+                  writeIORef chestPosRef Nothing
+                writeIORef gameModeRef Playing
+                GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
+                writeIORef lastCursorRef Nothing
+                mCursor <- readIORef cursorItemRef
+                case mCursor of
+                  Just (ItemStack item cnt) -> do
+                    modifyIORef' inventoryRef (\inv -> fst $ addItem inv item cnt)
+                    writeIORef cursorItemRef Nothing
+                  Nothing -> pure ()
 
     -- Timing
     frameRef <- newIORef (0 :: Int)
@@ -690,6 +732,17 @@ main = do
                           let drops = blockDrops bt
                               V3 bxf byf bzf = fmap fromIntegral blockPos :: V3 Float
                           mapM_ (\(item, cnt) -> spawnDrop droppedItems item cnt (V3 bxf byf bzf)) drops
+                          -- If it's a chest, also drop all stored items and remove block entity
+                          when (bt == Chest) $ do
+                            mBE <- removeBlockEntity blockEntityMapRef blockPos
+                            case mBE of
+                              Just (ChestData chestInv) ->
+                                forM_ [0 .. chestSlots - 1] $ \si ->
+                                  case getChestSlot chestInv si of
+                                    Just (ItemStack item cnt) ->
+                                      spawnDrop droppedItems item cnt (V3 bxf byf bzf)
+                                    Nothing -> pure ()
+                              Nothing -> pure ()
                           -- Consume tool durability
                           inv' <- readIORef inventoryRef
                           let inv'' = case getSlot inv' (invSelected inv') of
@@ -939,7 +992,15 @@ main = do
             let debugInfo = if showDebug
                   then Just (plPos player', plYaw player', plPitch player', fpsVal, HM.size chunks)
                   else Nothing
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg
+            -- Get chest inventory if a chest is open
+            mChestInv <- case mode of
+              ChestOpen -> do
+                mPos <- readIORef chestPosRef
+                case mPos of
+                  Just cPos -> getChestInventory blockEntityMapRef cPos
+                  Nothing   -> pure Nothing
+              _ -> pure Nothing
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid mChestInv debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
             when (hudVC > 0) $ do
@@ -1179,6 +1240,35 @@ explodeAt world (V3 centerX centerY centerZ) radius droppedItemsRef = do
               forM_ drops $ \(item, count) ->
                 spawnDrop droppedItemsRef item count
                   (V3 (fromIntegral x + 0.5) (fromIntegral y + 0.5) (fromIntegral z + 0.5))
+-- | Chest slot types
+data ChestSlotType = ChestSlot !Int | ChestInvSlot !Int
+  deriving stock (Show, Eq)
+
+-- | Check if NDC coordinates hit a chest UI slot
+-- Chest grid: 3 rows of 9 slots starting at chestGridY0 = -0.35
+-- Player inventory: 4 rows of 9 starting at chestInvY0 = 0.1
+hitChestSlot :: Float -> Float -> Maybe ChestSlotType
+hitChestSlot nx ny
+  -- Chest slots (3 rows of 9)
+  | ny >= chestY0 && ny < chestY0 + 3 * invSlotH
+  , nx >= invGridX0 && nx < invGridX0 + 9 * invSlotW =
+      let col = floor ((nx - invGridX0) / invSlotW) :: Int
+          row = floor ((ny - chestY0) / invSlotH) :: Int
+      in if col >= 0 && col < 9 && row >= 0 && row < 3
+         then Just (ChestSlot (row * 9 + col))
+         else Nothing
+  -- Player inventory slots (4 rows of 9)
+  | ny >= playerY0 && ny < playerY0 + 4 * invSlotH
+  , nx >= invGridX0 && nx < invGridX0 + 9 * invSlotW =
+      let col = floor ((nx - invGridX0) / invSlotW) :: Int
+          row = floor ((ny - playerY0) / invSlotH) :: Int
+      in if col >= 0 && col < 9 && row >= 0 && row < 4
+         then Just (ChestInvSlot (if row == 0 then col else 9 + (row - 1) * 9 + col))
+         else Nothing
+  | otherwise = Nothing
+  where
+    chestY0  = -0.35 :: Float
+    playerY0 = 0.1 :: Float
 
 -- | Parse mob type from entity tag string
 readMobType :: String -> MobType
@@ -1196,14 +1286,15 @@ readMobType _          = Pig
 -- debugInfo: Just (pos, yaw, pitch, fps, chunkCount) when F3 overlay is active
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- showSleepMsg: True when "You can only sleep at night" should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> Bool -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid debugInfo targetInfo showSleepMsg = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> Bool -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChestInv debugInfo targetInfo showSleepMsg = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
     Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts
+    ChestOpen     -> chestScreenVerts ++ cursorVerts
   where
     -- Crosshair: white + at center
     cs = 0.015 :: Float  -- size
@@ -1480,6 +1571,61 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid debu
               col = if idx < 9 then idx else (idx - 9) `mod` 9
               x = invGridX0 + fromIntegral col * invSlotW + invSlotPad
               y = 0.1 + fromIntegral row * invSlotH + invSlotPad
+              sw = invSlotW - 2 * invSlotPad
+              sh = invSlotH - 2 * invSlotPad
+              slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
+          in case getSlot inv idx of
+            Nothing -> slotBg
+            Just (ItemStack item _) ->
+              let colors = itemMiniIcon item
+                  pixW = sw / 3; pixH = sh / 3
+              in slotBg ++ concatMap (\(r, c, clr) ->
+                   quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                        (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
+    -- Chest screen: 27 chest slots (3 rows of 9) + 36 player inventory slots below
+    chestScreenVerts =
+      quad (-1) (-1) 1 1 (0, 0, 0, 0.5)
+      -- Title label area
+      ++ renderTextCentered (-0.45) 1.0 (1, 1, 1, 1) "CHEST"
+      -- Chest slots: 3 rows of 9 at top
+      ++ quad (invGridX0 - 0.02) (chestGridY0 - 0.02)
+              (invGridX0 + 9 * invSlotW + 0.02) (chestGridY0 + 3 * invSlotH + 0.02)
+              (0.35, 0.3, 0.2, 0.9)
+      ++ concatMap renderChestSlot [0..26]
+      -- Player inventory grid below (same layout as regular inventory)
+      ++ quad (invGridX0 - 0.02) (chestInvY0 - 0.02)
+              (invGridX0 + 9 * invSlotW + 0.02) (chestInvY0 + 4 * invSlotH + 0.02)
+              (0.3, 0.3, 0.3, 0.9)
+      ++ concatMap renderChestInvSlot [0..35]
+      where
+        chestGridY0 = -0.35 :: Float  -- top edge of chest grid
+        chestInvY0  = 0.1 :: Float    -- top edge of player inventory
+
+        renderChestSlot idx =
+          let row = idx `div` 9
+              col = idx `mod` 9
+              x = invGridX0 + fromIntegral col * invSlotW + invSlotPad
+              y = chestGridY0 + fromIntegral row * invSlotH + invSlotPad
+              sw = invSlotW - 2 * invSlotPad
+              sh = invSlotH - 2 * invSlotPad
+              slotBg = quad x y (x + sw) (y + sh) (0.2, 0.18, 0.12, 0.8)
+          in case mChestInv of
+            Nothing -> slotBg
+            Just chestInv -> case getChestSlot chestInv idx of
+              Nothing -> slotBg
+              Just (ItemStack item _) ->
+                let colors = itemMiniIcon item
+                    pixW = sw / 3; pixH = sh / 3
+                in slotBg ++ concatMap (\(r, c, clr) ->
+                     quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                          (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
+        renderChestInvSlot idx =
+          let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
+              col = if idx < 9 then idx else (idx - 9) `mod` 9
+              x = invGridX0 + fromIntegral col * invSlotW + invSlotPad
+              y = chestInvY0 + fromIntegral row * invSlotH + invSlotPad
               sw = invSlotW - 2 * invSlotPad
               sh = invSlotH - 2 * invSlotPad
               slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)

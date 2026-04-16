@@ -14,6 +14,7 @@ import Game.Crafting
 import Game.Player
 import Game.DroppedItem
 import Game.Save (SaveData(..), inventoryToSlotList, slotListToInventory)
+import Game.BlockEntity
 
 import Data.Binary (encode, decode)
 import Linear (V2(..), V3(..))
@@ -36,6 +37,7 @@ main = hspec $ do
   newItemSpec
   gravitySpec
   saveSpec
+  blockEntitySpec
 
 -- =========================================================================
 -- Block
@@ -696,3 +698,71 @@ saveSpec = describe "Game.Save Binary roundtrip" $ do
     invSelected restored `shouldBe` invSelected inv3
     -- Check each slot matches
     mapM_ (\i -> getSlot restored i `shouldBe` getSlot inv3 i) [0 .. inventorySlots - 1]
+-- Block Entity (chests)
+-- =========================================================================
+blockEntitySpec :: Spec
+blockEntitySpec = describe "Game.BlockEntity" $ do
+  it "new block entity map has no entries" $ do
+    bem <- newBlockEntityMap
+    exists <- hasBlockEntity bem (V3 0 64 0)
+    exists `shouldBe` False
+
+  it "setting a chest inventory makes it retrievable" $ do
+    bem <- newBlockEntityMap
+    let pos = V3 10 64 10
+    setChestInventory bem pos emptyChestInventory
+    mInv <- getChestInventory bem pos
+    case mInv of
+      Just inv -> V.length (invSlots inv) `shouldBe` chestSlots
+      Nothing  -> expectationFailure "Expected chest inventory"
+
+  it "hasBlockEntity returns True after set" $ do
+    bem <- newBlockEntityMap
+    let pos = V3 5 32 5
+    setChestInventory bem pos emptyChestInventory
+    exists <- hasBlockEntity bem pos
+    exists `shouldBe` True
+
+  it "getChestInventory returns Nothing for missing position" $ do
+    bem <- newBlockEntityMap
+    mInv <- getChestInventory bem (V3 99 99 99)
+    mInv `shouldBe` Nothing
+
+  it "removeBlockEntity returns data and clears it" $ do
+    bem <- newBlockEntityMap
+    let pos = V3 1 2 3
+    setChestInventory bem pos emptyChestInventory
+    mBe <- removeBlockEntity bem pos
+    case mBe of
+      Just (ChestData _) -> pure ()
+      Nothing -> expectationFailure "Expected ChestData"
+    exists <- hasBlockEntity bem pos
+    exists `shouldBe` False
+
+  it "chest slot get/set roundtrips" $ do
+    let item = ItemStack (BlockItem Stone) 32
+        inv = setChestSlot emptyChestInventory 13 (Just item)
+    getChestSlot inv 13 `shouldBe` Just item
+    getChestSlot inv 0 `shouldBe` Nothing
+
+  it "chest has 27 slots" $ do
+    chestSlots `shouldBe` 27
+    V.length (invSlots emptyChestInventory) `shouldBe` 27
+
+  it "multiple chests at different positions are independent" $ do
+    bem <- newBlockEntityMap
+    let pos1 = V3 0 64 0
+        pos2 = V3 10 64 10
+        item1 = ItemStack (BlockItem Stone) 16
+        item2 = ItemStack (BlockItem Dirt) 8
+        inv1 = setChestSlot emptyChestInventory 0 (Just item1)
+        inv2 = setChestSlot emptyChestInventory 0 (Just item2)
+    setChestInventory bem pos1 inv1
+    setChestInventory bem pos2 inv2
+    mInv1 <- getChestInventory bem pos1
+    mInv2 <- getChestInventory bem pos2
+    case (mInv1, mInv2) of
+      (Just r1, Just r2) -> do
+        getChestSlot r1 0 `shouldBe` Just item1
+        getChestSlot r2 0 `shouldBe` Just item2
+      _ -> expectationFailure "Expected both chest inventories"
