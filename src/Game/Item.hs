@@ -3,6 +3,7 @@ module Game.Item
   , ToolType(..)
   , ToolMaterial(..)
   , ToolInfo(..)
+  , FoodType(..)
   , itemFromBlock
   , itemToBlock
   , isBlockItem
@@ -10,6 +11,7 @@ module Game.Item
   , toolMiningSpeed
   , toolHarvestLevel
   , itemStackLimit
+  , foodHungerRestore
   , blockDrops
   , blockRequiredHarvestLevel
   , blockPreferredTool
@@ -34,10 +36,24 @@ data ToolMaterial
   | Diamond
   deriving stock (Show, Eq, Ord, Enum, Bounded)
 
--- | An item in the inventory — either a placeable block or a tool
+-- | Food types that can be eaten to restore hunger
+data FoodType
+  = RawPorkchop
+  | CookedPorkchop
+  | RawBeef
+  | Steak
+  | RawChicken
+  | CookedChicken
+  | Bread
+  | Apple
+  | RottenFlesh
+  deriving stock (Show, Eq, Ord, Enum, Bounded)
+
+-- | An item in the inventory — either a placeable block, a tool, or food
 data Item
   = BlockItem !BlockType
   | ToolItem  !ToolType !ToolMaterial !Int  -- tool type, material, remaining durability
+  | FoodItem  !FoodType
   deriving stock (Show, Eq)
 
 -- | Tool properties
@@ -72,16 +88,31 @@ itemFromBlock = BlockItem
 itemToBlock :: Item -> Maybe BlockType
 itemToBlock (BlockItem bt) = Just bt
 itemToBlock (ToolItem {})  = Nothing
+itemToBlock (FoodItem _)   = Nothing
 
 -- | Is this a placeable block item?
 isBlockItem :: Item -> Bool
 isBlockItem (BlockItem _) = True
 isBlockItem _             = False
 
--- | Stack limit for an item (tools stack to 1, blocks to 64)
+-- | Stack limit for an item (tools stack to 1, blocks and food to 64)
 itemStackLimit :: Item -> Int
 itemStackLimit (BlockItem _) = 64
 itemStackLimit (ToolItem {}) = 1
+itemStackLimit (FoodItem _)  = 64
+
+-- | Hunger points restored when eating a food item
+foodHungerRestore :: FoodType -> Int
+foodHungerRestore = \case
+  RawPorkchop    -> 3
+  CookedPorkchop -> 8
+  RawBeef        -> 3
+  Steak          -> 8
+  RawChicken     -> 2
+  CookedChicken  -> 6
+  Bread          -> 5
+  Apple          -> 4
+  RottenFlesh    -> 4
 
 -- | What items a block drops when broken. Returns (item, count).
 --   Some blocks require a minimum harvest level to drop anything.

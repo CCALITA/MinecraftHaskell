@@ -23,16 +23,17 @@ import Data.Maybe (listToMaybe)
 
 -- | Player state
 data Player = Player
-  { plPos       :: !(V3 Float)   -- feet position
-  , plVelocity  :: !(V3 Float)
-  , plYaw       :: !Float        -- degrees, 0 = +Z
-  , plPitch     :: !Float        -- degrees, clamped [-89, 89]
-  , plOnGround  :: !Bool
-  , plFlying    :: !Bool         -- creative-mode flying
-  , plSprinting :: !Bool
-  , plHealth    :: !Int          -- 0-20 (10 hearts)
-  , plHunger    :: !Int          -- 0-20 (10 drumsticks)
-  , plFallDist  :: !Float        -- accumulated fall distance
+  { plPos          :: !(V3 Float)   -- feet position
+  , plVelocity     :: !(V3 Float)
+  , plYaw          :: !Float        -- degrees, 0 = +Z
+  , plPitch        :: !Float        -- degrees, clamped [-89, 89]
+  , plOnGround     :: !Bool
+  , plFlying       :: !Bool         -- creative-mode flying
+  , plSprinting    :: !Bool
+  , plHealth       :: !Int          -- 0-20 (10 hearts)
+  , plHunger       :: !Int          -- 0-20 (10 drumsticks)
+  , plFallDist     :: !Float        -- accumulated fall distance
+  , plEatingTimer  :: !Float        -- 0.0 = not eating, counts down from 1.6
   } deriving stock (Show, Eq)
 
 -- | Max health (10 hearts = 20 half-hearts)
@@ -60,16 +61,17 @@ data PlayerInput = PlayerInput
 -- | Default player at spawn
 defaultPlayer :: V3 Float -> Player
 defaultPlayer spawnPos = Player
-  { plPos       = spawnPos
-  , plVelocity  = V3 0 0 0
-  , plYaw       = 0
-  , plPitch     = 0
-  , plOnGround  = False
-  , plFlying    = True  -- start in creative fly mode
-  , plSprinting = False
-  , plHealth    = maxHealth
-  , plHunger    = maxHunger
-  , plFallDist  = 0
+  { plPos          = spawnPos
+  , plVelocity     = V3 0 0 0
+  , plYaw          = 0
+  , plPitch        = 0
+  , plOnGround     = False
+  , plFlying       = True  -- start in creative fly mode
+  , plSprinting    = False
+  , plHealth       = maxHealth
+  , plHunger       = maxHunger
+  , plFallDist     = 0
+  , plEatingTimer  = 0.0
   }
 
 noInput :: PlayerInput

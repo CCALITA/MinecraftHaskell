@@ -27,6 +27,7 @@ main = hspec $ do
   itemSpec
   droppedItemSpec
   playerInputSpec
+  foodSpec
 
 -- =========================================================================
 -- Block
@@ -353,3 +354,42 @@ droppedItemSpec = describe "Game.DroppedItem" $ do
     spawnDrop di (BlockItem Dirt) 1 (V3 100 65 100)
     collected <- collectNearby di (V3 0 65 0) 5.0
     collected `shouldBe` []
+
+-- =========================================================================
+-- Food system
+-- =========================================================================
+foodSpec :: Spec
+foodSpec = describe "Game.Item food" $ do
+  it "FoodItem stacks to 64" $ do
+    itemStackLimit (FoodItem Apple) `shouldBe` 64
+    itemStackLimit (FoodItem Steak) `shouldBe` 64
+
+  it "foodHungerRestore returns correct values" $ do
+    foodHungerRestore CookedPorkchop `shouldBe` 8
+    foodHungerRestore RawBeef `shouldBe` 3
+    foodHungerRestore Steak `shouldBe` 8
+    foodHungerRestore CookedChicken `shouldBe` 6
+    foodHungerRestore Bread `shouldBe` 5
+    foodHungerRestore Apple `shouldBe` 4
+    foodHungerRestore RottenFlesh `shouldBe` 4
+    foodHungerRestore RawPorkchop `shouldBe` 3
+    foodHungerRestore RawChicken `shouldBe` 2
+
+  it "FoodItem is not a block item" $ do
+    isBlockItem (FoodItem Apple) `shouldBe` False
+    isBlockItem (FoodItem Steak) `shouldBe` False
+
+  it "FoodItem does not convert to block type" $ do
+    itemToBlock (FoodItem Apple) `shouldBe` Nothing
+    itemToBlock (FoodItem Bread) `shouldBe` Nothing
+
+  it "FoodItem can be added to inventory" $ do
+    let (inv, remaining) = addItem emptyInventory (FoodItem Apple) 10
+    remaining `shouldBe` 0
+    getSlot inv 0 `shouldBe` Just (ItemStack (FoodItem Apple) 10)
+
+  it "different FoodItems do not merge stacks" $ do
+    let (inv1, _) = addItem emptyInventory (FoodItem Apple) 5
+        (inv2, _) = addItem inv1 (FoodItem Steak) 3
+    getSlot inv2 0 `shouldBe` Just (ItemStack (FoodItem Apple) 5)
+    getSlot inv2 1 `shouldBe` Just (ItemStack (FoodItem Steak) 3)

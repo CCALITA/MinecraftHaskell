@@ -137,16 +137,17 @@ loadPlayer saveDir = do
       let sd = decode bytes :: SaveData
           (px, py, pz) = sdPlayerPos sd
           player = Player
-            { plPos       = V3 px py pz
-            , plVelocity  = V3 0 0 0
-            , plYaw       = sdPlayerYaw sd
-            , plPitch     = sdPlayerPitch sd
-            , plOnGround  = False
-            , plFlying    = sdPlayerFlying sd
-            , plSprinting = False
-            , plHealth    = 20
-            , plHunger    = 20
-            , plFallDist  = 0
+            { plPos          = V3 px py pz
+            , plVelocity     = V3 0 0 0
+            , plYaw          = sdPlayerYaw sd
+            , plPitch        = sdPlayerPitch sd
+            , plOnGround     = False
+            , plFlying       = sdPlayerFlying sd
+            , plSprinting    = False
+            , plHealth       = 20
+            , plHunger       = 20
+            , plFallDist     = 0
+            , plEatingTimer  = 0.0
             }
       pure (Just player)
 

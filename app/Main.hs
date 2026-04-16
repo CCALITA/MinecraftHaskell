@@ -215,6 +215,10 @@ main = do
                                                 , piMouseDY = piMouseDY inp + dy }
             writeIORef lastCursorRef (Just (xpos, ypos))
 
+    -- Helper: cancel eating (resets timer to 0)
+    let cancelEating = modifyIORef' playerRef (\p -> p { plEatingTimer = 0.0 })
+        selectSlot n = modifyIORef' inventoryRef (`selectHotbar` n) >> cancelEating
+
     -- Scroll wheel callback (cycle hotbar slots)
     GLFW.setScrollCallback (whWindow wh) $ Just $ \_win _dx dy -> do
       mode <- readIORef gameModeRef
@@ -225,11 +229,13 @@ main = do
               | dy > 0    = (cur - 1) `mod` hotbarSlots
               | dy < 0    = (cur + 1) `mod` hotbarSlots
               | otherwise = cur
+        when (newSlot /= cur) cancelEating
         modifyIORef' inventoryRef (`selectHotbar` newSlot)
 
     -- Mining state
     miningRef <- newIORef (Nothing :: Maybe (V3 Int, Float))
     lmbHeldRef <- newIORef False
+    rmbHeldRef <- newIORef False
 
     -- Mouse button callback
     GLFW.setMouseButtonCallback (whWindow wh) $ Just $ \_win button action _mods -> do
@@ -371,6 +377,11 @@ main = do
         Playing -> do
           when (button == GLFW.MouseButton'1) $
             writeIORef lmbHeldRef (action == GLFW.MouseButtonState'Pressed)
+          when (button == GLFW.MouseButton'2) $
+            writeIORef rmbHeldRef (action == GLFW.MouseButtonState'Pressed)
+          -- Cancel eating on RMB release
+          when (button == GLFW.MouseButton'2 && action == GLFW.MouseButtonState'Released)
+            cancelEating
           -- Melee attack: when LMB pressed and holding a sword, damage nearest entity
           when (button == GLFW.MouseButton'1 && action == GLFW.MouseButtonState'Pressed) $ do
             inv <- readIORef inventoryRef
@@ -400,6 +411,15 @@ main = do
               bt <- worldGetBlock world (V3 bx by bz)
               pure (World.Block.isSolid bt)
 
+        -- RMB: start eating if holding food and hungry
+        when (button == GLFW.MouseButton'2) $ do
+          inv <- readIORef inventoryRef
+          case selectedItem inv of
+            Just (ItemStack (FoodItem _) _)
+              | plHunger player < maxHunger -> do
+                  modifyIORef' playerRef (\p -> p { plEatingTimer = 1.6 })
+            _ -> pure ()
+
         mHit <- raycastBlock blockQueryCb eyePos dir maxReach
         case mHit of
           Nothing -> pure ()
@@ -418,10 +438,11 @@ main = do
                     GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
                     writeIORef lastCursorRef Nothing
                   else do
-                    -- Place block from hotbar
+                    -- Place block from hotbar (skip if eating food)
                     inv <- readIORef inventoryRef
                     case selectedItem inv of
                       Nothing -> pure ()
+                      Just (ItemStack (FoodItem _) _) -> pure ()  -- eating, don't place
                       Just (ItemStack item _) -> case itemToBlock item of
                         Nothing -> pure ()
                         Just bt -> do
@@ -457,15 +478,15 @@ main = do
               writeIORef gameModeRef InventoryOpen
               GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
               writeIORef lastCursorRef Nothing
-            GLFW.Key'1 -> modifyIORef' inventoryRef (`selectHotbar` 0)
-            GLFW.Key'2 -> modifyIORef' inventoryRef (`selectHotbar` 1)
-            GLFW.Key'3 -> modifyIORef' inventoryRef (`selectHotbar` 2)
-            GLFW.Key'4 -> modifyIORef' inventoryRef (`selectHotbar` 3)
-            GLFW.Key'5 -> modifyIORef' inventoryRef (`selectHotbar` 4)
-            GLFW.Key'6 -> modifyIORef' inventoryRef (`selectHotbar` 5)
-            GLFW.Key'7 -> modifyIORef' inventoryRef (`selectHotbar` 6)
-            GLFW.Key'8 -> modifyIORef' inventoryRef (`selectHotbar` 7)
-            GLFW.Key'9 -> modifyIORef' inventoryRef (`selectHotbar` 8)
+            GLFW.Key'1 -> selectSlot 0
+            GLFW.Key'2 -> selectSlot 1
+            GLFW.Key'3 -> selectSlot 2
+            GLFW.Key'4 -> selectSlot 3
+            GLFW.Key'5 -> selectSlot 4
+            GLFW.Key'6 -> selectSlot 5
+            GLFW.Key'7 -> selectSlot 6
+            GLFW.Key'8 -> selectSlot 7
+            GLFW.Key'9 -> selectSlot 8
             GLFW.Key'F5 -> do
               player <- readIORef playerRef
               sd <- readIORef saveDirRef
@@ -642,6 +663,31 @@ main = do
                           writeIORef miningRef Nothing
                         else writeIORef miningRef (Just (blockPos, newProgress))
 
+            -- Eating tick: advance eating timer while RMB held with food
+            when (gameMode == Playing) $ do
+              player' <- readIORef playerRef
+              let timer = plEatingTimer player'
+              when (timer > 0) $ do
+                rmbHeld <- readIORef rmbHeldRef
+                if not rmbHeld
+                  then cancelEating
+                  else do
+                    let newTimer = timer - dt
+                    if newTimer <= 0
+                      then do
+                        -- Eating complete: restore hunger, consume food item
+                        inv <- readIORef inventoryRef
+                        case selectedItem inv of
+                          Just (ItemStack (FoodItem ft) _) -> do
+                            let restore = foodHungerRestore ft
+                                newHunger = min maxHunger (plHunger player' + restore)
+                                (inv', _) = removeItem inv (FoodItem ft) 1
+                            writeIORef inventoryRef inv'
+                            modifyIORef' playerRef (\p -> p { plHunger = newHunger, plEatingTimer = 0.0 })
+                            putStrLn $ "Ate " ++ show ft ++ ", restored " ++ show restore ++ " hunger"
+                          _ -> cancelEating
+                      else modifyIORef' playerRef (\p -> p { plEatingTimer = newTimer })
+
             -- Update day/night cycle
             modifyIORef' dayNightRef (updateDayNight dt)
 
@@ -690,11 +736,11 @@ main = do
                   modifyIORef' aiStatesRef (HM.delete eid)
                   let dropPos = entPosition ent'
                       mobDrop = case readMobType (entTag ent) of
-                        Pig      -> Just (BlockItem OakPlanks, 1)
-                        Cow      -> Just (BlockItem OakPlanks, 1)
+                        Pig      -> Just (FoodItem RawPorkchop, 1)
+                        Cow      -> Just (FoodItem RawBeef, 1)
                         Sheep    -> Just (BlockItem OakPlanks, 1)
-                        Chicken  -> Just (BlockItem OakPlanks, 1)
-                        Zombie   -> Just (BlockItem IronOre, 1)
+                        Chicken  -> Just (FoodItem RawChicken, 1)
+                        Zombie   -> Just (FoodItem RottenFlesh, 1)
                         Skeleton -> Just (BlockItem CoalOre, 1)
                         Creeper  -> Just (BlockItem Cobblestone, 1)
                         Spider   -> Just (BlockItem Cobblestone, 1)
@@ -1373,6 +1419,16 @@ itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)
 itemColor (ToolItem Axe _ _)     = (0.6, 0.5, 0.3, 1.0)
 itemColor (ToolItem Shovel _ _)  = (0.5, 0.4, 0.25, 1.0)
 itemColor (ToolItem Hoe _ _)     = (0.5, 0.5, 0.3, 1.0)
+itemColor (FoodItem ft) = case ft of
+  RawPorkchop    -> (0.9, 0.6, 0.6, 1.0)
+  CookedPorkchop -> (0.7, 0.4, 0.2, 1.0)
+  RawBeef        -> (0.9, 0.6, 0.6, 1.0)
+  Steak          -> (0.7, 0.4, 0.2, 1.0)
+  RawChicken     -> (0.9, 0.6, 0.6, 1.0)
+  CookedChicken  -> (0.7, 0.4, 0.2, 1.0)
+  Bread          -> (0.8, 0.7, 0.4, 1.0)
+  Apple          -> (0.9, 0.2, 0.2, 1.0)
+  RottenFlesh    -> (0.5, 0.6, 0.3, 1.0)
 
 -- | 3x3 mini-icon for item (row, col, color) — used in hotbar slot rendering
 itemMiniIcon :: Item -> [(Int, Int, (Float, Float, Float, Float))]
@@ -1391,6 +1447,17 @@ itemMiniIcon (ToolItem Shovel _ _) =
 itemMiniIcon (ToolItem Hoe _ _) =
   [(0,1,m),(0,2,m), (1,1,s), (2,1,s)]
   where m = (0.5,0.5,0.3,1); s = (0.5,0.35,0.15,1)
+itemMiniIcon (FoodItem ft) = foodMiniIcon ft
+  where
+    foodMiniIcon RawPorkchop    = [(0,1,c),(1,0,c),(1,1,c),(1,2,c),(2,1,c)] where c = (0.9,0.6,0.6,1)
+    foodMiniIcon CookedPorkchop = [(0,1,c),(1,0,c),(1,1,c),(1,2,c),(2,1,c)] where c = (0.7,0.4,0.2,1)
+    foodMiniIcon RawBeef        = [(0,0,c),(0,1,c),(1,0,c),(1,1,c),(1,2,c),(2,1,c),(2,2,c)] where c = (0.9,0.6,0.6,1)
+    foodMiniIcon Steak          = [(0,0,c),(0,1,c),(1,0,c),(1,1,c),(1,2,c),(2,1,c),(2,2,c)] where c = (0.7,0.4,0.2,1)
+    foodMiniIcon RawChicken     = [(0,1,c),(1,1,c),(1,2,c),(2,0,c),(2,1,c)] where c = (0.9,0.6,0.6,1)
+    foodMiniIcon CookedChicken  = [(0,1,c),(1,1,c),(1,2,c),(2,0,c),(2,1,c)] where c = (0.7,0.4,0.2,1)
+    foodMiniIcon Bread          = [(1,0,c),(1,1,c),(1,2,c),(2,0,c),(2,1,c),(2,2,c)] where c = (0.8,0.7,0.4,1)
+    foodMiniIcon Apple          = [(0,1,s),(1,0,c),(1,1,c),(1,2,c),(2,1,c)] where c = (0.9,0.2,0.2,1); s = (0.3,0.5,0.1,1)
+    foodMiniIcon RottenFlesh    = [(0,0,c),(0,2,c),(1,0,c),(1,1,c),(1,2,c),(2,1,c)] where c = (0.5,0.6,0.3,1)
 itemMiniIcon (BlockItem bt) = blockMiniIcon bt
   where
     fill c = [(r,col,c) | r <- [0..2], col <- [0..2]]
