@@ -90,6 +90,7 @@ tileFull tileIdx lx ly = case tileIdx of
   21 -> logTop lx ly           -- oak log cross-section (V2 5 1)
   22 -> leavesPattern lx ly    -- oak leaves (V2 6 1)
   25 -> chestPattern lx ly     -- chest (V2 9 1)
+  30 -> ladderPattern lx ly    -- ladder (V2 14 1)
   -- Row 2: tileIdx 32-47
   32 -> orePattern lx ly (255, 215, 0)    -- gold ore (V2 0 2)
   33 -> orePattern lx ly (200, 170, 130)  -- iron ore (V2 1 2)

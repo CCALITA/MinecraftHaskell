@@ -95,8 +95,8 @@ mouseSensitivity :: Float
 mouseSensitivity = 0.15
 
 -- | Update player for one physics tick
-updatePlayer :: Float -> PlayerInput -> BlockQuery -> BlockQuery -> Player -> IO Player
-updatePlayer dt input isSolidBlock isWaterBlock player = do
+updatePlayer :: Float -> PlayerInput -> BlockQuery -> BlockQuery -> BlockQuery -> Player -> IO Player
+updatePlayer dt input isSolidBlock isWaterBlock isLadderBlock player = do
   -- 1. Mouse look
   let yaw'   = plYaw player - piMouseDX input * mouseSensitivity
       pitch' = max (-89) . min 89 $ plPitch player + piMouseDY input * mouseSensitivity
@@ -150,14 +150,22 @@ updatePlayer dt input isSolidBlock isWaterBlock player = do
       let V3 px py pz = plPos player
       inWater <- isWaterBlock (floor px) (floor py) (floor pz)
 
-      -- Horizontal velocity (slower in water)
-      let waterMul = if inWater then 0.4 else 1.0
-          hVel = normalizedDir ^* (speed * waterMul)
+      -- Check if player overlaps a ladder block (feet or torso)
+      onLadderFeet  <- isLadderBlock (floor px) (floor py) (floor pz)
+      onLadderTorso <- isLadderBlock (floor px) (floor (py + 1.0)) (floor pz)
+      let onLadder = onLadderFeet || onLadderTorso
+
+      -- Horizontal velocity (slower in water or on ladder)
+      let moveMul = if inWater then 0.4 else if onLadder then 0.7 else 1.0
+          hVel = normalizedDir ^* (speed * moveMul)
           V3 hvx _ hvz = hVel
 
-      -- Vertical: gravity + jump (buoyancy in water)
+      -- Vertical: gravity + jump (buoyancy in water, climbing on ladder)
       onGround <- isOnGround isSolidBlock (plPos player)
       let vy'
+            | onLadder && piJump input  = 2.35   -- climb up
+            | onLadder && piSneak input = 0.0    -- hold position
+            | onLadder                  = -0.5   -- slow descent
             | inWater && piJump input = 4.0   -- swim upward
             | inWater                 = max (-2.0) (vy - 5.0 * dt)  -- slow sinking
             | onGround && piJump input = jumpVelocity
@@ -189,9 +197,11 @@ updatePlayer dt input isSolidBlock isWaterBlock player = do
                     else vy'
           finalVx = if v3x resolvedVel == 0 then 0 else hvx
           finalVz = if v3z resolvedVel == 0 then 0 else hvz
-          -- Track fall distance
+          -- Track fall distance (reset on ladder — no fall damage)
           dy = v3y (plPos player) - v3y newPos  -- positive when falling down
-          newFallDist = if dy > 0 then plFallDist player + dy else plFallDist player
+          newFallDist = if onLadder then 0
+                        else if dy > 0 then plFallDist player + dy
+                        else plFallDist player
           -- Apply fall damage on landing
           landed = onGround' && not (plOnGround player)
           baseDmg = if landed && newFallDist > 3.0 then floor newFallDist - 3 else 0
