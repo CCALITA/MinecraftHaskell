@@ -12,7 +12,9 @@ import Game.Item
 import Game.Crafting
 import Game.Player
 import Game.DroppedItem
+import Game.Save (SaveData(..), inventoryToSlotList, slotListToInventory)
 
+import Data.Binary (encode, decode)
 import Linear (V2(..), V3(..))
 import qualified Data.Vector as V
 
@@ -27,6 +29,7 @@ main = hspec $ do
   itemSpec
   droppedItemSpec
   playerInputSpec
+  saveSpec
 
 -- =========================================================================
 -- Block
@@ -353,3 +356,81 @@ droppedItemSpec = describe "Game.DroppedItem" $ do
     spawnDrop di (BlockItem Dirt) 1 (V3 100 65 100)
     collected <- collectNearby di (V3 0 65 0) 5.0
     collected `shouldBe` []
+
+-- =========================================================================
+-- Save/Load Binary roundtrip
+-- =========================================================================
+saveSpec :: Spec
+saveSpec = describe "Game.Save Binary roundtrip" $ do
+  it "BlockItem roundtrips through Binary" $ do
+    let item = BlockItem Stone
+    decode (encode item) `shouldBe` item
+
+  it "BlockItem Dirt roundtrips through Binary" $ do
+    let item = BlockItem Dirt
+    decode (encode item) `shouldBe` item
+
+  it "ToolItem roundtrips through Binary" $ do
+    let item = ToolItem Pickaxe Diamond 1561
+    decode (encode item) `shouldBe` item
+
+  it "ToolItem Sword roundtrips through Binary" $ do
+    let item = ToolItem Sword Wood 59
+    decode (encode item) `shouldBe` item
+
+  it "all BlockTypes roundtrip through Binary" $ do
+    let allBlocks = [minBound .. maxBound] :: [BlockType]
+    mapM_ (\bt -> decode (encode bt) `shouldBe` bt) allBlocks
+
+  it "all ToolTypes roundtrip through Binary" $ do
+    let allTools = [minBound .. maxBound] :: [ToolType]
+    mapM_ (\tt -> decode (encode tt) `shouldBe` tt) allTools
+
+  it "all ToolMaterials roundtrip through Binary" $ do
+    let allMats = [minBound .. maxBound] :: [ToolMaterial]
+    mapM_ (\tm -> decode (encode tm) `shouldBe` tm) allMats
+
+  it "SaveData roundtrips through Binary" $ do
+    let sd = SaveData
+          { sdPlayerPos    = (1.5, 65.0, -3.2)
+          , sdPlayerYaw    = 45.0
+          , sdPlayerPitch  = -10.0
+          , sdPlayerFlying = True
+          , sdWorldSeed    = 12345
+          , sdDayTime      = 0.75
+          , sdDayCount     = 3
+          , sdHealth       = 15
+          , sdHunger       = 12
+          , sdFallDist     = 2.3
+          , sdInventory    = [(0, BlockItem Stone, 64), (1, ToolItem Pickaxe Diamond 1500, 1)]
+          , sdSelectedSlot = 1
+          }
+    decode (encode sd) `shouldBe` sd
+
+  it "SaveData with empty inventory roundtrips" $ do
+    let sd = SaveData
+          { sdPlayerPos    = (0, 80, 0)
+          , sdPlayerYaw    = 0
+          , sdPlayerPitch  = 0
+          , sdPlayerFlying = False
+          , sdWorldSeed    = 42
+          , sdDayTime      = 0.25
+          , sdDayCount     = 0
+          , sdHealth       = 20
+          , sdHunger       = 20
+          , sdFallDist     = 0
+          , sdInventory    = []
+          , sdSelectedSlot = 0
+          }
+    decode (encode sd) `shouldBe` sd
+
+  it "inventoryToSlotList and slotListToInventory roundtrip" $ do
+    let inv0 = emptyInventory
+        (inv1, _) = addItem inv0 (BlockItem Stone) 32
+        (inv2, _) = addItem inv1 (ToolItem Pickaxe Wood 59) 1
+        inv3 = selectHotbar inv2 1
+        slots = inventoryToSlotList inv3
+        restored = slotListToInventory slots (invSelected inv3)
+    invSelected restored `shouldBe` invSelected inv3
+    -- Check each slot matches
+    mapM_ (\i -> getSlot restored i `shouldBe` getSlot inv3 i) [0 .. inventorySlots - 1]

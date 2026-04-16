@@ -139,17 +139,21 @@ main = do
     -- World save management: use world1 as default, create saveDirRef for dynamic switching
     saveDirRef <- newIORef (savesRoot </> "world1")
     let defaultSaveDir = savesRoot </> "world1"
-    mSavedPlayer <- loadPlayer defaultSaveDir
-    playerRef <- newIORef (case mSavedPlayer of
-      Just p  -> p
+    mSavedData <- loadPlayer defaultSaveDir
+    playerRef <- newIORef (case mSavedData of
+      Just sd -> playerFromSaveData sd
       Nothing -> defaultPlayer spawnPos)
-    inventoryRef <- newIORef emptyInventory
+    inventoryRef <- newIORef (case mSavedData of
+      Just sd -> slotListToInventory (sdInventory sd) (sdSelectedSlot sd)
+      Nothing -> emptyInventory)
     gameModeRef <- newIORef MainMenu
     cursorItemRef <- newIORef (Nothing :: Maybe ItemStack)  -- item held by mouse cursor
     craftingGridRef <- newIORef (emptyCraftingGrid 3)
     debugOverlayRef <- newIORef False
     targetBlockRef <- newIORef (Nothing :: Maybe (V3 Int))
-    dayNightRef <- newIORef newDayNightCycle
+    dayNightRef <- newIORef (case mSavedData of
+      Just sd -> newDayNightCycle { dncTime = sdDayTime sd, dncDayCount = sdDayCount sd }
+      Nothing -> newDayNightCycle)
     fluidState <- newFluidState
     droppedItems <- newDroppedItems
 
@@ -159,16 +163,19 @@ main = do
     spawnCooldownRef <- newIORef (0.0 :: Float)
     aiStatesRef <- newIORef (HM.empty :: HM.HashMap Int AIState)
 
-    -- Give player some starting blocks
-    let startInv = selectHotbar (foldl (\i (item, cnt) -> fst $ addItem i item cnt) emptyInventory
-          [ (ToolItem Pickaxe Wood 59, 1)
-          , (ToolItem Sword Wood 59, 1)
-          , (BlockItem Stone, 64)
-          , (BlockItem Dirt, 64)
-          , (BlockItem OakPlanks, 64)
-          , (BlockItem Torch, 16)
-          ]) 2  -- select first block slot
-    writeIORef inventoryRef startInv
+    -- Give player some starting blocks (only when no saved inventory)
+    case mSavedData of
+      Just _  -> pure ()  -- inventory already restored from save
+      Nothing -> do
+        let startInv = selectHotbar (foldl (\i (item, cnt) -> fst $ addItem i item cnt) emptyInventory
+              [ (ToolItem Pickaxe Wood 59, 1)
+              , (ToolItem Sword Wood 59, 1)
+              , (BlockItem Stone, 64)
+              , (BlockItem Dirt, 64)
+              , (BlockItem OakPlanks, 64)
+              , (BlockItem Torch, 16)
+              ]) 2  -- select first block slot
+        writeIORef inventoryRef startInv
 
     -- Try to load saved world, otherwise generate fresh
     loaded <- loadWorld defaultSaveDir world
@@ -272,9 +279,10 @@ main = do
                 atomically $ writeTVar (worldChunks world) HM.empty
                 loaded <- loadWorld sd world
                 when loaded $ do
-                  mPlayer <- loadPlayer sd
-                  case mPlayer of
-                    Just p -> writeIORef playerRef p
+                  mData <- loadPlayer sd
+                  case mData of
+                    Just savedData ->
+                      restoreFromSave playerRef inventoryRef dayNightRef savedData
                     Nothing -> pure ()
                   rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
                   putStrLn $ "Loaded world: " ++ saveName
@@ -298,8 +306,10 @@ main = do
           -- Save & Quit to Menu button
           when (ndcX >= -0.3 && ndcX <= 0.3 && ndcY >= 0.05 && ndcY <= 0.25) $ do
             player <- readIORef playerRef
+            inv <- readIORef inventoryRef
+            dayNight <- readIORef dayNightRef
             sd <- readIORef saveDirRef
-            savePlayer sd player
+            savePlayer sd (buildSaveData player inv dayNight)
             saveWorld sd world
             putStrLn "World saved."
             writeIORef gameModeRef MainMenu
@@ -468,16 +478,18 @@ main = do
             GLFW.Key'9 -> modifyIORef' inventoryRef (`selectHotbar` 8)
             GLFW.Key'F5 -> do
               player <- readIORef playerRef
+              inv <- readIORef inventoryRef
+              dayNight <- readIORef dayNightRef
               sd <- readIORef saveDirRef
-              savePlayer sd player
+              savePlayer sd (buildSaveData player inv dayNight)
               saveWorld sd world
               putStrLn "Quick-saved!"
             GLFW.Key'F9 -> do
               sd <- readIORef saveDirRef
-              mPlayer <- loadPlayer sd
-              case mPlayer of
-                Just p -> do
-                  writeIORef playerRef p
+              mData <- loadPlayer sd
+              case mData of
+                Just savedData -> do
+                  restoreFromSave playerRef inventoryRef dayNightRef savedData
                   putStrLn "Quick-loaded!"
                 Nothing -> putStrLn "No save found."
             _ -> pure ()
@@ -707,8 +719,10 @@ main = do
             -- Auto-save every ~5 minutes (18000 frames at 60fps)
             when (frameIdx > 0 && frameIdx `mod` 18000 == 0) $ do
               player <- readIORef playerRef
+              inv <- readIORef inventoryRef
+              dayNight <- readIORef dayNightRef
               sd <- readIORef saveDirRef
-              savePlayer sd player
+              savePlayer sd (buildSaveData player inv dayNight)
               saveWorld sd world
 
             -- Update chunks periodically
@@ -1428,3 +1442,46 @@ itemMiniIcon (BlockItem bt) = blockMiniIcon bt
       where st = (0.5,0.5,0.5,1); ore = (0.3,0.8,0.95,1)
     blockMiniIcon Snow = fill (0.95,0.95,0.95,1)
     blockMiniIcon _ = fill (itemColor (BlockItem bt))
+
+-- | Build a SaveData record from current game state
+buildSaveData :: Player -> Inventory -> DayNightCycle -> SaveData
+buildSaveData player inv dayNight =
+  let V3 px py pz = plPos player
+  in SaveData
+    { sdPlayerPos    = (px, py, pz)
+    , sdPlayerYaw    = plYaw player
+    , sdPlayerPitch  = plPitch player
+    , sdPlayerFlying = plFlying player
+    , sdWorldSeed    = 12345
+    , sdDayTime      = dncTime dayNight
+    , sdDayCount     = dncDayCount dayNight
+    , sdHealth       = plHealth player
+    , sdHunger       = plHunger player
+    , sdFallDist     = plFallDist player
+    , sdInventory    = inventoryToSlotList inv
+    , sdSelectedSlot = invSelected inv
+    }
+
+-- | Reconstruct a Player from SaveData
+playerFromSaveData :: SaveData -> Player
+playerFromSaveData sd =
+  let (px, py, pz) = sdPlayerPos sd
+  in Player
+    { plPos       = V3 px py pz
+    , plVelocity  = V3 0 0 0
+    , plYaw       = sdPlayerYaw sd
+    , plPitch     = sdPlayerPitch sd
+    , plOnGround  = False
+    , plFlying    = sdPlayerFlying sd
+    , plSprinting = False
+    , plHealth    = sdHealth sd
+    , plHunger    = sdHunger sd
+    , plFallDist  = sdFallDist sd
+    }
+
+-- | Restore player, inventory, and day/night state from SaveData into IORefs
+restoreFromSave :: IORef Player -> IORef Inventory -> IORef DayNightCycle -> SaveData -> IO ()
+restoreFromSave playerRef inventoryRef dayNightRef sd = do
+  writeIORef playerRef (playerFromSaveData sd)
+  writeIORef inventoryRef (slotListToInventory (sdInventory sd) (sdSelectedSlot sd))
+  writeIORef dayNightRef (newDayNightCycle { dncTime = sdDayTime sd, dncDayCount = sdDayCount sd })

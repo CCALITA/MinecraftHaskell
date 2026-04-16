@@ -8,14 +8,16 @@ module Game.Save
   , playerSavePath
   , listSaves
   , nextSaveName
+  , inventoryToSlotList
+  , slotListToInventory
   ) where
 
-import World.Block (BlockType(..))
-import World.Chunk (Chunk(..), ChunkPos, chunkWidth, chunkDepth, chunkHeight, newChunk, blockIndex, freezeBlocks)
+import World.Chunk (Chunk(..), ChunkPos, newChunk, freezeBlocks)
 import World.World (World(..))
-import Game.Player (Player(..))
+import Game.Item (Item(..))
+import Game.Inventory (Inventory(..), ItemStack(..), emptyInventory, inventorySlots, setSlot, getSlot)
 
-import Control.Monad (unless, mapM_, filterM)
+import Control.Monad (unless, filterM)
 
 import Control.Concurrent.STM (readTVarIO, atomically, writeTVar)
 import qualified Data.HashMap.Strict as HM
@@ -23,15 +25,20 @@ import qualified Data.Vector.Unboxed as UV
 import qualified Data.Vector.Unboxed.Mutable as MV
 import Data.IORef
 import Data.Word (Word8)
-import Data.Binary (Binary(..), encode, decode)
+import Data.Binary (Binary(..), encode, decodeOrFail)
 import qualified Data.ByteString.Lazy as BL
 import System.Directory (createDirectoryIfMissing, doesFileExist, listDirectory, doesDirectoryExist)
 import System.FilePath ((</>), takeExtension)
 import Data.List (sort, stripPrefix)
-import Linear (V2(..), V3(..))
+import Linear (V2(..))
 import GHC.Generics (Generic)
 
--- | Top-level save data
+-- | Current save format version
+currentSaveVersion :: Word8
+currentSaveVersion = 2
+
+-- | Top-level save data (version 2: includes health, hunger, fall distance,
+-- day/night cycle, and inventory)
 data SaveData = SaveData
   { sdPlayerPos    :: !(Float, Float, Float)
   , sdPlayerYaw    :: !Float
@@ -39,6 +46,12 @@ data SaveData = SaveData
   , sdPlayerFlying :: !Bool
   , sdWorldSeed    :: !Int
   , sdDayTime      :: !Float
+  , sdDayCount     :: !Int
+  , sdHealth       :: !Int
+  , sdHunger       :: !Int
+  , sdFallDist     :: !Float
+  , sdInventory    :: ![(Int, Item, Int)]  -- (slot index, item, count)
+  , sdSelectedSlot :: !Int
   } deriving stock (Show, Eq, Generic)
 
 instance Binary SaveData
@@ -100,33 +113,27 @@ loadChunkFile :: FilePath -> FilePath -> IO (Maybe Chunk)
 loadChunkFile chunkDir filename = do
   let path = chunkDir </> filename
   bytes <- BL.readFile path
-  let cs = decode bytes :: ChunkSave
-      (cx, cz) = csPos cs
-      pos = V2 cx cz
-  chunk <- newChunk pos
-  -- Write blocks into the mutable vector
-  let blocks = csBlocks cs
-  mapM_ (\(i, b) -> MV.write (chunkBlocks chunk) i b) (zip [0..] blocks)
-  writeIORef (chunkDirty chunk) True
-  pure (Just chunk)
+  case decodeOrFail bytes of
+    Left _ -> pure Nothing
+    Right (_, _, cs) -> do
+      let (cx, cz) = csPos cs
+          pos = V2 cx cz
+      chunk <- newChunk pos
+      -- Write blocks into the mutable vector
+      let blocks = csBlocks cs
+      mapM_ (\(i, b) -> MV.write (chunkBlocks chunk) i b) (zip [0..] blocks)
+      writeIORef (chunkDirty chunk) True
+      pure (Just chunk)
 
--- | Save player state
-savePlayer :: FilePath -> Player -> IO ()
-savePlayer saveDir player = do
+-- | Save player state with version tag
+savePlayer :: FilePath -> SaveData -> IO ()
+savePlayer saveDir sd = do
   createDirectoryIfMissing True saveDir
-  let V3 px py pz = plPos player
-      sd = SaveData
-        { sdPlayerPos    = (px, py, pz)
-        , sdPlayerYaw    = plYaw player
-        , sdPlayerPitch  = plPitch player
-        , sdPlayerFlying = plFlying player
-        , sdWorldSeed    = 12345
-        , sdDayTime      = 0.25
-        }
-  BL.writeFile (playerSavePath saveDir) (encode sd)
+  BL.writeFile (playerSavePath saveDir) $
+    encode currentSaveVersion <> encode sd
 
--- | Load player state
-loadPlayer :: FilePath -> IO (Maybe Player)
+-- | Load player state, handling version migration
+loadPlayer :: FilePath -> IO (Maybe SaveData)
 loadPlayer saveDir = do
   let path = playerSavePath saveDir
   exists <- doesFileExist path
@@ -134,21 +141,68 @@ loadPlayer saveDir = do
     then pure Nothing
     else do
       bytes <- BL.readFile path
-      let sd = decode bytes :: SaveData
-          (px, py, pz) = sdPlayerPos sd
-          player = Player
-            { plPos       = V3 px py pz
-            , plVelocity  = V3 0 0 0
-            , plYaw       = sdPlayerYaw sd
-            , plPitch     = sdPlayerPitch sd
-            , plOnGround  = False
-            , plFlying    = sdPlayerFlying sd
-            , plSprinting = False
-            , plHealth    = 20
-            , plHunger    = 20
-            , plFallDist  = 0
-            }
-      pure (Just player)
+      case decodeOrFail bytes of
+        Left _ -> pure Nothing
+        Right (rest, _, version) -> case (version :: Word8) of
+          2 -> case decodeOrFail rest of
+            Right (_, _, sd) -> pure (Just sd)
+            Left _ -> pure Nothing
+          _ ->
+            -- Version 1 (old format): try to parse the original SaveData fields
+            pure (migrateV1 bytes)
+
+-- | Attempt to migrate a version-1 save (no version tag) to version 2.
+-- The old format encoded SaveData directly without a version prefix.
+-- We try to decode the old 6-field SaveData from the raw bytes.
+migrateV1 :: BL.ByteString -> Maybe SaveData
+migrateV1 bytes =
+  case decodeOrFail bytes of
+    Right (_, _, old) -> Just (upgradeV1 old)
+    Left _ -> Nothing
+
+-- | Version 1 SaveData (old format without version tag)
+data SaveDataV1 = SaveDataV1
+  { v1PlayerPos    :: !(Float, Float, Float)
+  , v1PlayerYaw    :: !Float
+  , v1PlayerPitch  :: !Float
+  , v1PlayerFlying :: !Bool
+  , v1WorldSeed    :: !Int
+  , v1DayTime      :: !Float
+  } deriving stock (Show, Eq, Generic)
+
+instance Binary SaveDataV1
+
+-- | Upgrade a V1 save to the current format with sensible defaults
+upgradeV1 :: SaveDataV1 -> SaveData
+upgradeV1 v1 = SaveData
+  { sdPlayerPos    = v1PlayerPos v1
+  , sdPlayerYaw    = v1PlayerYaw v1
+  , sdPlayerPitch  = v1PlayerPitch v1
+  , sdPlayerFlying = v1PlayerFlying v1
+  , sdWorldSeed    = v1WorldSeed v1
+  , sdDayTime      = v1DayTime v1
+  , sdDayCount     = 0
+  , sdHealth       = 20
+  , sdHunger       = 20
+  , sdFallDist     = 0
+  , sdInventory    = []
+  , sdSelectedSlot = 0
+  }
+
+-- | Convert an Inventory to a serializable slot list.
+-- Only non-empty slots are included.
+inventoryToSlotList :: Inventory -> [(Int, Item, Int)]
+inventoryToSlotList inv =
+  [ (i, isItem stack, isCount stack)
+  | i <- [0 .. inventorySlots - 1]
+  , Just stack <- [getSlot inv i]
+  ]
+
+-- | Restore an Inventory from a serialized slot list.
+slotListToInventory :: [(Int, Item, Int)] -> Int -> Inventory
+slotListToInventory slots selected =
+  let base = emptyInventory { invSelected = selected }
+  in foldl (\inv (idx, item, cnt) -> setSlot inv idx (Just (ItemStack item cnt))) base slots
 
 -- | List available save directories under "saves/"
 listSaves :: IO [String]

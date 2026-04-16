@@ -16,6 +16,8 @@ module Game.Item
   ) where
 
 import World.Block (BlockType(..))
+import Data.Binary (Binary(..), Get)
+import Data.Word (Word8)
 
 -- | Tool types
 data ToolType
@@ -152,3 +154,29 @@ blockPreferredTool = \case
   CraftingTable -> Just Axe
   Chest       -> Just Axe
   _           -> Nothing
+
+-- ---------------------------------------------------------------------------
+-- Binary instances
+-- ---------------------------------------------------------------------------
+
+instance Binary BlockType where
+  put = put . fromEnum
+  get = toEnum <$> get
+
+instance Binary ToolType where
+  put = put . fromEnum
+  get = toEnum <$> get
+
+instance Binary ToolMaterial where
+  put = put . fromEnum
+  get = toEnum <$> get
+
+instance Binary Item where
+  put (BlockItem bt) = put (0 :: Word8) >> put bt
+  put (ToolItem tt tm dur) = put (1 :: Word8) >> put tt >> put tm >> put dur
+  get = do
+    tag <- get :: Get Word8
+    case tag of
+      0 -> BlockItem <$> get
+      1 -> ToolItem <$> get <*> get <*> get
+      _ -> fail "Unknown Item tag"
