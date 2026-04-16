@@ -90,6 +90,7 @@ tileFull tileIdx lx ly = case tileIdx of
   21 -> logTop lx ly           -- oak log cross-section (V2 5 1)
   22 -> leavesPattern lx ly    -- oak leaves (V2 6 1)
   25 -> chestPattern lx ly     -- chest (V2 9 1)
+  30 -> ladderPattern lx ly    -- ladder (V2 14 1)
   -- Row 2: tileIdx 32-47
   32 -> orePattern lx ly (255, 215, 0)    -- gold ore (V2 0 2)
   33 -> orePattern lx ly (200, 170, 130)  -- iron ore (V2 1 2)
@@ -275,6 +276,15 @@ tileFull tileIdx lx ly = case tileIdx of
       in if isFlame then (255, 200, 50, 255)
          else if isStick then (120, 90, 40, 255)
          else (0, 0, 0, 0)  -- transparent
+
+    -- Ladder: brown rails on left/right edges with horizontal rungs
+    ladderPattern x y =
+      let isRail = x <= 1 || x >= 14          -- vertical rails on left/right
+          isRung = y `mod` 4 == 0 && x >= 2 && x <= 13  -- horizontal rungs every 4 pixels
+          n = pixHash x y 1800 `mod` 20
+      in if isRail then (90 + fromIntegral n, 60 + fromIntegral (n `div` 2), 30, 255)
+         else if isRung then (110 + fromIntegral n, 75 + fromIntegral (n `div` 2), 35, 255)
+         else (0, 0, 0, 0)  -- transparent between rungs
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels

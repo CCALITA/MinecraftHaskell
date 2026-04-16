@@ -64,6 +64,13 @@ blockSpec = describe "World.Block" $ do
   it "Grass has different top/side textures" $ do
     blockFaceTexCoords Grass FaceTop `shouldNotBe` blockFaceTexCoords Grass FaceEast
 
+  it "Ladder is not solid and is transparent" $ do
+    isSolid Ladder `shouldBe` False
+    isTransparent Ladder `shouldBe` True
+
+  it "Ladder has hardness 0.4" $ do
+    bpHardness (blockProperties Ladder) `shouldBe` 0.4
+
 -- =========================================================================
 -- Chunk
 -- =========================================================================
@@ -291,8 +298,8 @@ playerInputSpec = describe "Game.Player input queue" $ do
   it "applies a queued fly toggle exactly once" $ do
     let player0 = (defaultPlayer (V3 0 80 0)) { plFlying = True }
 
-    player1 <- updatePlayer 0 queuedToggle airQuery airQuery player0
-    player2 <- updatePlayer 0 (endFrameInput True queuedToggle) airQuery airQuery player1
+    player1 <- updatePlayer 0 queuedToggle airQuery airQuery airQuery player0
+    player2 <- updatePlayer 0 (endFrameInput True queuedToggle) airQuery airQuery airQuery player1
 
     plFlying player1 `shouldBe` False
     plFlying player2 `shouldBe` False

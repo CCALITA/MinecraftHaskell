@@ -41,6 +41,7 @@ data BlockType
   | StoneBrick
   | Brick
   | TNT
+  | Ladder
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -101,6 +102,7 @@ blockProperties = \case
   StoneBrick   -> BlockProperties True  False 0  1.5
   Brick        -> BlockProperties True  False 0  2.0
   TNT          -> BlockProperties True  False 0  0
+  Ladder       -> BlockProperties False True  0  0.4
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -156,3 +158,4 @@ blockFaceTexCoords blockType face = case blockType of
     FaceTop    -> V2 9 0
     FaceBottom -> V2 10 0
     _          -> V2 8 0
+  Ladder      -> V2 14 1

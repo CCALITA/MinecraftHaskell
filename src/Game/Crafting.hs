@@ -184,6 +184,14 @@ allRecipes =
       , rcResult  = BlockItem TNT
       , rcCount   = 1
       }
+  -- Ladder from logs (H-pattern with rungs)
+  , Recipe
+      { rcPattern = [[bi OakLog, Nothing,  bi OakLog]
+                    ,[bi OakLog, bi OakLog, bi OakLog]
+                    ,[bi OakLog, Nothing,  bi OakLog]]
+      , rcResult  = BlockItem Ladder
+      , rcCount   = 3
+      }
   ] ++ toolRecipes
 
 -- | Helper to create a tool item with full durability

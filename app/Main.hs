@@ -521,15 +521,19 @@ main = do
     fpsDisplayRef <- newIORef (0 :: Int)       -- displayed FPS value
 
     -- Block queries for physics
-    let blockQuery :: BlockQuery
-        blockQuery bx by bz = do
+    let mkBlockQuery :: (BlockType -> Bool) -> BlockQuery
+        mkBlockQuery predicate bx by bz = do
           bt <- worldGetBlock world (V3 bx by bz)
-          pure (World.Block.isSolid bt)
+          pure (predicate bt)
+
+    let blockQuery :: BlockQuery
+        blockQuery = mkBlockQuery World.Block.isSolid
 
     let waterQuery :: BlockQuery
-        waterQuery bx by bz = do
-          bt <- worldGetBlock world (V3 bx by bz)
-          pure (bt == Water)
+        waterQuery = mkBlockQuery (== Water)
+
+    let ladderQuery :: BlockQuery
+        ladderQuery = mkBlockQuery (== Ladder)
 
     -- Main loop (wrapped in finally for exception-safe cleanup)
     putStrLn "Controls: WASD=move, Mouse=look, Space=jump, F=fly, 1-9=hotbar, LMB=break, RMB=place, ESC=quit"
@@ -584,7 +588,7 @@ main = do
             accum <- readIORef accumRef
             let accum' = accum + dt
             when (gameMode == Playing) $
-              playerLoop input blockQuery waterQuery accumRef accum' playerRef
+              playerLoop input blockQuery waterQuery ladderQuery accumRef accum' playerRef
 
             -- Check for player death → respawn
             do p <- readIORef playerRef
@@ -845,14 +849,14 @@ main = do
       putStrLn "Goodbye!"
 
 -- | Run physics ticks consuming accumulated time
-playerLoop :: PlayerInput -> BlockQuery -> BlockQuery -> IORef Float -> Float -> IORef Player -> IO ()
-playerLoop input blockQuery waterQuery accumRef accum playerRef
+playerLoop :: PlayerInput -> BlockQuery -> BlockQuery -> BlockQuery -> IORef Float -> Float -> IORef Player -> IO ()
+playerLoop input blockQuery waterQuery ladderQuery accumRef accum playerRef
   | accum < tickRate = writeIORef accumRef accum
   | otherwise = do
       player <- readIORef playerRef
-      player' <- updatePlayer tickRate input blockQuery waterQuery player
+      player' <- updatePlayer tickRate input blockQuery waterQuery ladderQuery player
       writeIORef playerRef player'
-      playerLoop (input { piToggleFly = False }) blockQuery waterQuery accumRef (accum - tickRate) playerRef
+      playerLoop (input { piToggleFly = False }) blockQuery waterQuery ladderQuery accumRef (accum - tickRate) playerRef
 
 -- | Convert player state to Camera
 cameraFromPlayer :: Player -> Camera
