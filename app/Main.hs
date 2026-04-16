@@ -409,31 +409,38 @@ main = do
               GLFW.MouseButton'1 -> do  -- Left click: start mining
                 writeIORef miningRef (Just (V3 bx by bz, 0.0))
               GLFW.MouseButton'2 -> do  -- Right click: interact or place
-                -- Check if clicking on a crafting table
                 hitBlock <- worldGetBlock world (V3 bx by bz)
-                if hitBlock == CraftingTable
-                  then do
-                    writeIORef gameModeRef CraftingOpen
-                    writeIORef craftingGridRef (emptyCraftingGrid 3)
-                    GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
-                    writeIORef lastCursorRef Nothing
-                  else do
-                    -- Place block from hotbar
-                    inv <- readIORef inventoryRef
-                    case selectedItem inv of
-                      Nothing -> pure ()
-                      Just (ItemStack item _) -> case itemToBlock item of
+                let doorToggle = case hitBlock of
+                      OakDoorClosed -> Just OakDoorOpen
+                      OakDoorOpen   -> Just OakDoorClosed
+                      _             -> Nothing
+                case doorToggle of
+                  Just newDoor -> do
+                    worldSetBlock world (V3 bx by bz) newDoor
+                    rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
+                  Nothing -> case hitBlock of
+                    CraftingTable -> do
+                      writeIORef gameModeRef CraftingOpen
+                      writeIORef craftingGridRef (emptyCraftingGrid 3)
+                      GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+                      writeIORef lastCursorRef Nothing
+                    _ -> do
+                      -- Place block from hotbar
+                      inv <- readIORef inventoryRef
+                      case selectedItem inv of
                         Nothing -> pure ()
-                        Just bt -> do
-                          let V3 nx ny nz = rhFaceNormal hit
-                              placePos = V3 (bx + nx) (by + ny) (bz + nz)
-                          let (inv', removed) = removeItem inv item 1
-                          when (removed > 0) $ do
-                            writeIORef inventoryRef inv'
-                            worldSetBlock world placePos bt
-                            putStrLn $ "Placed " ++ show bt ++ " at " ++ show placePos
-                            let V3 px' _ pz' = placePos
-                            rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
+                        Just (ItemStack item _) -> case itemToBlock item of
+                          Nothing -> pure ()
+                          Just bt -> do
+                            let V3 nx ny nz = rhFaceNormal hit
+                                placePos = V3 (bx + nx) (by + ny) (bz + nz)
+                            let (inv', removed) = removeItem inv item 1
+                            when (removed > 0) $ do
+                              writeIORef inventoryRef inv'
+                              worldSetBlock world placePos bt
+                              putStrLn $ "Placed " ++ show bt ++ " at " ++ show placePos
+                              let V3 px' _ pz' = placePos
+                              rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
               _ -> pure ()
 
     -- Key callback
@@ -1367,6 +1374,8 @@ itemColor (BlockItem bt) = case bt of
   GoldOre     -> (1.0, 0.85, 0.0, 1.0)
   DiamondOre  -> (0.3, 0.8, 0.95, 1.0)
   Snow        -> (0.95, 0.95, 0.95, 1.0)
+  OakDoorClosed -> (0.6, 0.4, 0.2, 1.0)
+  OakDoorOpen   -> (0.6, 0.4, 0.2, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)
@@ -1427,4 +1436,10 @@ itemMiniIcon (BlockItem bt) = blockMiniIcon bt
       [(0,0,st),(0,1,ore),(0,2,st), (1,0,st),(1,1,ore),(1,2,st), (2,0,ore),(2,1,st),(2,2,ore)]
       where st = (0.5,0.5,0.5,1); ore = (0.3,0.8,0.95,1)
     blockMiniIcon Snow = fill (0.95,0.95,0.95,1)
+    blockMiniIcon OakDoorClosed =
+      [(0,0,w),(0,1,w),(0,2,w), (1,0,w),(1,1,w),(1,2,k), (2,0,w),(2,1,w),(2,2,w)]
+      where w = (0.6,0.4,0.2,1); k = (0.3,0.25,0.2,1)
+    blockMiniIcon OakDoorOpen =
+      [(0,0,w), (1,0,w), (2,0,w)]
+      where w = (0.6,0.4,0.2,1)
     blockMiniIcon _ = fill (itemColor (BlockItem bt))

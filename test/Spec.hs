@@ -64,6 +64,17 @@ blockSpec = describe "World.Block" $ do
   it "Grass has different top/side textures" $ do
     blockFaceTexCoords Grass FaceTop `shouldNotBe` blockFaceTexCoords Grass FaceEast
 
+  it "OakDoorClosed is solid and not transparent" $ do
+    isSolid OakDoorClosed `shouldBe` True
+    isTransparent OakDoorClosed `shouldBe` False
+
+  it "OakDoorOpen is not solid and is transparent" $ do
+    isSolid OakDoorOpen `shouldBe` False
+    isTransparent OakDoorOpen `shouldBe` True
+
+  it "OakDoorClosed and OakDoorOpen have different properties" $ do
+    blockProperties OakDoorClosed `shouldNotBe` blockProperties OakDoorOpen
+
 -- =========================================================================
 -- Chunk
 -- =========================================================================
@@ -253,6 +264,13 @@ craftingSpec = describe "Game.Crafting" $ do
       CraftSuccess (ToolItem Pickaxe Wood _) 1 -> pure ()
       other -> expectationFailure $ "Expected wood pickaxe, got: " ++ show other
 
+  it "6 planks in 2x3 pattern produces door" $ do
+    let p = Just (BlockItem OakPlanks)
+        grid = setCraftingSlot (setCraftingSlot (setCraftingSlot
+              (setCraftingSlot (setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3)
+                0 0 p) 0 1 p) 1 0 p) 1 1 p) 2 0 p) 2 1 p
+    tryCraft grid `shouldBe` CraftSuccess (BlockItem OakDoorClosed) 3
+
 -- =========================================================================
 -- World coordinate mapping
 -- =========================================================================
@@ -326,6 +344,12 @@ itemSpec = describe "Game.Item" $ do
 
   it "blockDrops returns nothing for air" $ do
     blockDrops Air `shouldBe` []
+
+  it "blockDrops for OakDoorClosed returns closed door" $ do
+    blockDrops OakDoorClosed `shouldBe` [(BlockItem OakDoorClosed, 1)]
+
+  it "blockDrops for OakDoorOpen returns closed door" $ do
+    blockDrops OakDoorOpen `shouldBe` [(BlockItem OakDoorClosed, 1)]
 
 -- =========================================================================
 -- Dropped items

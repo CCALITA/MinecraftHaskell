@@ -114,6 +114,8 @@ blockDrops = \case
   StoneBrick  -> [(BlockItem StoneBrick, 1)]
   Brick       -> [(BlockItem Brick, 1)]
   TNT         -> [(BlockItem TNT, 1)]
+  OakDoorClosed -> [(BlockItem OakDoorClosed, 1)]
+  OakDoorOpen   -> [(BlockItem OakDoorClosed, 1)]
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
@@ -151,4 +153,6 @@ blockPreferredTool = \case
   OakPlanks   -> Just Axe
   CraftingTable -> Just Axe
   Chest       -> Just Axe
+  OakDoorClosed -> Just Axe
+  OakDoorOpen   -> Just Axe
   _           -> Nothing

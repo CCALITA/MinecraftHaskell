@@ -90,6 +90,8 @@ tileFull tileIdx lx ly = case tileIdx of
   21 -> logTop lx ly           -- oak log cross-section (V2 5 1)
   22 -> leavesPattern lx ly    -- oak leaves (V2 6 1)
   25 -> chestPattern lx ly     -- chest (V2 9 1)
+  27 -> doorClosedPattern lx ly  -- oak door closed (V2 11 1)
+  28 -> doorOpenPattern lx ly    -- oak door open (V2 12 1)
   -- Row 2: tileIdx 32-47
   32 -> orePattern lx ly (255, 215, 0)    -- gold ore (V2 0 2)
   33 -> orePattern lx ly (200, 170, 130)  -- iron ore (V2 1 2)
@@ -274,6 +276,28 @@ tileFull tileIdx lx ly = case tileIdx of
           isFlame = x >= 6 && x <= 9 && y >= 2 && y <= 6
       in if isFlame then (255, 200, 50, 255)
          else if isStick then (120, 90, 40, 255)
+         else (0, 0, 0, 0)  -- transparent
+
+    -- Oak door closed: brown planks with a small doorknob
+    doorClosedPattern x y =
+      let grain = pixHash x (y `div` 4) 1800 `mod` 100
+          base = if y `mod` 4 == 0 then 120 else if grain < 20 then 150 else 160
+          r = base; g = base * 140 `div` 180; b = base * 80 `div` 180
+          border = x == 0 || x == 15 || y == 0 || y == 15
+          isKnob = x >= 11 && x <= 13 && y >= 7 && y <= 9
+      in if border then (70, 50, 25, 255)
+         else if isKnob then (60, 55, 45, 255)  -- dark doorknob
+         else (fromIntegral r, fromIntegral g, fromIntegral b, 255)
+
+    -- Oak door open: thin brown vertical edge (mostly transparent)
+    doorOpenPattern x y =
+      let isEdge = x <= 3
+          border = x == 0 || (isEdge && (y == 0 || y == 15))
+          grain = pixHash x (y `div` 4) 1900 `mod` 100
+          base = if grain < 30 then 140 else 155
+          r = base; g = base * 140 `div` 180; b = base * 80 `div` 180
+      in if border && isEdge then (70, 50, 25, 255)
+         else if isEdge then (fromIntegral r, fromIntegral g, fromIntegral b, 255)
          else (0, 0, 0, 0)  -- transparent
 
 -- | Create a texture from raw RGBA pixel data

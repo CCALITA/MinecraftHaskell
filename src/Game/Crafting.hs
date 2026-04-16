@@ -184,6 +184,14 @@ allRecipes =
       , rcResult  = BlockItem TNT
       , rcCount   = 1
       }
+  -- Door from 6 planks in 2x3 pattern
+  , Recipe
+      { rcPattern = [[bi OakPlanks, bi OakPlanks]
+                    ,[bi OakPlanks, bi OakPlanks]
+                    ,[bi OakPlanks, bi OakPlanks]]
+      , rcResult  = BlockItem OakDoorClosed
+      , rcCount   = 3
+      }
   ] ++ toolRecipes
 
 -- | Helper to create a tool item with full durability
