@@ -17,6 +17,7 @@ import Game.Save (SaveData(..), inventoryToSlotList, slotListToInventory)
 import Game.BlockEntity
 import Game.Furnace
 import World.Weather
+import Entity.ECS
 
 import Data.Binary (encode, decode)
 import Linear (V2(..), V3(..))
@@ -44,6 +45,7 @@ main = hspec $ do
   voidDamageSpec
   weatherSpec
   waterPhysicsSpec
+  paintingSpec
 
 -- =========================================================================
 -- Block
@@ -985,3 +987,51 @@ waterPhysicsSpec = describe "Water physics and air supply" $ do
     -- Player should have moved upward
     let V3 _ newY _ = plPos player1
     newY `shouldSatisfy` (>= 80.0)
+
+-- =========================================================================
+-- Painting entities
+-- =========================================================================
+paintingSpec :: Spec
+paintingSpec = describe "Painting entities" $ do
+  it "can spawn a painting entity with tag Painting" $ do
+    ew <- newEntityWorld
+    eid <- spawnEntity ew (V3 10.5 65.0 8.5) 1.0 "Painting"
+    eid `shouldSatisfy` (> 0)
+    mEnt <- getEntity ew eid
+    case mEnt of
+      Just ent -> do
+        entTag ent `shouldBe` "Painting"
+        entPosition ent `shouldBe` V3 10.5 65.0 8.5
+        entHealth ent `shouldBe` 1.0
+        entAlive ent `shouldBe` True
+      Nothing -> expectationFailure "Expected painting entity"
+
+  it "painting entity can store yaw for wall direction" $ do
+    ew <- newEntityWorld
+    eid <- spawnEntity ew (V3 5.0 64.0 5.0) 1.0 "Painting"
+    updateEntity ew eid (\e -> e { entYaw = 90 })
+    mEnt <- getEntity ew eid
+    case mEnt of
+      Just ent -> entYaw ent `shouldBe` 90
+      Nothing -> expectationFailure "Expected painting entity"
+
+  it "painting entity can be destroyed" $ do
+    ew <- newEntityWorld
+    eid <- spawnEntity ew (V3 5.0 64.0 5.0) 1.0 "Painting"
+    destroyEntity ew eid
+    mEnt <- getEntity ew eid
+    mEnt `shouldBe` Nothing
+
+  it "painting entities are included in allEntities" $ do
+    ew <- newEntityWorld
+    _ <- spawnEntity ew (V3 5.0 64.0 5.0) 1.0 "Painting"
+    _ <- spawnEntity ew (V3 10.0 64.0 10.0) 1.0 "zombie"
+    ents <- allEntities ew
+    let paintings = filter (\e -> entTag e == "Painting") ents
+    length paintings `shouldBe` 1
+
+  it "entityCount includes paintings" $ do
+    ew <- newEntityWorld
+    _ <- spawnEntity ew (V3 5.0 64.0 5.0) 1.0 "Painting"
+    count <- entityCount ew
+    count `shouldBe` 1

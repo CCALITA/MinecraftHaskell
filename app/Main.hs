@@ -634,10 +634,25 @@ main = do
                           GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
                           writeIORef lastCursorRef Nothing
                         _ -> do
-                          -- Place block from hotbar (skip if eating food)
+                          -- Place painting on wall face when hand is empty
                           inv <- readIORef inventoryRef
+                          let faceNorm = rhFaceNormal hit
+                              isWallFace = faceNorm /= V3 0 1 0 && faceNorm /= V3 0 (-1) 0
                           case selectedItem inv of
-                            Nothing -> pure ()
+                            Nothing -> when isWallFace $ do
+                              let V3 fnx _fny fnz = faceNorm
+                                  paintingPos = fmap fromIntegral (V3 bx by bz)
+                                              + V3 (fromIntegral fnx * 0.5) 0 (fromIntegral fnz * 0.5)
+                                  -- Encode wall direction as yaw: N=0, E=90, S=180, W=270
+                                  paintingYaw
+                                    | fnz == -1 = 0    -- North
+                                    | fnx == 1  = 90   -- East
+                                    | fnz == 1  = 180  -- South
+                                    | fnx == -1 = 270  -- West
+                                    | otherwise = 0
+                              eid <- spawnEntity entityWorld paintingPos 1.0 "Painting"
+                              updateEntity entityWorld eid (\e -> e { entYaw = paintingYaw })
+                              putStrLn $ "Placed painting at " ++ show paintingPos
                             Just (ItemStack (FoodItem _) _) -> pure ()
                             Just (ItemStack item _) -> case itemToBlock item of
                               Nothing -> pure ()
@@ -911,6 +926,12 @@ main = do
                           playSound soundSystem SndBlockBreak
                           -- Trigger falling blocks above the broken block
                           void $ triggerGravityAbove world blockPos
+                          -- Destroy paintings attached to the broken block
+                          do let blockCenter = fmap fromIntegral blockPos + V3 0.5 0.5 0.5 :: V3 Float
+                             nearby <- entitiesInRange entityWorld blockCenter 1.5
+                             forM_ (filter (\e -> entTag e == "Painting") nearby) $ \p -> do
+                               destroyEntity entityWorld (entId p)
+                               putStrLn $ "Painting at " ++ show (entPosition p) ++ " destroyed (wall broken)"
                           if bpLightEmit (blockProperties bt) > 0
                             then rebuildChunkWithNeighbors world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
                             else rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
