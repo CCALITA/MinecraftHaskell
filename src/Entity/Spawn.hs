@@ -9,6 +9,7 @@ import Entity.ECS
 import Entity.Mob (MobType(..), mobInfo, MobInfo(..), isHostile, isPassive)
 import Game.DayNight (DayNightCycle, isNight)
 import Game.Physics (BlockQuery)
+import World.Weather (WeatherState, isRaining)
 import Linear (V3(..), distance)
 import System.Random (StdGen, randomR, randomRIO)
 import Data.IORef
@@ -37,11 +38,12 @@ trySpawnMobs
   :: SpawnRules
   -> EntityWorld
   -> DayNightCycle
+  -> WeatherState
   -> BlockQuery
   -> V3 Float         -- player position
   -> IORef StdGen     -- RNG
   -> IO [EntityId]
-trySpawnMobs rules ew dayNight isSolid playerPos rngRef = do
+trySpawnMobs rules ew dayNight weather isSolid playerPos rngRef = do
   ents <- livingEntities ew
   let hostileCount = length $ filter (\e -> entTag e `elem` hostileTags) ents
       passiveCount = length $ filter (\e -> entTag e `elem` passiveTags) ents
@@ -55,8 +57,8 @@ trySpawnMobs rules ew dayNight isSolid playerPos rngRef = do
 
   spawned <- newIORef ([] :: [EntityId])
 
-  -- Try to spawn hostile mobs at night
-  if isNight dayNight && hostileCount < srMaxHostile rules
+  -- Try to spawn hostile mobs at night or when raining
+  if (isNight dayNight || isRaining weather) && hostileCount < srMaxHostile rules
     then do
       mPos <- findSpawnPosition rngRef isSolid playerPos (srSpawnRadius rules)
       case mPos of
