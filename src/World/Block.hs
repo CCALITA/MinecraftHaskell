@@ -66,6 +66,7 @@ data BlockType
   | IronDoorOpen
   | Fire
   | Cactus
+  | SugarCane
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -148,6 +149,7 @@ blockProperties = \case
   IronDoorOpen -> BlockProperties False True  0  5.0
   Fire         -> BlockProperties False True  15 0.0
   Cactus       -> BlockProperties True  True  0  0.4
+  SugarCane    -> BlockProperties False True  0  0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -239,6 +241,7 @@ blockFaceTexCoords blockType face = case blockType of
   IronDoorOpen -> V2 2 5
   Fire        -> V2 11 2
   Cactus      -> V2 3 5
+  SugarCane   -> V2 4 5
 
 -- | Collision height for a block (1.0 = full block, 0.5 = half-height for auto-step)
 blockCollisionHeight :: BlockType -> Float

@@ -129,6 +129,7 @@ tileFull tileIdx lx ly = case tileIdx of
   46 -> trapdoorClosedPattern lx ly  -- trapdoor closed (V2 14 2)
   47 -> trapdoorOpenPattern lx ly    -- trapdoor open (V2 15 2)
   43 -> firePattern lx ly              -- fire (V2 11 2)
+  84 -> sugarCanePattern lx ly       -- sugar cane (V2 4 5)
   -- Fallback: checkerboard pattern so missing tiles are visible
   _  -> let checker = (lx + ly) `mod` 2 == 0
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
@@ -490,6 +491,19 @@ tileFull tileIdx lx ly = case tileIdx of
             | n < 60    = (45, 150, 35)
             | otherwise = (40, 140, 30)
       in (r, g, b, 255)
+
+    -- Sugar cane: green vertical reeds on transparent background
+    sugarCanePattern x y =
+      let isReed1 = x >= 2 && x <= 4
+          isReed2 = x >= 7 && x <= 9
+          isReed3 = x >= 12 && x <= 13
+          isReed = isReed1 || isReed2 || isReed3
+          isNode = isReed && (y `mod` 5 == 0)
+          n = pixHash x y 2500 `mod` 40
+          (gr, gg, gb) = if isNode then (60, 130 + fromIntegral n, 40)
+                         else (70 + fromIntegral (n `div` 2), 150 + fromIntegral n, 50)
+      in if isReed then (gr, gg, gb, 255)
+         else (0, 0, 0, 0)
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels

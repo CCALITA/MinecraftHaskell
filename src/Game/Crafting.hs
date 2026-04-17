@@ -283,6 +283,12 @@ allRecipes =
       , rcResult  = FlintAndSteelItem 64
       , rcCount   = 1
       }
+  -- Paper: 3 sugar cane in a row
+  , Recipe
+      { rcPattern = [[bi SugarCane, bi SugarCane, bi SugarCane]]
+      , rcResult  = MaterialItem Paper
+      , rcCount   = 3
+      }
   ] ++ toolRecipes ++ shearsRecipe
 
 -- | Shears crafting recipe: 2 iron ingots diagonal

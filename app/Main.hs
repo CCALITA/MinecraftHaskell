@@ -827,10 +827,20 @@ main = do
                                     placePos = V3 (bx + nx) (by + ny) (bz + nz)
                                     V3 placeX placeY placeZ = placePos
                                     sel = invSelected inv
-                                -- Height limit: only place blocks in valid range [0, chunkHeight)
-                                when (placeY >= 0 && placeY < chunkHeight) $ do
+                                -- Sugar cane placement validation
+                                canPlace <- if bt == SugarCane
+                                  then do
+                                    belowBlock <- worldGetBlock world (placePos - V3 0 1 0)
+                                    if belowBlock == SugarCane
+                                      then pure True
+                                      else if belowBlock == Sand || belowBlock == Dirt
+                                        then do
+                                          let ns = [V3 (placeX-1) (placeY-1) placeZ, V3 (placeX+1) (placeY-1) placeZ,
+                                                    V3 placeX (placeY-1) (placeZ-1), V3 placeX (placeY-1) (placeZ+1)]
+                                          or <$> mapM (\p -> (== Water) <$> worldGetBlock world p) ns
+                                        else pure False
                                   -- Cactus placement validation: only on Sand, with 4-side air clearance
-                                  canPlace <- if bt == Cactus
+                                  else if bt == Cactus
                                     then do
                                       below <- worldGetBlock world (V3 placeX (placeY - 1) placeZ)
                                       n' <- worldGetBlock world (V3 (placeX + 1) placeY placeZ)
@@ -838,8 +848,9 @@ main = do
                                       e' <- worldGetBlock world (V3 placeX placeY (placeZ + 1))
                                       w' <- worldGetBlock world (V3 placeX placeY (placeZ - 1))
                                       pure ((below == Sand || below == Cactus) && n' == Air && s' == Air && e' == Air && w' == Air)
-                                    else pure True
-                                  when canPlace $ do
+                                  else pure True
+                                -- Height limit: only place blocks in valid range [0, chunkHeight)
+                                when (placeY >= 0 && placeY < chunkHeight && canPlace) $ do
                                     -- Consume from selected slot directly
                                     case getSlot inv sel of
                                       Just (ItemStack si cnt) | si == item ->
@@ -1154,6 +1165,17 @@ main = do
                           playSound soundSystem SndBlockBreak
                           -- Trigger falling blocks above the broken block
                           void $ triggerGravityAbove world blockPos
+                          -- Sugar cane cascade: break all sugar cane above
+                          when (bt == SugarCane) $ do
+                            let cascadeBreak pos = do
+                                  let abovePos = pos + V3 0 1 0
+                                  above <- worldGetBlock world abovePos
+                                  when (above == SugarCane) $ do
+                                    let V3 abx aby abz = fmap fromIntegral abovePos :: V3 Float
+                                    worldSetBlock world abovePos Air
+                                    mapM_ (\(itm, cnt) -> spawnDrop droppedItems itm cnt (V3 abx aby abz)) (blockDrops SugarCane)
+                                    cascadeBreak abovePos
+                            cascadeBreak blockPos
                           -- Destroy paintings attached to the broken block
                           do let blockCenter = fmap fromIntegral blockPos + V3 0.5 0.5 0.5 :: V3 Float
                              nearby <- entitiesInRange entityWorld blockCenter 1.5
@@ -1390,6 +1412,41 @@ main = do
                         when (roll == 1) $ do  -- 5% chance
                           worldSetBlock world (V3 wx (ly + 1) wz) Cactus
                           modifyIORef' dirtyChunks (chunkPos chunk :)
+              remeshDirtyChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef dirtyChunks
+
+            -- Sugar cane growth tick (every 600 frames / ~10 seconds)
+            when (frameIdx > 0 && frameIdx `mod` 600 == 0) $ do
+              chunks <- HM.toList <$> readTVarIO (worldChunks world)
+              dirtyChunks <- newIORef ([] :: [ChunkPos])
+              forM_ chunks $ \(V2 cx' cz', chunk) ->
+                forEachBlock chunk $ \lx ly lz bt ->
+                  when (bt == SugarCane) $ do
+                    let wx = cx' * chunkWidth + lx
+                        wz = cz' * chunkDepth + lz
+                    -- Check if top of column (air above)
+                    aboveBlock <- worldGetBlock world (V3 wx (ly + 1) wz)
+                    when (aboveBlock == Air) $ do
+                      -- Count sugar cane column height
+                      let countBelow pos acc = do
+                            b <- worldGetBlock world pos
+                            if b == SugarCane && acc < 3
+                              then countBelow (pos - V3 0 1 0) (acc + 1)
+                              else pure acc
+                      columnH <- countBelow (V3 wx ly wz) 0
+                      when (columnH < 3) $ do
+                        -- Check base block: must be on Sand/Dirt adjacent to Water
+                        let baseY = ly - columnH + 1
+                            groundPos = V3 wx (baseY - 1) wz
+                        groundBlock <- worldGetBlock world groundPos
+                        when (groundBlock == Sand || groundBlock == Dirt) $ do
+                          let neighbors = [V3 (wx-1) (baseY-1) wz, V3 (wx+1) (baseY-1) wz,
+                                           V3 wx (baseY-1) (wz-1), V3 wx (baseY-1) (wz+1)]
+                          hasWater <- or <$> mapM (\p -> (== Water) <$> worldGetBlock world p) neighbors
+                          when hasWater $ do
+                            roll <- randomRIO (1 :: Int, 20)
+                            when (roll == 1) $ do  -- 5% chance
+                              worldSetBlock world (V3 wx (ly + 1) wz) SugarCane
+                              modifyIORef' dirtyChunks (chunkPos chunk :)
               remeshDirtyChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef dirtyChunks
 
             -- Leaf decay tick (every 300 frames / ~5 seconds)
@@ -2659,6 +2716,7 @@ itemColor (BlockItem bt) = case bt of
   OakStairs    -> (0.78, 0.65, 0.43, 1.0)
   Fire        -> (1.0, 0.5, 0.0, 1.0)
   Cactus      -> (0.2, 0.6, 0.2, 1.0)
+  SugarCane   -> (0.4, 0.7, 0.3, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)
@@ -2690,6 +2748,7 @@ itemColor (MaterialItem mt) = case mt of
   WheatSeeds -> (0.3, 0.6, 0.2, 1.0)
   Wheat      -> (0.9, 0.8, 0.3, 1.0)
   Flint      -> (0.4, 0.4, 0.4, 1.0)
+  Paper      -> (0.95, 0.95, 0.9, 1.0)
 itemColor (ArmorItem _ mat _) = case mat of
   LeatherArmor -> (0.6, 0.35, 0.15, 1.0)
   IronArmor    -> (0.75, 0.75, 0.75, 1.0)
