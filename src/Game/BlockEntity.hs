@@ -4,6 +4,9 @@ module Game.BlockEntity
   , newBlockEntityMap
   , getChestInventory
   , setChestInventory
+  , getFurnaceState
+  , setFurnaceState
+  , allFurnaceEntities
   , removeBlockEntity
   , hasBlockEntity
   , chestSlots
@@ -18,6 +21,7 @@ import Linear (V3(..))
 import qualified Data.Vector as V
 
 import Game.Inventory (Inventory(..), ItemStack)
+import Game.Furnace (FurnaceState)
 
 -- | Number of slots in a chest (3 rows of 9)
 chestSlots :: Int
@@ -31,7 +35,9 @@ emptyChestInventory = Inventory
   }
 
 -- | Data stored in a block entity
-data BlockEntityData = ChestData !Inventory
+data BlockEntityData
+  = ChestData !Inventory
+  | FurnaceData !FurnaceState
   deriving stock (Show)
 
 -- | Map from world position to block entity data
@@ -47,11 +53,29 @@ getChestInventory ref pos = do
   m <- readIORef ref
   pure $ case HM.lookup pos m of
     Just (ChestData inv) -> Just inv
-    Nothing              -> Nothing
+    _                    -> Nothing
 
 -- | Set or update the chest inventory at a position
 setChestInventory :: BlockEntityMap -> V3 Int -> Inventory -> IO ()
 setChestInventory ref pos inv = modifyIORef' ref (HM.insert pos (ChestData inv))
+
+-- | Get the furnace state at a position, if it exists
+getFurnaceState :: BlockEntityMap -> V3 Int -> IO (Maybe FurnaceState)
+getFurnaceState ref pos = do
+  m <- readIORef ref
+  pure $ case HM.lookup pos m of
+    Just (FurnaceData fs) -> Just fs
+    _                     -> Nothing
+
+-- | Set or update the furnace state at a position
+setFurnaceState :: BlockEntityMap -> V3 Int -> FurnaceState -> IO ()
+setFurnaceState ref pos fs = modifyIORef' ref (HM.insert pos (FurnaceData fs))
+
+-- | Return all furnace entities as a list of (position, FurnaceState)
+allFurnaceEntities :: BlockEntityMap -> IO [(V3 Int, FurnaceState)]
+allFurnaceEntities ref = do
+  m <- readIORef ref
+  pure [ (p, fs) | (p, FurnaceData fs) <- HM.toList m ]
 
 -- | Remove a block entity at a position, returning its data if present
 removeBlockEntity :: BlockEntityMap -> V3 Int -> IO (Maybe BlockEntityData)

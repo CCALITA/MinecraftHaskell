@@ -26,7 +26,7 @@ data FurnaceState = FurnaceState
   , fsSmeltTime   :: !Float              -- current smelting progress (seconds elapsed)
   , fsFuelTime    :: !Float              -- remaining fuel burn time (seconds)
   , fsMaxFuelTime :: !Float              -- max fuel burn time for current fuel (for progress bar)
-  } deriving stock (Show)
+  } deriving stock (Show, Eq)
 
 -- | A smelting recipe
 data SmeltRecipe = SmeltRecipe

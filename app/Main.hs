@@ -276,6 +276,22 @@ main = do
         triggerDamageFlash = do
           writeIORef damageFlashRef 0.3
           playSound soundSystem SndPlayerHurt
+        -- Helper: sync furnace IORef to/from block entity map
+        syncFurnaceToMap = do
+          fs <- readIORef furnaceStateRef
+          mPos <- readIORef furnacePosRef
+          case mPos of
+            Just pos -> setFurnaceState blockEntityMapRef pos fs
+            Nothing  -> pure ()
+        syncFurnaceFromMap = do
+          mPos <- readIORef furnacePosRef
+          case mPos of
+            Just pos -> do
+              mFs <- getFurnaceState blockEntityMapRef pos
+              case mFs of
+                Just fs -> writeIORef furnaceStateRef fs
+                Nothing -> pure ()
+            Nothing -> pure ()
 
     -- Scroll wheel callback (cycle hotbar slots)
     GLFW.setScrollCallback (whWindow wh) $ Just $ \_win _dx dy -> do
@@ -573,6 +589,8 @@ main = do
               writeIORef inventoryRef (setSlot inv idx cursor)
               writeIORef cursorItemRef slotContent
             Nothing -> pure ()
+          -- Sync furnace IORef back to block entity after any UI interaction
+          syncFurnaceToMap
 
         DeathScreen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
@@ -681,8 +699,16 @@ main = do
                           GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
                           writeIORef lastCursorRef Nothing
                         Furnace -> do
+                          -- Load existing furnace state or create new one
+                          let fPos = V3 bx by bz
+                          mExisting <- getFurnaceState blockEntityMapRef fPos
+                          case mExisting of
+                            Just fs -> writeIORef furnaceStateRef fs
+                            Nothing -> do
+                              writeIORef furnaceStateRef newFurnaceState
+                              setFurnaceState blockEntityMapRef fPos newFurnaceState
                           writeIORef gameModeRef FurnaceOpen
-                          writeIORef furnacePosRef (Just (V3 bx by bz))
+                          writeIORef furnacePosRef (Just fPos)
                           GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
                           writeIORef lastCursorRef Nothing
                         Lever -> do
@@ -822,17 +848,9 @@ main = do
                 -- Clear chest reference when closing chest
                 when (curMode == ChestOpen) $
                   writeIORef chestPosRef Nothing
-                -- Return furnace slot items when closing furnace
+                -- Save furnace state back to block entity when closing
                 when (curMode == FurnaceOpen) $ do
-                  fs <- readIORef furnaceStateRef
-                  let returnStack mStack = case mStack of
-                        Just (ItemStack itm cnt) ->
-                          modifyIORef' inventoryRef (\inv' -> fst $ addItem inv' itm cnt)
-                        Nothing -> pure ()
-                  returnStack (getFurnaceInput fs)
-                  returnStack (getFurnaceFuel fs)
-                  returnStack (getFurnaceOutput fs)
-                  writeIORef furnaceStateRef newFurnaceState
+                  syncFurnaceToMap
                   writeIORef furnacePosRef Nothing
                 -- Switch back to playing
                 writeIORef gameModeRef Playing
@@ -981,7 +999,20 @@ main = do
                                     Just (ItemStack item cnt) ->
                                       spawnDrop droppedItems item cnt (V3 bxf byf bzf)
                                     Nothing -> pure ()
-                              Nothing -> pure ()
+                              _ -> pure ()
+                          -- If it's a furnace, drop all stored items and remove block entity
+                          when (bt == Furnace) $ do
+                            mBE <- removeBlockEntity blockEntityMapRef blockPos
+                            case mBE of
+                              Just (FurnaceData fs) -> do
+                                let dropStack mStack = case mStack of
+                                      Just (ItemStack item cnt) ->
+                                        spawnDrop droppedItems item cnt (V3 bxf byf bzf)
+                                      Nothing -> pure ()
+                                dropStack (getFurnaceInput fs)
+                                dropStack (getFurnaceFuel fs)
+                                dropStack (getFurnaceOutput fs)
+                              _ -> pure ()
                           -- Consume tool durability
                           inv' <- readIORef inventoryRef
                           let inv'' = case getSlot inv' (invSelected inv') of
@@ -1043,9 +1074,13 @@ main = do
             -- Update weather (rain/clear transitions)
             readIORef weatherRef >>= updateWeather dt >>= writeIORef weatherRef
 
-            -- Tick furnace when open
-            when (gameMode == FurnaceOpen) $
-              modifyIORef' furnaceStateRef (tickFurnace dt)
+            -- Tick ALL active furnaces (not just the open one)
+            do activeFurnaces <- allFurnaceEntities blockEntityMapRef
+               forM_ activeFurnaces $ \(pos, fs) -> do
+                 let fs' = tickFurnace dt fs
+                 when (fs' /= fs) $ setFurnaceState blockEntityMapRef pos fs'
+               -- Sync the open furnace's IORef with the updated block entity
+               when (gameMode == FurnaceOpen) syncFurnaceFromMap
 
             -- Tick fluid simulation every physics update
             tickFluids fluidState world
