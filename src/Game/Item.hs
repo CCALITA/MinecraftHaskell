@@ -176,6 +176,8 @@ blockDrops = \case
   RedstoneDust -> [(BlockItem RedstoneDust, 1)]
   TrapdoorClosed -> [(BlockItem TrapdoorClosed, 1)]
   TrapdoorOpen   -> [(BlockItem TrapdoorClosed, 1)]  -- always drops closed form
+  StoneStairs  -> [(BlockItem StoneStairs, 1)]
+  OakStairs    -> [(BlockItem OakStairs, 1)]
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
@@ -189,6 +191,7 @@ blockRequiredHarvestLevel = \case
   Stone       -> 1
   StoneBrick  -> 1
   Brick       -> 1
+  StoneStairs -> 1
   _           -> 0  -- hand is fine
 
 -- | The preferred tool type for faster mining of this block.
@@ -224,6 +227,8 @@ blockPreferredTool = \case
   Bed         -> Just Axe
   TrapdoorClosed -> Just Axe
   TrapdoorOpen   -> Just Axe
+  StoneStairs -> Just Pickaxe
+  OakStairs   -> Just Axe
   _           -> Nothing
 
 -- | How much hunger a food type restores

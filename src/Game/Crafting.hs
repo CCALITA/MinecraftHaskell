@@ -252,6 +252,22 @@ allRecipes =
       , rcResult  = BlockItem RedstoneDust
       , rcCount   = 4
       }
+  -- Stone stairs: 6 stone in stair pattern
+  , Recipe
+      { rcPattern = [[bi Stone,   Nothing,  Nothing]
+                    ,[bi Stone,   bi Stone,  Nothing]
+                    ,[bi Stone,   bi Stone,  bi Stone]]
+      , rcResult  = BlockItem StoneStairs
+      , rcCount   = 4
+      }
+  -- Oak stairs: 6 oak planks in stair pattern
+  , Recipe
+      { rcPattern = [[bi OakPlanks, Nothing,     Nothing]
+                    ,[bi OakPlanks, bi OakPlanks, Nothing]
+                    ,[bi OakPlanks, bi OakPlanks, bi OakPlanks]]
+      , rcResult  = BlockItem OakStairs
+      , rcCount   = 4
+      }
   ] ++ toolRecipes
 
 -- | Helper to create a tool item with full durability

@@ -8,6 +8,7 @@ module World.Block
   , isGravityAffected
   , isLeafBlock
   , blockFaceTexCoords
+  , blockCollisionHeight
   , allBlockFaces
   ) where
 
@@ -59,6 +60,8 @@ data BlockType
   | RedstoneDust
   | TrapdoorClosed
   | TrapdoorOpen
+  | StoneStairs
+  | OakStairs
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -135,6 +138,8 @@ blockProperties = \case
   RedstoneDust -> BlockProperties False True  0  0
   TrapdoorClosed -> BlockProperties True  True  0  3.0
   TrapdoorOpen   -> BlockProperties False True  0  3.0
+  StoneStairs  -> BlockProperties True  False 0  1.5
+  OakStairs    -> BlockProperties True  False 0  2.0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -220,3 +225,11 @@ blockFaceTexCoords blockType face = case blockType of
   RedstoneDust -> V2 10 2
   TrapdoorClosed -> V2 14 2
   TrapdoorOpen   -> V2 15 2
+  StoneStairs  -> V2 1 0
+  OakStairs    -> V2 4 0
+
+-- | Collision height for a block (1.0 = full block, 0.5 = half-height for auto-step)
+blockCollisionHeight :: BlockType -> Float
+blockCollisionHeight StoneStairs = 0.5
+blockCollisionHeight OakStairs   = 0.5
+blockCollisionHeight _           = 1.0
