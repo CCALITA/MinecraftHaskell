@@ -65,7 +65,7 @@ import System.Environment (getArgs)
 import Data.Char (isDigit)
 
 -- | Game UI mode
-data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen | FurnaceOpen
+data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen | FurnaceOpen | DeathScreen
   deriving stock (Show, Eq)
 
 -- | Arrow projectile fired by Skeletons
@@ -204,6 +204,9 @@ main = do
     -- Sound system (no-op stub, ready for real audio backend)
     soundSystem <- initSoundSystem
 
+    -- Damage flash effect (0.0 = no flash, set to 0.3 on damage)
+    damageFlashRef <- newIORef (0.0 :: Float)
+
     -- Entity system
     entityWorld <- newEntityWorld
     spawnRngRef <- newIORef =<< System.Random.newStdGen
@@ -270,6 +273,9 @@ main = do
     -- Helper: cancel eating (resets timer to 0)
     let cancelEating = modifyIORef' playerRef (\p -> p { plEatingTimer = 0.0 })
         selectSlot n = modifyIORef' inventoryRef (`selectHotbar` n) >> cancelEating
+        triggerDamageFlash = do
+          writeIORef damageFlashRef 0.3
+          playSound soundSystem SndPlayerHurt
 
     -- Scroll wheel callback (cycle hotbar slots)
     GLFW.setScrollCallback (whWindow wh) $ Just $ \_win _dx dy -> do
@@ -568,6 +574,19 @@ main = do
               writeIORef cursorItemRef slotContent
             Nothing -> pure ()
 
+        DeathScreen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
+          (mx, my) <- readIORef mousePosRef
+          (winW, winH) <- getWindowSize wh
+          let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+              ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
+          -- "Respawn" button hit test
+          when (ndcX >= -0.25 && ndcX <= 0.25 && ndcY >= 0.15 && ndcY <= 0.30) $ do
+            spawnPos <- readIORef spawnPointRef
+            modifyIORef' playerRef (respawnPlayer spawnPos)
+            writeIORef gameModeRef Playing
+            GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
+            writeIORef lastCursorRef Nothing
+
         Playing -> do
           when (button == GLFW.MouseButton'1) $
             writeIORef lmbHeldRef (action == GLFW.MouseButtonState'Pressed)
@@ -777,6 +796,7 @@ main = do
               GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
               writeIORef lastCursorRef Nothing
             _ -> pure ()
+          DeathScreen -> pure ()  -- no keyboard input on death screen
           _ -> case key of  -- InventoryOpen, CraftingOpen, ChestOpen, or FurnaceOpen
             GLFW.Key'Escape -> closeUIScreen
             GLFW.Key'E      -> closeUIScreen
@@ -894,15 +914,21 @@ main = do
             -- Fixed timestep physics (skip when UI is open)
             accum <- readIORef accumRef
             let accum' = accum + dt
+            healthBefore <- plHealth <$> readIORef playerRef
             when (gameMode == Playing) $
               playerLoop input blockQuery waterQuery ladderQuery accumRef accum' playerRef
+            healthAfter <- plHealth <$> readIORef playerRef
 
-            -- Check for player death → respawn
+            -- Flash screen on fall/drowning/starvation/void damage
+            when (healthAfter < healthBefore && healthAfter > 0)
+              triggerDamageFlash
+
+            -- Check for player death → show death screen
             do p <- readIORef playerRef
                when (isPlayerDead p) $ do
-                 putStrLn "You died! Respawning..."
-                 sp <- readIORef spawnPointRef
-                 writeIORef playerRef (respawnPlayer sp p)
+                 writeIORef gameModeRef DeathScreen
+                 GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+                 writeIORef lastCursorRef Nothing
 
             let physicsTickRan = accum' >= tickRate
 
@@ -1100,7 +1126,7 @@ main = do
                             let dmg = max 0 (floor (miAttackDmg info * (1.0 - distToPlayer / 7.0)) :: Int)
                             when (dmg > 0) $ do
                               modifyIORef' playerRef (damagePlayer dmg)
-                              playSound soundSystem SndPlayerHurt
+                              triggerDamageFlash
                               putStrLn $ "Explosion dealt " ++ show dmg ++ " damage!"
                             updateEntity entityWorld eid (\e -> e { entAlive = False, entHealth = 0 })
                             destroyEntity entityWorld eid
@@ -1132,7 +1158,7 @@ main = do
                       let dmg = floor $ miAttackDmg (mobInfo mobType)
                       when (dmg > 0) $ do
                         modifyIORef' playerRef (damagePlayer dmg)
-                        playSound soundSystem SndPlayerHurt
+                        triggerDamageFlash
                         putStrLn $ entTag ent ++ " attacked you for " ++ show dmg ++ " damage!"
                     _ -> pure ()
                 -- Check for mob death and spawn item drops
@@ -1160,7 +1186,7 @@ main = do
                  if newAge > 5.0 then pure Nothing         -- despawn after 5 seconds
                  else if playerDist < 1.0 then do          -- hit player
                    modifyIORef' playerRef (damagePlayer (projDamage proj))
-                   playSound soundSystem SndPlayerHurt
+                   triggerDamageFlash
                    putStrLn $ "Arrow hit you for " ++ show (projDamage proj) ++ " damage!"
                    pure Nothing
                  else do
@@ -1318,8 +1344,12 @@ main = do
                 mouseNdcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
             furnaceState <- readIORef furnaceStateRef
             particles <- readIORef particleSystemRef
+            -- Damage flash: read and decrement
+            damageFlash <- readIORef damageFlashRef
+            when (damageFlash > 0) $
+              writeIORef damageFlashRef (max 0 (damageFlash - dt))
             let particleVerts = if mode == Playing then renderParticles particles vp else []
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg mouseNdcX mouseNdcY
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg damageFlash mouseNdcX mouseNdcY
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -1668,16 +1698,17 @@ checkLogNearby world (V3 wx wy wz) radius = go offsets
 -- debugInfo: Just (pos, yaw, pitch, fps, chunkCount) when F3 overlay is active
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- showSleepMsg: True when "You can only sleep at night" should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> FurnaceState -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> Bool -> Float -> Float -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv furnaceState debugInfo targetInfo showSleepMsg mouseX mouseY = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> FurnaceState -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> Bool -> Float -> Float -> Float -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv furnaceState debugInfo targetInfo showSleepMsg damageFlash mouseX mouseY = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
-    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts
     ChestOpen     -> chestScreenVerts ++ cursorVerts
     FurnaceOpen   -> furnaceScreenVerts ++ cursorVerts
+    DeathScreen   -> deathScreenVerts
   where
     -- Crosshair: white + at center
     cs = 0.015 :: Float  -- size
@@ -1901,6 +1932,24 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
               msgText = renderTextCentered 0.28 1.0 (1, 1, 1, 1) "YOU CAN ONLY SLEEP AT NIGHT"
           in msgBg ++ msgText
       | otherwise = []
+
+    -- Damage flash: red overlay that fades out
+    damageFlashVerts
+      | damageFlash > 0 = quad (-1) (-1) 1 1 (0.8, 0.0, 0.0, damageFlash * 0.5)
+      | otherwise = []
+
+    -- Death screen: red overlay, "YOU DIED" text, score, and respawn button
+    deathScreenVerts =
+      -- Red tinted overlay
+      quad (-1) (-1) 1 1 (0.5, 0.0, 0.0, 0.6)
+      -- "YOU DIED" text (large)
+      ++ renderTextCentered (-0.2) 2.0 (1, 0.2, 0.2, 1) "YOU DIED"
+      -- "Score: 0" (no XP system yet)
+      ++ renderTextCentered 0.0 1.0 (0.8, 0.8, 0.8, 1) "SCORE: 0"
+      -- Respawn button background
+      ++ quad (-0.25) 0.15 0.25 0.30 (0.3, 0.3, 0.3, 0.9)
+      -- Respawn button text
+      ++ renderTextCentered 0.19 1.0 (1, 1, 1, 1) "RESPAWN"
 
     -- Inventory screen: dark overlay + 4x9 slot grid
     invScreenVerts =
