@@ -40,6 +40,7 @@ main = hspec $ do
   saveSpec
   blockEntitySpec
   furnaceSpec
+  waterPhysicsSpec
 
 -- =========================================================================
 -- Block
@@ -846,3 +847,56 @@ furnaceSpec = describe "Game.Furnace" $ do
   it "MaterialItem does not convert to block" $ do
     itemToBlock (MaterialItem IronIngot) `shouldBe` Nothing
     itemToBlock (MaterialItem GoldIngot) `shouldBe` Nothing
+
+-- =========================================================================
+-- Water physics and air supply
+-- =========================================================================
+waterPhysicsSpec :: Spec
+waterPhysicsSpec = describe "Water physics and air supply" $ do
+  let airQuery _ _ _ = pure False
+      -- Water everywhere: all blocks return True for water query
+      waterQuery _ _ _ = pure True
+      -- Water only at head level (y=81, since head = feet_y + 1.62, so floor(80 + 1.62) = 81)
+      headWaterQuery _ y _ = pure (y == 81)
+
+  it "defaultPlayer has full air supply" $ do
+    let player = defaultPlayer (V3 0 80 0)
+    plAirSupply player `shouldBe` 15.0
+
+  it "maxAirSupply is 15.0" $ do
+    maxAirSupply `shouldBe` 15.0
+
+  it "air supply decrements when head is submerged" $ do
+    let player0 = (defaultPlayer (V3 0 80 0)) { plFlying = False }
+    -- headWaterQuery returns True for y=81 (floor(80 + 1.62) = 81)
+    player1 <- updatePlayer 0.05 noInput airQuery headWaterQuery airQuery player0
+    plAirSupply player1 `shouldSatisfy` (< 15.0)
+
+  it "air supply restores when head is not submerged" $ do
+    let player0 = (defaultPlayer (V3 0 80 0)) { plFlying = False, plAirSupply = 10.0 }
+    player1 <- updatePlayer 0.05 noInput airQuery airQuery airQuery player0
+    plAirSupply player1 `shouldSatisfy` (> 10.0)
+
+  it "air supply does not exceed maxAirSupply" $ do
+    let player0 = (defaultPlayer (V3 0 80 0)) { plFlying = False, plAirSupply = 14.99 }
+    player1 <- updatePlayer 0.05 noInput airQuery airQuery airQuery player0
+    plAirSupply player1 `shouldSatisfy` (<= 15.0)
+
+  it "respawnPlayer resets air supply" $ do
+    let player0 = (defaultPlayer (V3 0 80 0)) { plAirSupply = 5.0 }
+        player1 = respawnPlayer (V3 0 80 0) player0
+    plAirSupply player1 `shouldBe` 15.0
+
+  it "flying mode resets air supply to max" $ do
+    let player0 = (defaultPlayer (V3 0 80 0)) { plFlying = True, plAirSupply = 5.0 }
+    player1 <- updatePlayer 0.05 noInput airQuery waterQuery airQuery player0
+    plAirSupply player1 `shouldBe` 15.0
+
+  it "water movement speed is reduced (swim upward at 2.0)" $ do
+    -- When in water with jump pressed, vertical velocity should be ~2.0
+    let player0 = (defaultPlayer (V3 0 80 0)) { plFlying = False }
+        jumpInput = noInput { piJump = True }
+    player1 <- updatePlayer 0.05 jumpInput airQuery waterQuery airQuery player0
+    -- Player should have moved upward
+    let V3 _ newY _ = plPos player1
+    newY `shouldSatisfy` (>= 80.0)

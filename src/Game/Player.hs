@@ -9,6 +9,7 @@ module Game.Player
   , RayHit(..)
   , maxHealth
   , maxHunger
+  , maxAirSupply
   , applyFallDamage
   , damagePlayer
   , respawnPlayer
@@ -36,6 +37,7 @@ data Player = Player
   , plFallDist     :: !Float        -- accumulated fall distance
   , plEatingTimer  :: !Float        -- 0.0 = not eating, counts down from 1.6
   , plArmorSlots   :: ![Maybe ItemStack]  -- 4 armor slots: helmet, chestplate, leggings, boots
+  , plAirSupply    :: !Float        -- 15.0 = full, decrements when head submerged
   } deriving stock (Show, Eq)
 
 -- | Max health (10 hearts = 20 half-hearts)
@@ -45,6 +47,10 @@ maxHealth = 20
 -- | Max hunger (10 drumsticks = 20 half-drumsticks)
 maxHunger :: Int
 maxHunger = 20
+
+-- | Max air supply in seconds (10 bubbles x 1.5s each)
+maxAirSupply :: Float
+maxAirSupply = 15.0
 
 -- | Input state for a single tick
 data PlayerInput = PlayerInput
@@ -75,6 +81,7 @@ defaultPlayer spawnPos = Player
   , plFallDist     = 0
   , plEatingTimer  = 0.0
   , plArmorSlots   = [Nothing, Nothing, Nothing, Nothing]
+  , plAirSupply    = maxAirSupply
   }
 
 noInput :: PlayerInput
@@ -90,6 +97,10 @@ walkSpeed, sprintSpeed, flySpeed :: Float
 walkSpeed   = 4.317
 sprintSpeed = 5.612
 flySpeed    = 11.0
+
+-- | Eye/head height above feet position
+eyeHeight :: Float
+eyeHeight = 1.62
 
 -- | Jump velocity (blocks/s upward)
 jumpVelocity :: Float
@@ -148,12 +159,17 @@ updatePlayer dt input isSolidBlock isWaterBlock isLadderBlock player = do
         , plFlying   = flying
         , plHealth   = plHealth player
         , plFallDist = 0
+        , plAirSupply = maxAirSupply
         }
     else do
       -- Survival mode: gravity + collision
-      -- Check if player is in water
+      -- Check if player is in water (feet level)
       let V3 px py pz = plPos player
       inWater <- isWaterBlock (floor px) (floor py) (floor pz)
+
+      -- Check if player head is submerged (head at feet + eyeHeight)
+      let headY = py + eyeHeight
+      headSubmerged <- isWaterBlock (floor px) (floor headY) (floor pz)
 
       -- Check if player overlaps a ladder block (feet or torso)
       onLadderFeet  <- isLadderBlock (floor px) (floor py) (floor pz)
@@ -161,7 +177,7 @@ updatePlayer dt input isSolidBlock isWaterBlock isLadderBlock player = do
       let onLadder = onLadderFeet || onLadderTorso
 
       -- Horizontal velocity (slower in water or on ladder)
-      let moveMul = if inWater then 0.4 else if onLadder then 0.7 else 1.0
+      let moveMul = if inWater then 0.7 else if onLadder then 0.7 else 1.0
           hVel = normalizedDir ^* (speed * moveMul)
           V3 hvx _ hvz = hVel
 
@@ -171,7 +187,7 @@ updatePlayer dt input isSolidBlock isWaterBlock isLadderBlock player = do
             | onLadder && piJump input  = 2.35   -- climb up
             | onLadder && piSneak input = 0.0    -- hold position
             | onLadder                  = -0.5   -- slow descent
-            | inWater && piJump input = 4.0   -- swim upward
+            | inWater && piJump input = 2.0   -- swim upward
             | inWater                 = max (-2.0) (vy - 5.0 * dt)  -- slow sinking
             | onGround && piJump input = jumpVelocity
             | otherwise               = applyGravity dt vy
@@ -210,8 +226,19 @@ updatePlayer dt input isSolidBlock isWaterBlock isLadderBlock player = do
           -- Apply fall damage on landing
           landed = onGround' && not (plOnGround player)
           baseDmg = if landed && newFallDist > 3.0 then floor newFallDist - 3 else 0
-          finalHealth = max 0 (plHealth player - baseDmg)
+          finalHealth0 = max 0 (plHealth player - baseDmg)
           finalFallDist = if onGround' then 0 else newFallDist
+
+          -- Air supply: decrement when head is submerged, restore when surfaced
+          curAir = plAirSupply player
+          newAir
+            | headSubmerged = max (-1.0) (curAir - dt)  -- allow slightly negative for drowning tick
+            | otherwise     = min maxAirSupply (curAir + dt)  -- restore at 1.0/sec
+
+          -- Drowning damage: 2 HP per second when air supply is depleted
+          drownDmg = if headSubmerged && curAir <= 0 then floor (2.0 * dt + 0.5) else 0
+          finalHealth1 = max 0 (finalHealth0 - drownDmg)
+
           -- Hunger: drain on sprint/jump, regen health when full, starve when empty
           hungerDrain = (if piSprint input then 1 else 0)
                       + (if landed && piJump input then 1 else 0)
@@ -219,10 +246,10 @@ updatePlayer dt input isSolidBlock isWaterBlock isLadderBlock player = do
           -- Drain hunger very slowly (1 point per ~100 ticks of sprinting)
           newHunger = max 0 (curHunger - hungerDrain)
           -- Health regen when hunger >= 18
-          healthRegen = if newHunger >= 18 && finalHealth < maxHealth then 1 else 0
+          healthRegen = if newHunger >= 18 && finalHealth1 < maxHealth then 1 else 0
           -- Starvation when hunger = 0
-          starveDmg = if newHunger <= 0 && finalHealth > 1 then 1 else 0
-          finalHealth' = min maxHealth (max 0 (finalHealth + healthRegen - starveDmg))
+          starveDmg = if newHunger <= 0 && finalHealth1 > 1 then 1 else 0
+          finalHealth' = min maxHealth (max 0 (finalHealth1 + healthRegen - starveDmg))
 
       pure player
         { plPos       = newPos
@@ -235,6 +262,7 @@ updatePlayer dt input isSolidBlock isWaterBlock isLadderBlock player = do
         , plHealth    = finalHealth'
         , plHunger    = newHunger
         , plFallDist  = finalFallDist
+        , plAirSupply = newAir
         }
 
 -- | Direction vector from yaw and pitch (degrees)
@@ -271,7 +299,7 @@ damagePlayer dmg player = player { plHealth = max 0 (plHealth player - dmg) }
 -- | Respawn player at given position with full health
 respawnPlayer :: V3 Float -> Player -> Player
 respawnPlayer spawnPos player = player
-  { plPos = spawnPos, plVelocity = V3 0 0 0, plHealth = maxHealth, plHunger = maxHunger, plFallDist = 0 }
+  { plPos = spawnPos, plVelocity = V3 0 0 0, plHealth = maxHealth, plHunger = maxHunger, plFallDist = 0, plAirSupply = maxAirSupply }
 
 -- | Is the player dead?
 isPlayerDead :: Player -> Bool

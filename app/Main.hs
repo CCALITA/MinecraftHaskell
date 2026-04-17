@@ -1170,7 +1170,7 @@ main = do
             let mouseNdcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
                 mouseNdcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
             furnaceState <- readIORef furnaceStateRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid mChestInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg mouseNdcX mouseNdcY
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg mouseNdcX mouseNdcY
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
             when (hudVC > 0) $ do
@@ -1471,12 +1471,12 @@ readMobType _          = Pig
 -- debugInfo: Just (pos, yaw, pitch, fps, chunkCount) when F3 overlay is active
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- showSleepMsg: True when "You can only sleep at night" should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> FurnaceState -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> Bool -> Float -> Float -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChestInv furnaceState debugInfo targetInfo showSleepMsg mouseX mouseY = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> FurnaceState -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> Bool -> Float -> Float -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv furnaceState debugInfo targetInfo showSleepMsg mouseX mouseY = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
-    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts
     ChestOpen     -> chestScreenVerts ++ cursorVerts
@@ -1570,6 +1570,27 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChe
             | halfDrum = (0.7, 0.5, 0.15, 0.5)   -- half
             | otherwise = (0.3, 0.2, 0.05, 0.4)  -- empty
       in quad dX dY (dX + dw) (dY + dh) color
+
+    -- Air bubble bar: shown above hunger bar (right side) when underwater
+    bubbleVerts
+      | airSupply >= maxAirSupply = []
+      | otherwise = concatMap makeBubble [0..9]
+    makeBubble i =
+      let bw = 0.035
+          bh = 0.035
+          -- Position above the hunger bar (hunger is at hotbarY - dh - 0.01)
+          bY = hotbarY - bh - 0.01 - bh - 0.01  -- one row above hunger
+          -- Right-aligned like hunger bar
+          bX = hotbarX0 + 9 * slotW - fromIntegral (i + 1 :: Int) * (bw + 0.005) + 0.005
+          -- Each bubble = 1.5 seconds of air supply
+          bubbleThreshold = fromIntegral (9 - i) * 1.5  -- bubble i pops when air <= this
+          fullBubble = airSupply > bubbleThreshold
+          partialBubble = airSupply > bubbleThreshold - 1.5 && not fullBubble
+          color
+            | fullBubble    = (0.3, 0.6, 0.9, 1.0)   -- full bubble (blue)
+            | partialBubble = (0.3, 0.6, 0.9, 0.4)   -- popping bubble (faded)
+            | otherwise     = (0.15, 0.25, 0.35, 0.2) -- empty slot (very faded)
+      in quad bX bY (bX + bw) (bY + bh) color
 
     -- First-person hand/arm in lower-right
     handVerts =
@@ -2250,6 +2271,7 @@ playerFromSaveData sd =
     , plFallDist  = sdFallDist sd
     , plEatingTimer = 0.0
     , plArmorSlots = [Nothing, Nothing, Nothing, Nothing]
+    , plAirSupply = maxAirSupply
     }
 
 -- | Restore player, inventory, and day/night state from SaveData into IORefs
