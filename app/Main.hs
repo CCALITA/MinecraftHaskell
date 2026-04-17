@@ -386,9 +386,12 @@ main = do
                 Just (ItemStack item 1) -> do
                   writeIORef craftingGridRef (setCraftingSlot grid row col (Just item))
                   writeIORef cursorItemRef (fmap (\i -> ItemStack i 1) slotContent)
-                Just (ItemStack item n) | n > 1 -> do
-                  writeIORef craftingGridRef (setCraftingSlot grid row col (Just item))
-                  writeIORef cursorItemRef (Just (ItemStack item (n - 1)))
+                Just (ItemStack item n) | n > 1 -> case slotContent of
+                  Nothing -> do  -- slot empty: place one from cursor
+                    writeIORef craftingGridRef (setCraftingSlot grid row col (Just item))
+                    writeIORef cursorItemRef (Just (ItemStack item (n - 1)))
+                  Just existing | existing == item -> pure ()  -- same item already there
+                  Just _ -> pure ()  -- different item: refuse placement
                 Nothing -> do
                   writeIORef craftingGridRef (setCraftingSlot grid row col Nothing)
                   writeIORef cursorItemRef (fmap (\i -> ItemStack i 1) slotContent)
@@ -510,98 +513,100 @@ main = do
                     putStrLn $ "Attacked " ++ entTag closest ++ " for " ++ show attackDmg ++ " damage!"
               _ -> pure ()
 
-      when (button == GLFW.MouseButton'1 && action == GLFW.MouseButtonState'Released) $
-        writeIORef miningRef Nothing  -- stop mining on release
+          -- Stop mining on LMB release (Playing mode only)
+          when (button == GLFW.MouseButton'1 && action == GLFW.MouseButtonState'Released) $
+            writeIORef miningRef Nothing
 
-      when (action == GLFW.MouseButtonState'Pressed) $ do
-        player <- readIORef playerRef
-        let eyePos = plPos player + V3 0 1.62 0
-            dir = dirFromPlayer player
-            blockQueryCb bx by bz = do
-              bt <- worldGetBlock world (V3 bx by bz)
-              pure (World.Block.isSolid bt)
+          -- Raycast and block interaction (Playing mode only)
+          when (action == GLFW.MouseButtonState'Pressed) $ do
+            player <- readIORef playerRef
+            let eyePos = plPos player + V3 0 1.62 0
+                dir = dirFromPlayer player
+                blockQueryCb bx by bz = do
+                  bt <- worldGetBlock world (V3 bx by bz)
+                  pure (World.Block.isSolid bt)
 
-        -- RMB: start eating if holding food and hungry
-        when (button == GLFW.MouseButton'2) $ do
-          inv <- readIORef inventoryRef
-          case selectedItem inv of
-            Just (ItemStack (FoodItem _) _)
-              | plHunger player < maxHunger -> do
-                  modifyIORef' playerRef (\p -> p { plEatingTimer = 1.6 })
-            _ -> pure ()
+            -- RMB: start eating if holding food and hungry
+            when (button == GLFW.MouseButton'2) $ do
+              inv <- readIORef inventoryRef
+              case selectedItem inv of
+                Just (ItemStack (FoodItem _) _)
+                  | plHunger player < maxHunger -> do
+                      modifyIORef' playerRef (\p -> p { plEatingTimer = 1.6 })
+                _ -> pure ()
 
-        mHit <- raycastBlock blockQueryCb eyePos dir maxReach
-        case mHit of
-          Nothing -> pure ()
-          Just hit -> do
-            let V3 bx by bz = rhBlockPos hit
-            case button of
-              GLFW.MouseButton'1 -> do  -- Left click: start mining
-                writeIORef miningRef (Just (V3 bx by bz, 0.0))
-              GLFW.MouseButton'2 -> do  -- Right click: interact or place
-                -- Check if clicking on an interactable block
-                hitBlock <- worldGetBlock world (V3 bx by bz)
-                let doorToggle = case hitBlock of
-                      OakDoorClosed -> Just OakDoorOpen
-                      OakDoorOpen   -> Just OakDoorClosed
-                      _             -> Nothing
-                case doorToggle of
-                  Just newDoor -> do
-                    worldSetBlock world (V3 bx by bz) newDoor
-                    rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
-                  Nothing -> case hitBlock of
-                    Bed -> do
-                      dnc <- readIORef dayNightRef
-                      if isNight dnc
-                        then do
-                          -- Set spawn point on top of bed
-                          writeIORef spawnPointRef (fmap fromIntegral (V3 bx by bz) + V3 0.5 1.0 0.5)
-                          -- Skip to dawn and increment day count
-                          modifyIORef' dayNightRef (\d -> d { dncTime = 0.25, dncDayCount = dncDayCount d + 1 })
-                          putStrLn "Sleeping... spawn point set."
-                        else
-                          writeIORef sleepMessageRef (Just 3.0)
-                    Chest -> do
-                      -- Open chest: create inventory if it doesn't exist yet
-                      let chestPos = V3 bx by bz
-                      mExisting <- getChestInventory blockEntityMapRef chestPos
-                      case mExisting of
-                        Nothing -> setChestInventory blockEntityMapRef chestPos emptyChestInventory
-                        Just _  -> pure ()
-                      writeIORef chestPosRef (Just chestPos)
-                      writeIORef gameModeRef ChestOpen
-                      GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
-                      writeIORef lastCursorRef Nothing
-                    CraftingTable -> do
-                      writeIORef gameModeRef CraftingOpen
-                      writeIORef craftingGridRef (emptyCraftingGrid 3)
-                      GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
-                      writeIORef lastCursorRef Nothing
-                    Furnace -> do
-                      writeIORef gameModeRef FurnaceOpen
-                      writeIORef furnacePosRef (Just (V3 bx by bz))
-                      GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
-                      writeIORef lastCursorRef Nothing
-                    _ -> do
-                      -- Place block from hotbar (skip if eating food)
-                      inv <- readIORef inventoryRef
-                      case selectedItem inv of
-                        Nothing -> pure ()
-                        Just (ItemStack (FoodItem _) _) -> pure ()  -- eating handles food, don't place
-                        Just (ItemStack item _) -> case itemToBlock item of
-                          Nothing -> pure ()
-                          Just bt -> do
-                            let V3 nx ny nz = rhFaceNormal hit
-                                placePos = V3 (bx + nx) (by + ny) (bz + nz)
-                            let (inv', removed) = removeItem inv item 1
-                            when (removed > 0) $ do
-                              writeIORef inventoryRef inv'
-                              worldSetBlock world placePos bt
-                              let V3 px' _ pz' = placePos
-                              when (isGravityAffected bt) $
-                                void $ settleGravityBlock world placePos
-                              rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
-              _ -> pure ()
+            mHit <- raycastBlock blockQueryCb eyePos dir maxReach
+            case mHit of
+              Nothing -> pure ()
+              Just hit -> do
+                let V3 bx by bz = rhBlockPos hit
+                case button of
+                  GLFW.MouseButton'1 -> do  -- Left click: start mining
+                    writeIORef miningRef (Just (V3 bx by bz, 0.0))
+                  GLFW.MouseButton'2 -> do  -- Right click: interact or place
+                    hitBlock <- worldGetBlock world (V3 bx by bz)
+                    let doorToggle = case hitBlock of
+                          OakDoorClosed -> Just OakDoorOpen
+                          OakDoorOpen   -> Just OakDoorClosed
+                          _             -> Nothing
+                    case doorToggle of
+                      Just newDoor -> do
+                        worldSetBlock world (V3 bx by bz) newDoor
+                        rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
+                      Nothing -> case hitBlock of
+                        Bed -> do
+                          dnc <- readIORef dayNightRef
+                          if isNight dnc
+                            then do
+                              writeIORef spawnPointRef (fmap fromIntegral (V3 bx by bz) + V3 0.5 1.0 0.5)
+                              modifyIORef' dayNightRef (\d -> d { dncTime = 0.25, dncDayCount = dncDayCount d + 1 })
+                            else
+                              writeIORef sleepMessageRef (Just 3.0)
+                        Chest -> do
+                          let chestPos = V3 bx by bz
+                          mExisting <- getChestInventory blockEntityMapRef chestPos
+                          case mExisting of
+                            Nothing -> setChestInventory blockEntityMapRef chestPos emptyChestInventory
+                            Just _  -> pure ()
+                          writeIORef chestPosRef (Just chestPos)
+                          writeIORef gameModeRef ChestOpen
+                          GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+                          writeIORef lastCursorRef Nothing
+                        CraftingTable -> do
+                          writeIORef gameModeRef CraftingOpen
+                          writeIORef craftingGridRef (emptyCraftingGrid 3)
+                          GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+                          writeIORef lastCursorRef Nothing
+                        Furnace -> do
+                          writeIORef gameModeRef FurnaceOpen
+                          writeIORef furnacePosRef (Just (V3 bx by bz))
+                          GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+                          writeIORef lastCursorRef Nothing
+                        _ -> do
+                          -- Place block from hotbar (skip if eating food)
+                          inv <- readIORef inventoryRef
+                          case selectedItem inv of
+                            Nothing -> pure ()
+                            Just (ItemStack (FoodItem _) _) -> pure ()
+                            Just (ItemStack item _) -> case itemToBlock item of
+                              Nothing -> pure ()
+                              Just bt -> do
+                                let V3 nx ny nz = rhFaceNormal hit
+                                    placePos = V3 (bx + nx) (by + ny) (bz + nz)
+                                    sel = invSelected inv
+                                -- Consume from selected slot directly
+                                case getSlot inv sel of
+                                  Just (ItemStack si cnt) | si == item ->
+                                    if cnt <= 1
+                                      then writeIORef inventoryRef (setSlot inv sel Nothing)
+                                      else writeIORef inventoryRef (setSlot inv sel (Just (ItemStack si (cnt - 1))))
+                                  _ -> pure ()
+                                worldSetBlock world placePos bt
+                                let V3 px' _ pz' = placePos
+                                when (isGravityAffected bt) $
+                                  void $ settleGravityBlock world placePos
+                                rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
+                  _ -> pure ()
 
     -- Key callback
     GLFW.setKeyCallback (whWindow wh) $ Just $ \_win key _scancode action _mods ->
@@ -1340,7 +1345,7 @@ hitCraftingSlot nx ny
   -- Output slot
   | nx >= 0.15 && nx <= 0.25 && ny >= -0.25 && ny <= -0.15 = Just CraftOutput
   -- Inventory slots below
-  | otherwise = fmap CraftInvSlot (hitInventorySlot nx (ny + 0.3))
+  | otherwise = fmap CraftInvSlot (hitInventorySlot nx (ny - 0.6))
 
 -- | Explode blocks in a sphere around a position, with a chance to drop items.
 explodeAt :: World -> V3 Float -> Int -> DroppedItems -> IO ()
@@ -1407,7 +1412,7 @@ hitFurnaceSlot nx ny
   -- Output slot (right)
   | nx >= 0.1 && nx <= 0.23 && ny >= -0.24 && ny <= -0.11 = Just FurnaceOutputSlot
   -- Inventory slots below
-  | otherwise = fmap FurnaceInvSlot (hitInventorySlot nx (ny + 0.3))
+  | otherwise = fmap FurnaceInvSlot (hitInventorySlot nx (ny - 0.6))
 
 -- | Parse mob type from entity tag string
 readMobType :: String -> MobType
