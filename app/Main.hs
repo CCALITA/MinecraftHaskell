@@ -35,6 +35,7 @@ import Entity.Spawn
 import Game.Save
 import Game.DroppedItem
 import Game.BlockEntity
+import Engine.Sound
 
 import Control.Monad (unless, when, forM_, forM, void)
 import Control.Concurrent.STM (readTVarIO, atomically, writeTVar)
@@ -177,6 +178,9 @@ main = do
     -- Block entity storage (chests)
     blockEntityMapRef <- newBlockEntityMap
     chestPosRef <- newIORef (Nothing :: Maybe (V3 Int))
+
+    -- Sound system (no-op stub, ready for real audio backend)
+    soundSystem <- initSoundSystem
 
     -- Entity system
     entityWorld <- newEntityWorld
@@ -593,6 +597,7 @@ main = do
                       Just newDoor -> do
                         worldSetBlock world (V3 bx by bz) newDoor
                         rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
+                        playSound soundSystem SndDoorOpen
                       Nothing -> case hitBlock of
                         Bed -> do
                           dnc <- readIORef dayNightRef
@@ -642,6 +647,7 @@ main = do
                                       else writeIORef inventoryRef (setSlot inv sel (Just (ItemStack si (cnt - 1))))
                                   _ -> pure ()
                                 worldSetBlock world placePos bt
+                                playSound soundSystem SndBlockPlace
                                 let V3 px' _ pz' = placePos
                                 when (isGravityAffected bt) $
                                   void $ settleGravityBlock world placePos
@@ -887,6 +893,7 @@ main = do
                                 _ -> inv'
                           writeIORef inventoryRef inv''
                           putStrLn $ "Broke " ++ show bt ++ " at " ++ show blockPos
+                          playSound soundSystem SndBlockBreak
                           -- Trigger falling blocks above the broken block
                           void $ triggerGravityAbove world blockPos
                           -- Rebuild chunk mesh once (covers both the break and any gravity cascade)
@@ -916,6 +923,7 @@ main = do
                             writeIORef inventoryRef inv'
                             modifyIORef' playerRef (\p -> p { plHunger = newHunger, plEatingTimer = 0.0 })
                             putStrLn $ "Ate " ++ show ft ++ ", restored " ++ show restore ++ " hunger"
+                            playSound soundSystem SndEat
                           _ -> cancelEating
                       else modifyIORef' playerRef (\p -> p { plEatingTimer = newTimer })
 
@@ -934,6 +942,7 @@ main = do
             do player' <- readIORef playerRef
                collected <- collectNearby droppedItems (plPos player') 1.5
                unless (null collected) $ do
+                 playSound soundSystem SndItemPickup
                  inv' <- readIORef inventoryRef
                  let inv'' = foldl (\i (item, cnt) -> fst $ addItem i item cnt) inv' collected
                  writeIORef inventoryRef inv''
@@ -995,10 +1004,12 @@ main = do
                         if newFuse >= 1.5
                           then do
                             putStrLn $ "Creeper exploded at " ++ show creeperPos ++ "!"
+                            playSound soundSystem SndExplosion
                             explodeAt world creeperPos explosionRadius droppedItems
                             let dmg = max 0 (floor (miAttackDmg info * (1.0 - distToPlayer / 7.0)) :: Int)
                             when (dmg > 0) $ do
                               modifyIORef' playerRef (damagePlayer dmg)
+                              playSound soundSystem SndPlayerHurt
                               putStrLn $ "Explosion dealt " ++ show dmg ++ " damage!"
                             updateEntity entityWorld eid (\e -> e { entAlive = False, entHealth = 0 })
                             destroyEntity entityWorld eid
@@ -1030,10 +1041,12 @@ main = do
                       let dmg = floor $ miAttackDmg (mobInfo mobType)
                       when (dmg > 0) $ do
                         modifyIORef' playerRef (damagePlayer dmg)
+                        playSound soundSystem SndPlayerHurt
                         putStrLn $ entTag ent ++ " attacked you for " ++ show dmg ++ " damage!"
                     _ -> pure ()
                 -- Check for mob death and spawn item drops
                 when (entHealth ent' <= 0) $ do
+                  playSound soundSystem SndMobDeath
                   destroyEntity entityWorld eid
                   modifyIORef' aiStatesRef (HM.delete eid)
                   modifyIORef' skeletonCooldownRef (HM.delete eid)
@@ -1056,6 +1069,7 @@ main = do
                  if newAge > 5.0 then pure Nothing         -- despawn after 5 seconds
                  else if playerDist < 1.0 then do          -- hit player
                    modifyIORef' playerRef (damagePlayer (projDamage proj))
+                   playSound soundSystem SndPlayerHurt
                    putStrLn $ "Arrow hit you for " ++ show (projDamage proj) ++ " damage!"
                    pure Nothing
                  else do
@@ -1209,6 +1223,7 @@ main = do
       -- Cleanup (runs even if game loop throws an exception)
       putStrLn "Cleaning up..."
       Vk.deviceWaitIdle device
+      cleanupSoundSystem soundSystem
       destroySyncObjects device syncObjects
       Vk.destroyCommandPool device cmdPool Nothing
       -- Destroy all chunk meshes
