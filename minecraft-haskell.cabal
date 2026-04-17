@@ -71,6 +71,7 @@ library
     Game.DayNight
     Game.Save
     Game.DroppedItem
+    Game.Particle
     Entity.ECS
     Entity.Mob
     Entity.Pathfinding
