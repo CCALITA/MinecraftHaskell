@@ -358,15 +358,15 @@ main = do
           (winW, winH) <- getWindowSize wh
           let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
               ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
-          -- Check 2x2 crafting grid first (top-right area of inventory screen)
-          let craft2x2X0 = 0.20 :: Float
-              craft2x2Y0 = -0.50 :: Float
+          -- Check 2x2 crafting grid (above inventory, center-right)
+          let craft2x2X0 = -0.03 :: Float
+              craft2x2Y0 = -0.80 :: Float
               craft2x2Sz = 0.10 :: Float
               craftCol = floor ((ndcX - craft2x2X0) / craft2x2Sz) :: Int
               craftRow = floor ((ndcY - craft2x2Y0) / craft2x2Sz) :: Int
               inCraftGrid = craftCol >= 0 && craftCol < 2 && craftRow >= 0 && craftRow < 2
               -- Output slot area
-              outX0 = 0.50 :: Float; outY0 = -0.48 :: Float; outSz = 0.12 :: Float
+              outX0 = 0.35 :: Float; outY0 = -0.75 :: Float; outSz = 0.10 :: Float
               inOutput = ndcX >= outX0 && ndcX <= outX0 + outSz && ndcY >= outY0 && ndcY <= outY0 + outSz
           if inCraftGrid then do
             -- Click on 2x2 crafting grid slot
@@ -1688,25 +1688,27 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChe
     invScreenVerts =
       -- Full-screen dark overlay
       quad (-1) (-1) 1 1 (0, 0, 0, 0.5)
-      -- Grid background
+      -- Title
+      ++ renderTextCentered (-0.85) 1.0 (1, 1, 1, 1) "INVENTORY"
+      -- === TOP ROW: Armor (left) + 2x2 Crafting (center-right) ===
+      -- Armor slots background
+      ++ quad (-0.55) (-0.82) (-0.30) (-0.40) (0.35, 0.3, 0.35, 0.9)
+      ++ renderText (-0.53) (-0.85) 0.5 (0.8, 0.8, 0.8, 0.8) "ARMOR"
+      ++ concatMap renderArmorSlot [0..3]
+      -- 2x2 crafting grid background
+      ++ quad (-0.05) (-0.82) 0.22 (-0.58) (0.35, 0.35, 0.3, 0.9)
+      ++ renderText (-0.03) (-0.85) 0.5 (0.8, 0.8, 0.8, 0.8) "CRAFT"
+      ++ concatMap renderInvCraftSlot [(r, c) | r <- [0..1], c <- [0..1]]
+      -- Arrow
+      ++ quad 0.25 (-0.73) 0.30 (-0.69) (1, 1, 1, 0.7)
+      -- Output slot
+      ++ quad 0.33 (-0.77) 0.47 (-0.63) (0.25, 0.25, 0.2, 0.9)
+      ++ renderInvCraftOutput
+      -- === BOTTOM: Inventory grid (4 rows x 9 cols) ===
       ++ quad (invGridX0 - 0.02) (invGridY0 - 0.02)
               (invGridX0 + 9 * invSlotW + 0.02) (invGridY0 + 4 * invSlotH + 0.02)
               (0.3, 0.3, 0.3, 0.9)
-      -- Individual inventory slots
       ++ concatMap renderInvSlot [0..35]
-      -- 2x2 crafting grid (top-right)
-      ++ quad 0.18 (-0.52) 0.42 (-0.28) (0.35, 0.35, 0.3, 0.9)
-      ++ renderText 0.22 (-0.55) 0.5 (1, 1, 1, 0.8) "CRAFT"
-      ++ concatMap renderInvCraftSlot [(r, c) | r <- [0..1], c <- [0..1]]
-      -- Crafting output
-      ++ quad 0.48 (-0.50) 0.62 (-0.36) (0.25, 0.25, 0.2, 0.9)
-      ++ renderInvCraftOutput
-      -- Arrow between grid and output
-      ++ quad 0.44 (-0.45) 0.47 (-0.41) (1, 1, 1, 0.7)
-      -- 4 armor slots (left column)
-      ++ quad (-0.60) (-0.52) (-0.46) (-0.10) (0.35, 0.3, 0.35, 0.9)
-      ++ renderText (-0.58) (-0.55) 0.5 (1, 1, 1, 0.8) "ARMOR"
-      ++ concatMap renderArmorSlot [0..3]
       where
         renderInvSlot idx =
           let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
@@ -1725,8 +1727,9 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChe
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
 
-        craft2x2X0 = 0.20 :: Float
-        craft2x2Y0 = -0.50 :: Float
+        -- 2x2 crafting grid positions (above inventory)
+        craft2x2X0 = -0.03 :: Float
+        craft2x2Y0 = -0.80 :: Float
         craft2x2Sz = 0.10 :: Float
 
         renderInvCraftSlot (row, col) =
@@ -1744,7 +1747,7 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChe
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
 
         renderInvCraftOutput =
-          let x = 0.50; y = -0.48; sz = 0.10
+          let x = 0.35; y = -0.75; sz = 0.10
               slotBg = quad x y (x + sz) (y + sz) (0.2, 0.2, 0.15, 0.9)
           in case tryCraft craftGrid of
             CraftSuccess item count ->
@@ -1759,12 +1762,12 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChe
               in slotBg ++ iconVerts ++ countText
             CraftFailure -> slotBg
 
-        armorLabels = ["H", "C", "L", "B"]  -- Helmet, Chestplate, Leggings, Boots
+        armorLabels = ["H", "C", "L", "B"]
         renderArmorSlot idx =
-          let x = -0.58; y = -0.50 + fromIntegral idx * 0.10 + 0.01
-              sw = 0.10; sh = 0.08
+          let x = -0.53; y = -0.78 + fromIntegral idx * 0.10
+              sw = 0.08; sh = 0.08
               slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
-              label = renderText (x + 0.01) (y + 0.01) 0.5 (0.5, 0.5, 0.5, 0.5) (armorLabels !! idx)
+              label = renderText (x + 0.02) (y + 0.02) 0.4 (0.5, 0.5, 0.5, 0.5) (armorLabels !! idx)
           in slotBg ++ label
 
     -- Crafting screen: grid + output + inventory below
