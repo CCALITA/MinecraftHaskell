@@ -46,6 +46,8 @@ import System.IO (hSetBuffering, stdout, BufferMode(..))
 import qualified Data.HashMap.Strict as HM
 import Data.Maybe (catMaybes)
 import qualified Data.IntMap.Strict as IM
+import qualified Data.Map.Strict as Map
+import qualified Data.Sequence as Seq
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as VS
 import Data.IORef
@@ -83,6 +85,17 @@ maxReach = 5.0
 -- | Default save directory root
 savesRoot :: FilePath
 savesRoot = "saves"
+
+-- | Starting inventory for a new world
+defaultStartInventory :: Inventory
+defaultStartInventory = selectHotbar (foldl (\i (item, cnt) -> fst $ addItem i item cnt) emptyInventory
+  [ (ToolItem Pickaxe Wood 59, 1)
+  , (ToolItem Sword Wood 59, 1)
+  , (BlockItem Stone, 64)
+  , (BlockItem Dirt, 64)
+  , (BlockItem OakPlanks, 64)
+  , (BlockItem Torch, 16)
+  ]) 2
 
 main :: IO ()
 main = do
@@ -200,16 +213,7 @@ main = do
     -- Give player some starting blocks (only when no saved inventory)
     case mSavedData of
       Just _  -> pure ()  -- inventory already restored from save
-      Nothing -> do
-        let startInv = selectHotbar (foldl (\i (item, cnt) -> fst $ addItem i item cnt) emptyInventory
-              [ (ToolItem Pickaxe Wood 59, 1)
-              , (ToolItem Sword Wood 59, 1)
-              , (BlockItem Stone, 64)
-              , (BlockItem Dirt, 64)
-              , (BlockItem OakPlanks, 64)
-              , (BlockItem Torch, 16)
-              ]) 2  -- select first block slot
-        writeIORef inventoryRef startInv
+      Nothing -> writeIORef inventoryRef defaultStartInventory
 
     -- Try to load saved world, otherwise generate fresh
     loaded <- loadWorld defaultSaveDir world
@@ -301,6 +305,30 @@ main = do
             _ <- updateLoadedChunks world spawnPos
             -- Reset player to spawn
             writeIORef playerRef (defaultPlayer spawnPos)
+            -- Reset all game state for new world
+            writeIORef inventoryRef defaultStartInventory
+            writeIORef cursorItemRef Nothing
+            writeIORef craftingGridRef (emptyCraftingGrid 3)
+            writeIORef dayNightRef newDayNightCycle
+            writeIORef furnaceStateRef newFurnaceState
+            writeIORef furnacePosRef Nothing
+            writeIORef chestPosRef Nothing
+            writeIORef blockEntityMapRef HM.empty
+            writeIORef droppedItems []
+            writeIORef (ewEntities entityWorld) IM.empty
+            writeIORef (ewNextId entityWorld) 1
+            writeIORef aiStatesRef HM.empty
+            writeIORef creeperFuseRef IM.empty
+            writeIORef projectilesRef []
+            writeIORef skeletonCooldownRef HM.empty
+            writeIORef spawnCooldownRef 0.0
+            writeIORef spawnPointRef spawnPos
+            writeIORef sleepMessageRef Nothing
+            writeIORef miningRef Nothing
+            writeIORef weatherRef newWeatherState
+            writeIORef particleSystemRef []
+            writeIORef (fsFluids fluidState) Map.empty
+            writeIORef (fsDirty fluidState) Seq.empty
             -- Settle gravity and rebuild chunk meshes
             settleAllLoadedChunks world
             rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
