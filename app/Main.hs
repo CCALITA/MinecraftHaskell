@@ -16,7 +16,7 @@ import Engine.Vulkan.Command
 import Engine.Vulkan.Memory
 import Engine.Vulkan.Descriptor
 import Engine.Vulkan.Texture
-import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid, isGravityAffected)
+import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid, isGravityAffected, isLeafBlock)
 import World.Chunk
 import World.Generation
 import World.World
@@ -1110,6 +1110,45 @@ main = do
               savePlayer sd (buildSaveData player inv dayNight)
               saveWorld sd world
 
+            -- Sapling growth tick (every 600 frames / ~10 seconds)
+            when (frameIdx > 0 && frameIdx `mod` 600 == 0) $ do
+              chunks <- HM.toList <$> readTVarIO (worldChunks world)
+              dirtyChunks <- newIORef ([] :: [ChunkPos])
+              forM_ chunks $ \(V2 cx' cz', chunk) ->
+                forEachBlock chunk $ \lx ly lz bt ->
+                  when (bt == OakSapling) $ do
+                    roll <- randomRIO (1 :: Int, 120)
+                    when (roll == 1) $ do
+                      let wx = cx' * chunkWidth + lx
+                          wz = cz' * chunkDepth + lz
+                          basePos = V3 wx ly wz
+                      worldSetBlock world basePos Air
+                      placeTreeWorld (worldGetBlock world) (worldSetBlock world) basePos
+                      modifyIORef' dirtyChunks (chunkPos chunk :)
+              remeshDirtyChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef dirtyChunks
+
+            -- Leaf decay tick (every 300 frames / ~5 seconds)
+            when (frameIdx > 0 && frameIdx `mod` 300 == 0) $ do
+              chunks <- HM.toList <$> readTVarIO (worldChunks world)
+              dirtyChunks <- newIORef ([] :: [ChunkPos])
+              forM_ chunks $ \(V2 cx' cz', chunk) ->
+                forEachBlock chunk $ \lx ly lz bt ->
+                  when (isLeafBlock bt) $ do
+                    let wx = cx' * chunkWidth + lx
+                        wz = cz' * chunkDepth + lz
+                    hasLog <- checkLogNearby world (V3 wx ly wz) 4
+                    unless hasLog $ do
+                      roll <- randomRIO (1 :: Int, 10)
+                      when (roll == 1) $ do
+                        worldSetBlock world (V3 wx ly wz) Air
+                        -- 5% chance to drop a sapling on decay
+                        sapRoll <- randomRIO (1 :: Int, 20)
+                        when (sapRoll == 1) $
+                          spawnDrop droppedItems (BlockItem OakSapling) 1
+                            (V3 (fromIntegral wx + 0.5) (fromIntegral ly + 0.5) (fromIntegral wz + 0.5))
+                        modifyIORef' dirtyChunks (chunkPos chunk :)
+              remeshDirtyChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef dirtyChunks
+
             -- Update chunks periodically
             when (frameIdx `mod` 60 == 0) $ do
               player <- readIORef playerRef
@@ -1410,6 +1449,20 @@ updateUBO device buf ubo = do
   poke (castPtr ptr) ubo
   Vk.unmapMemory device (baMemory buf)
 
+-- | Read accumulated dirty chunk positions, deduplicate, and remesh each
+remeshDirtyChunks
+  :: World -> Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue
+  -> IORef (HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
+  -> IORef [ChunkPos] -> IO ()
+remeshDirtyChunks world physDevice device cmdPool queue cacheRef dirtyRef = do
+  dirty <- readIORef dirtyRef
+  let unique = HM.keys (HM.fromList [(cp, ()) | cp <- dirty])
+  forM_ unique $ \cp -> do
+    mCh <- getChunk world cp
+    case mCh of
+      Nothing -> pure ()
+      Just ch -> meshSingleChunk physDevice device cmdPool queue cacheRef ch
+
 -- | Inventory slot layout constants
 invGridX0, invGridY0, invSlotW, invSlotH, invSlotPad :: Float
 invGridX0 = -0.55   -- left edge of inventory grid in NDC
@@ -1525,6 +1578,21 @@ readMobType "Cow"      = Cow
 readMobType "Sheep"    = Sheep
 readMobType "Chicken"  = Chicken
 readMobType _          = Pig
+
+-- | Check if an OakLog exists within a given Manhattan distance of a world position
+checkLogNearby :: World -> V3 Int -> Int -> IO Bool
+checkLogNearby world (V3 wx wy wz) radius = go offsets
+  where
+    offsets = [ V3 dx dy dz
+              | dx <- [-radius..radius]
+              , dy <- [-radius..radius]
+              , dz <- [-radius..radius]
+              , abs dx + abs dy + abs dz <= radius
+              ]
+    go [] = pure False
+    go (d : rest) = do
+      bt <- worldGetBlock world (V3 wx wy wz + d)
+      if bt == OakLog then pure True else go rest
 
 -- | Build HUD vertices from current state
 -- debugInfo: Just (pos, yaw, pitch, fps, chunkCount) when F3 overlay is active
