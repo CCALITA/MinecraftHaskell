@@ -688,6 +688,8 @@ main = do
                           OakDoorOpen   -> Just OakDoorClosed
                           FenceGateClosed -> Just FenceGateOpen
                           FenceGateOpen   -> Just FenceGateClosed
+                          TrapdoorClosed -> Just TrapdoorOpen
+                          TrapdoorOpen   -> Just TrapdoorClosed
                           _             -> Nothing
                     case doorToggle of
                       Just newDoor -> do
@@ -2444,6 +2446,8 @@ itemColor (BlockItem bt) = case bt of
   OakFence    -> (0.55, 0.4, 0.2, 1.0)
   FenceGateClosed -> (0.55, 0.4, 0.2, 1.0)
   FenceGateOpen   -> (0.55, 0.4, 0.2, 1.0)
+  TrapdoorClosed  -> (0.55, 0.4, 0.2, 1.0)
+  TrapdoorOpen    -> (0.55, 0.4, 0.2, 1.0)
   Farmland    -> (0.35, 0.22, 0.1, 1.0)
   WheatCrop   -> (0.6, 0.7, 0.2, 1.0)
   OakSapling  -> (0.2, 0.55, 0.15, 1.0)

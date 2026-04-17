@@ -196,6 +196,13 @@ allRecipes =
       , rcResult  = BlockItem OakDoorClosed
       , rcCount   = 1
       }
+  -- Trapdoor: 6 planks in 2x3 → 2 trapdoors
+  , Recipe
+      { rcPattern = [[bi OakPlanks, bi OakPlanks, bi OakPlanks]
+                    ,[bi OakPlanks, bi OakPlanks, bi OakPlanks]]
+      , rcResult  = BlockItem TrapdoorClosed
+      , rcCount   = 2
+      }
   -- Ladder: sticks in H-pattern (3x3)
   , Recipe
       { rcPattern = [[ji StickItem, Nothing,       ji StickItem]
