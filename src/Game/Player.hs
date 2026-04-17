@@ -10,6 +10,8 @@ module Game.Player
   , maxHealth
   , maxHunger
   , maxAirSupply
+  , maxSaturation
+  , defaultSaturation
   , applyFallDamage
   , damagePlayer
   , respawnPlayer
@@ -38,6 +40,7 @@ data Player = Player
   , plEatingTimer  :: !Float        -- 0.0 = not eating, counts down from 1.6
   , plArmorSlots   :: ![Maybe ItemStack]  -- 4 armor slots: helmet, chestplate, leggings, boots
   , plAirSupply    :: !Float        -- 15.0 = full, decrements when head submerged
+  , plSaturation   :: !Float        -- depletes before hunger, 0.0-20.0
   } deriving stock (Show, Eq)
 
 -- | Max health (10 hearts = 20 half-hearts)
@@ -51,6 +54,14 @@ maxHunger = 20
 -- | Max air supply in seconds (10 bubbles x 1.5s each)
 maxAirSupply :: Float
 maxAirSupply = 15.0
+
+-- | Max saturation (capped at 20.0)
+maxSaturation :: Float
+maxSaturation = 20.0
+
+-- | Default starting saturation
+defaultSaturation :: Float
+defaultSaturation = 5.0
 
 -- | Input state for a single tick
 data PlayerInput = PlayerInput
@@ -82,6 +93,7 @@ defaultPlayer spawnPos = Player
   , plEatingTimer  = 0.0
   , plArmorSlots   = [Nothing, Nothing, Nothing, Nothing]
   , plAirSupply    = maxAirSupply
+  , plSaturation   = defaultSaturation
   }
 
 noInput :: PlayerInput
@@ -239,12 +251,19 @@ updatePlayer dt input isSolidBlock isWaterBlock isLadderBlock player = do
           drownDmg = if headSubmerged && curAir <= 0 then floor (2.0 * dt + 0.5) else 0
           finalHealth1 = max 0 (finalHealth0 - drownDmg)
 
-          -- Hunger: drain on sprint/jump, regen health when full, starve when empty
-          hungerDrain = (if piSprint input then 1 else 0)
-                      + (if landed && piJump input then 1 else 0)
+          -- Hunger: exhaustion drains saturation first, then hunger
+          exhaustion = dt * 0.5
+            + (if piSprint input then dt * 0.1 else 0)
+            + (if landed && piJump input then 0.2 else 0)
+
+          curSat = plSaturation player
           curHunger = plHunger player
-          -- Drain hunger very slowly (1 point per ~100 ticks of sprinting)
-          newHunger = max 0 (curHunger - hungerDrain)
+          (newSaturation, newHunger)
+            | exhaustion > 0 && curSat > 0 =
+                (max 0 (curSat - exhaustion), curHunger)
+            | otherwise =
+                (0, max 0 (curHunger - if exhaustion > 0.05 then 1 else 0))
+
           -- Health regen when hunger >= 18
           healthRegen = if newHunger >= 18 && finalHealth1 < maxHealth then 1 else 0
           -- Starvation when hunger = 0
@@ -263,6 +282,7 @@ updatePlayer dt input isSolidBlock isWaterBlock isLadderBlock player = do
         , plHunger    = newHunger
         , plFallDist  = finalFallDist
         , plAirSupply = newAir
+        , plSaturation = newSaturation
         }
 
 -- | Direction vector from yaw and pitch (degrees)
@@ -299,7 +319,7 @@ damagePlayer dmg player = player { plHealth = max 0 (plHealth player - dmg) }
 -- | Respawn player at given position with full health
 respawnPlayer :: V3 Float -> Player -> Player
 respawnPlayer spawnPos player = player
-  { plPos = spawnPos, plVelocity = V3 0 0 0, plHealth = maxHealth, plHunger = maxHunger, plFallDist = 0, plAirSupply = maxAirSupply }
+  { plPos = spawnPos, plVelocity = V3 0 0 0, plHealth = maxHealth, plHunger = maxHunger, plFallDist = 0, plAirSupply = maxAirSupply, plSaturation = defaultSaturation }
 
 -- | Is the player dead?
 isPlayerDead :: Player -> Bool

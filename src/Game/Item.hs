@@ -18,6 +18,7 @@ module Game.Item
   , blockRequiredHarvestLevel
   , blockPreferredTool
   , foodHungerRestore
+  , foodSaturation
   , foodName
   , materialName
   , armorDefensePoints
@@ -226,6 +227,19 @@ foodHungerRestore = \case
   Bread          -> 5
   Apple          -> 4
   RottenFlesh    -> 4
+
+-- | How much saturation a food type restores
+foodSaturation :: FoodType -> Float
+foodSaturation = \case
+  RawPorkchop    -> 1.8
+  CookedPorkchop -> 12.8
+  RawBeef        -> 1.8
+  Steak          -> 12.8
+  RawChicken     -> 1.2
+  CookedChicken  -> 7.2
+  Bread          -> 6.0
+  Apple          -> 2.4
+  RottenFlesh    -> 0.8
 
 -- | Display name for a food type
 foodName :: FoodType -> String

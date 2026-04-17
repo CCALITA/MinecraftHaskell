@@ -932,10 +932,15 @@ main = do
                         case selectedItem inv of
                           Just (ItemStack (FoodItem ft) _) -> do
                             let restore = foodHungerRestore ft
+                                satRestore = foodSaturation ft
                                 newHunger = min maxHunger (plHunger player' + restore)
                                 (inv', _) = removeItem inv (FoodItem ft) 1
                             writeIORef inventoryRef inv'
-                            modifyIORef' playerRef (\p -> p { plHunger = newHunger, plEatingTimer = 0.0 })
+                            modifyIORef' playerRef (\p -> p
+                              { plHunger = newHunger
+                              , plEatingTimer = 0.0
+                              , plSaturation = min maxSaturation (plSaturation p + satRestore)
+                              })
                             putStrLn $ "Ate " ++ show ft ++ ", restored " ++ show restore ++ " hunger"
                             playSound soundSystem SndEat
                           _ -> cancelEating
@@ -2399,6 +2404,7 @@ playerFromSaveData sd =
     , plEatingTimer = 0.0
     , plArmorSlots = [Nothing, Nothing, Nothing, Nothing]
     , plAirSupply = maxAirSupply
+    , plSaturation = defaultSaturation
     }
 
 -- | Restore player, inventory, and day/night state from SaveData into IORefs
