@@ -35,6 +35,7 @@ import Entity.Spawn
 import Game.Save
 import Game.DroppedItem
 import Game.BlockEntity
+import Game.Particle
 
 import Control.Monad (unless, when, forM_, forM, void)
 import Control.Concurrent.STM (readTVarIO, atomically, writeTVar)
@@ -173,6 +174,7 @@ main = do
     sleepMessageRef <- newIORef (Nothing :: Maybe Float)
     fluidState <- newFluidState
     droppedItems <- newDroppedItems
+    particleSystemRef <- newParticleSystem
 
     -- Block entity storage (chests)
     blockEntityMapRef <- newBlockEntityMap
@@ -861,6 +863,10 @@ main = do
                         then do
                           -- Block is broken!
                           worldSetBlock world blockPos Air
+                          -- Spawn visual break particles
+                          let blockColor = itemColor (BlockItem bt)
+                              blockCenter = fmap fromIntegral blockPos :: V3 Float
+                          spawnBlockBreakParticles particleSystemRef blockCenter blockColor
                           when (bt == Water || bt == Lava) $
                             removeFluid fluidState world blockPos
                           -- Drop items as entities in the world
@@ -931,6 +937,9 @@ main = do
 
             -- Update dropped items (gravity, friction) and auto-collect nearby
             updateDroppedItems dt droppedItems
+
+            -- Update particle effects
+            tickParticles dt particleSystemRef
             do player' <- readIORef playerRef
                collected <- collectNearby droppedItems (plPos player') 1.5
                unless (null collected) $ do
@@ -1170,7 +1179,10 @@ main = do
             let mouseNdcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
                 mouseNdcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
             furnaceState <- readIORef furnaceStateRef
+            particles <- readIORef particleSystemRef
+            let particleVerts = if mode == Playing then renderParticles particles vp else []
             let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid mChestInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg mouseNdcX mouseNdcY
+                    VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
             when (hudVC > 0) $ do
