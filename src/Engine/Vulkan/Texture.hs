@@ -98,6 +98,7 @@ tileFull tileIdx lx ly = case tileIdx of
   44 -> furnaceSide lx ly      -- furnace side (V2 12 2)
   45 -> furnaceSide lx ly      -- furnace side alt (V2 13 2)
   -- Row 3: tileIdx 48-63
+  48 -> woolPattern lx ly         -- wool (V2 0 3)
   49 -> glassPattern lx ly     -- glass alt (V2 1 3)
   50 -> orePattern lx ly (100, 220, 255)  -- diamond ore (V2 2 3)
   54 -> stoneBrickPattern lx ly -- stone brick (V2 6 3)
@@ -360,6 +361,14 @@ tileFull tileIdx lx ly = case tileIdx of
       in if isLeaf then (30 + fromIntegral n, 120 + fromIntegral n, 20, 255)
          else if isStem then (100, 70, 30, 255)
          else (0, 0, 0, 0)
+
+    -- Wool: white with subtle fiber pattern (light gray lines on white)
+    woolPattern x y =
+      let n = pixHash x y 2400 `mod` 100
+          fiber = pixHash (x `div` 2) (y + x `div` 3) 2401 `mod` 10 < 2
+          v = if fiber then 210 + fromIntegral (n `mod` 15)
+              else 235 + fromIntegral (n `mod` 20)
+      in (v, v, v, 255)
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels

@@ -52,6 +52,7 @@ data BlockType
   | Farmland
   | WheatCrop
   | OakSapling
+  | Wool
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -121,6 +122,7 @@ blockProperties = \case
   Farmland     -> BlockProperties True  False 0  0.6
   WheatCrop    -> BlockProperties False True  0  0
   OakSapling   -> BlockProperties False True  0  0
+  Wool         -> BlockProperties True  False 0  0.8
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -199,3 +201,4 @@ blockFaceTexCoords blockType face = case blockType of
     _          -> V2 2 0  -- dirt sides
   WheatCrop   -> V2 5 2
   OakSapling  -> V2 6 2
+  Wool        -> V2 0 3
