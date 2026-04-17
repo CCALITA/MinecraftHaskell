@@ -245,6 +245,18 @@ allRecipes =
       , rcResult  = BlockItem RedstoneDust
       , rcCount   = 4
       }
+  -- Stone slabs: 3 stone in a row
+  , Recipe
+      { rcPattern = [[bi Stone, bi Stone, bi Stone]]
+      , rcResult  = BlockItem StoneSlab
+      , rcCount   = 6
+      }
+  -- Oak slabs: 3 oak planks in a row
+  , Recipe
+      { rcPattern = [[bi OakPlanks, bi OakPlanks, bi OakPlanks]]
+      , rcResult  = BlockItem OakSlab
+      , rcCount   = 6
+      }
   ] ++ toolRecipes
 
 -- | Helper to create a tool item with full durability

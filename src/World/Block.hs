@@ -7,6 +7,7 @@ module World.Block
   , isSolid
   , isGravityAffected
   , isLeafBlock
+  , blockCollisionHeight
   , blockFaceTexCoords
   , allBlockFaces
   ) where
@@ -57,6 +58,8 @@ data BlockType
   | FenceGateOpen
   | Lever
   | RedstoneDust
+  | StoneSlab
+  | OakSlab
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -131,6 +134,8 @@ blockProperties = \case
   FenceGateOpen   -> BlockProperties False True  0  2.0
   Lever        -> BlockProperties True  False 0  0.5
   RedstoneDust -> BlockProperties False True  0  0
+  StoneSlab    -> BlockProperties True  True  0  1.5
+  OakSlab      -> BlockProperties True  True  0  2.0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -148,6 +153,12 @@ isGravityAffected _      = False
 isLeafBlock :: BlockType -> Bool
 isLeafBlock OakLeaves = True
 isLeafBlock _         = False
+
+-- | Collision height for a block type. Slabs are half-height (0.5), all others are 1.0.
+blockCollisionHeight :: BlockType -> Float
+blockCollisionHeight StoneSlab = 0.5
+blockCollisionHeight OakSlab   = 0.5
+blockCollisionHeight _         = 1.0
 
 -- | Texture atlas coordinates for each block face.
 --   Returns (u, v) tile position in a 16x16 texture atlas.
@@ -214,3 +225,5 @@ blockFaceTexCoords blockType face = case blockType of
   FenceGateOpen   -> V2 8 2
   Lever       -> V2 9 2
   RedstoneDust -> V2 10 2
+  StoneSlab   -> V2 1 0
+  OakSlab     -> V2 4 0
