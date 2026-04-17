@@ -245,6 +245,14 @@ allRecipes =
       , rcResult  = BlockItem RedstoneDust
       , rcCount   = 4
       }
+  -- Iron door: 6 iron ingots in 2x3
+  , Recipe
+      { rcPattern = [[ji (MaterialItem IronIngot), ji (MaterialItem IronIngot)]
+                    ,[ji (MaterialItem IronIngot), ji (MaterialItem IronIngot)]
+                    ,[ji (MaterialItem IronIngot), ji (MaterialItem IronIngot)]]
+      , rcResult  = BlockItem IronDoorClosed
+      , rcCount   = 1
+      }
   ] ++ toolRecipes
 
 -- | Helper to create a tool item with full durability
