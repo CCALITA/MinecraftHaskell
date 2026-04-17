@@ -2450,6 +2450,8 @@ itemColor (BlockItem bt) = case bt of
   Wool        -> (0.95, 0.95, 0.95, 1.0)
   Lever       -> (0.5, 0.5, 0.5, 1.0)
   RedstoneDust -> (0.8, 0.1, 0.1, 1.0)
+  StoneStairs  -> (0.5, 0.5, 0.5, 1.0)
+  OakStairs    -> (0.78, 0.65, 0.43, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)
