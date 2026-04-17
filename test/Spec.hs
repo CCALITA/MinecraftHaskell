@@ -48,6 +48,7 @@ main = hspec $ do
   waterPhysicsSpec
   paintingSpec
   redstoneBlockSpec
+  cactusBlockSpec
 
 -- =========================================================================
 -- Block
@@ -1188,3 +1189,45 @@ redstoneBlockSpec = describe "Redstone blocks (Lever & RedstoneDust)" $ do
     isRedstoneConductor Cobblestone `shouldBe` True
     isRedstoneConductor Air `shouldBe` False
     isRedstoneConductor Glass `shouldBe` False
+
+-- =========================================================================
+-- Cactus block
+-- =========================================================================
+cactusBlockSpec :: Spec
+cactusBlockSpec = describe "Cactus block" $ do
+  it "Cactus is solid and transparent" $ do
+    isSolid Cactus `shouldBe` True
+    isTransparent Cactus `shouldBe` True
+
+  it "Cactus has hardness 0.4" $ do
+    bpHardness (blockProperties Cactus) `shouldBe` 0.4
+
+  it "Cactus emits no light" $ do
+    bpLightEmit (blockProperties Cactus) `shouldBe` 0
+
+  it "Cactus has correct enum value (after RedstoneDust)" $ do
+    fromEnum Cactus `shouldBe` fromEnum RedstoneDust + 1
+    toEnum (fromEnum RedstoneDust + 1) `shouldBe` (Cactus :: BlockType)
+
+  it "Cactus has valid texture coords" $ do
+    let V2 u v = blockFaceTexCoords Cactus FaceTop
+    u `shouldSatisfy` (>= 0)
+    v `shouldSatisfy` (>= 0)
+
+  it "Cactus drops itself" $ do
+    blockDrops Cactus `shouldBe` [(BlockItem Cactus, 1)]
+
+  it "Cactus requires no special harvest level" $ do
+    blockRequiredHarvestLevel Cactus `shouldBe` 0
+
+  it "Cactus has no preferred tool" $ do
+    blockPreferredTool Cactus `shouldBe` Nothing
+
+  it "Cactus roundtrips through Enum" $ do
+    toEnum (fromEnum Cactus) `shouldBe` (Cactus :: BlockType)
+
+  it "Cactus is not gravity-affected" $ do
+    isGravityAffected Cactus `shouldBe` False
+
+  it "Cactus is not a leaf block" $ do
+    isLeafBlock Cactus `shouldBe` False

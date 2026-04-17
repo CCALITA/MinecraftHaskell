@@ -187,6 +187,7 @@ blockDrops = \case
   IronDoorClosed -> [(BlockItem IronDoorClosed, 1)]
   IronDoorOpen -> [(BlockItem IronDoorClosed, 1)]  -- always drops closed door
   Fire        -> []
+  Cactus      -> [(BlockItem Cactus, 1)]
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond

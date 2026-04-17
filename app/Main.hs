@@ -227,6 +227,9 @@ main = do
     -- Damage flash effect (0.0 = no flash, set to 0.3 on damage)
     damageFlashRef <- newIORef (0.0 :: Float)
 
+    -- Cactus contact damage timer (1 damage per second while touching)
+    cactusDamageTimerRef <- newIORef (0.0 :: Float)
+
     -- Entity system
     entityWorld <- newEntityWorld
     spawnRngRef <- newIORef =<< System.Random.newStdGen
@@ -822,25 +825,36 @@ main = do
                               Just bt -> do
                                 let V3 nx ny nz = rhFaceNormal hit
                                     placePos = V3 (bx + nx) (by + ny) (bz + nz)
-                                    V3 _ placeY _ = placePos
+                                    V3 placeX placeY placeZ = placePos
                                     sel = invSelected inv
                                 -- Height limit: only place blocks in valid range [0, chunkHeight)
                                 when (placeY >= 0 && placeY < chunkHeight) $ do
-                                  -- Consume from selected slot directly
-                                  case getSlot inv sel of
-                                    Just (ItemStack si cnt) | si == item ->
-                                      if cnt <= 1
-                                        then writeIORef inventoryRef (setSlot inv sel Nothing)
-                                        else writeIORef inventoryRef (setSlot inv sel (Just (ItemStack si (cnt - 1))))
-                                    _ -> pure ()
-                                  worldSetBlock world placePos bt
-                                  playSound soundSystem SndBlockPlace
-                                  let V3 px' _ pz' = placePos
-                                  when (isGravityAffected bt) $
-                                    void $ settleGravityBlock world placePos
-                                  if bpLightEmit (blockProperties bt) > 0
-                                    then rebuildChunkWithNeighbors world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
-                                    else rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
+                                  -- Cactus placement validation: only on Sand, with 4-side air clearance
+                                  canPlace <- if bt == Cactus
+                                    then do
+                                      below <- worldGetBlock world (V3 placeX (placeY - 1) placeZ)
+                                      n' <- worldGetBlock world (V3 (placeX + 1) placeY placeZ)
+                                      s' <- worldGetBlock world (V3 (placeX - 1) placeY placeZ)
+                                      e' <- worldGetBlock world (V3 placeX placeY (placeZ + 1))
+                                      w' <- worldGetBlock world (V3 placeX placeY (placeZ - 1))
+                                      pure ((below == Sand || below == Cactus) && n' == Air && s' == Air && e' == Air && w' == Air)
+                                    else pure True
+                                  when canPlace $ do
+                                    -- Consume from selected slot directly
+                                    case getSlot inv sel of
+                                      Just (ItemStack si cnt) | si == item ->
+                                        if cnt <= 1
+                                          then writeIORef inventoryRef (setSlot inv sel Nothing)
+                                          else writeIORef inventoryRef (setSlot inv sel (Just (ItemStack si (cnt - 1))))
+                                      _ -> pure ()
+                                    worldSetBlock world placePos bt
+                                    playSound soundSystem SndBlockPlace
+                                    let V3 px' _ pz' = placePos
+                                    when (isGravityAffected bt) $
+                                      void $ settleGravityBlock world placePos
+                                    if bpLightEmit (blockProperties bt) > 0
+                                      then rebuildChunkWithNeighbors world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
+                                      else rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
                   _ -> pure ()
 
     -- Key callback
@@ -1016,6 +1030,36 @@ main = do
             -- Flash screen on fall/drowning/starvation/void damage
             when (healthAfter < healthBefore && healthAfter > 0)
               triggerDamageFlash
+
+            -- Cactus contact damage: 1 HP per second while player AABB overlaps any Cactus
+            when (gameMode == Playing) $ do
+              player' <- readIORef playerRef
+              let V3 px py pz = plPos player'
+                  -- Player AABB: 0.6 wide, 1.8 tall (centered on x/z, feet at py)
+                  minX = floor (px - 0.3) :: Int
+                  maxX = floor (px + 0.3) :: Int
+                  minY = floor py :: Int
+                  maxY = floor (py + 1.8) :: Int
+                  minZ = floor (pz - 0.3) :: Int
+                  maxZ = floor (pz + 0.3) :: Int
+                  -- Early-exit scan: stop as soon as we find one Cactus
+                  checkCactus [] = pure False
+                  checkCactus ((bx,by,bz):rest) = do
+                    bt <- worldGetBlock world (V3 bx by bz)
+                    if bt == Cactus then pure True else checkCactus rest
+                  coords = [(bx,by,bz) | bx <- [minX..maxX], by <- [minY..maxY], bz <- [minZ..maxZ]]
+              touchingCactus <- checkCactus coords
+              if touchingCactus
+                then do
+                  timer <- readIORef cactusDamageTimerRef
+                  let timer' = timer + dt
+                  if timer' >= 1.0
+                    then do
+                      modifyIORef' playerRef (damagePlayer 1)
+                      writeIORef cactusDamageTimerRef (timer' - 1.0)
+                      triggerDamageFlash
+                    else writeIORef cactusDamageTimerRef timer'
+                else writeIORef cactusDamageTimerRef 0.0
 
             -- Check for player death → show death screen
             do p <- readIORef playerRef
@@ -1312,12 +1356,13 @@ main = do
               savePlayer sd (buildSaveData player inv dayNight)
               saveWorld sd world
 
-            -- Sapling growth tick (every 600 frames / ~10 seconds)
+            -- Sapling & cactus growth tick (every 600 frames / ~10 seconds)
             when (frameIdx > 0 && frameIdx `mod` 600 == 0) $ do
               chunks <- HM.toList <$> readTVarIO (worldChunks world)
               dirtyChunks <- newIORef ([] :: [ChunkPos])
               forM_ chunks $ \(V2 cx' cz', chunk) ->
-                forEachBlock chunk $ \lx ly lz bt ->
+                forEachBlock chunk $ \lx ly lz bt -> do
+                  -- Sapling growth
                   when (bt == OakSapling) $ do
                     roll <- randomRIO (1 :: Int, 120)
                     when (roll == 1) $ do
@@ -1327,6 +1372,24 @@ main = do
                       worldSetBlock world basePos Air
                       placeTreeWorld (worldGetBlock world) (worldSetBlock world) basePos
                       modifyIORef' dirtyChunks (chunkPos chunk :)
+                  -- Cactus growth
+                  when (bt == Cactus) $ do
+                    let wx = cx' * chunkWidth + lx
+                        wz = cz' * chunkDepth + lz
+                    above <- worldGetBlock world (V3 wx (ly + 1) wz)
+                    when (above == Air && ly + 1 < chunkHeight) $ do
+                      let countDown :: Int -> IO Int
+                          countDown y
+                            | y <= 0 = pure 0
+                            | otherwise = do
+                                b <- worldGetBlock world (V3 wx y wz)
+                                if b == Cactus then (1 +) <$> countDown (y - 1) else pure 0
+                      columnH <- countDown ly
+                      when (columnH < 3) $ do
+                        roll <- randomRIO (1 :: Int, 20)
+                        when (roll == 1) $ do  -- 5% chance
+                          worldSetBlock world (V3 wx (ly + 1) wz) Cactus
+                          modifyIORef' dirtyChunks (chunkPos chunk :)
               remeshDirtyChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef dirtyChunks
 
             -- Leaf decay tick (every 300 frames / ~5 seconds)
@@ -2595,6 +2658,7 @@ itemColor (BlockItem bt) = case bt of
   StoneStairs  -> (0.5, 0.5, 0.5, 1.0)
   OakStairs    -> (0.78, 0.65, 0.43, 1.0)
   Fire        -> (1.0, 0.5, 0.0, 1.0)
+  Cactus      -> (0.2, 0.6, 0.2, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)
