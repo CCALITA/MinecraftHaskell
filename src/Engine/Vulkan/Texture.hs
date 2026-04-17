@@ -118,6 +118,8 @@ tileFull tileIdx lx ly = case tileIdx of
   36 -> farmlandPattern lx ly      -- farmland (V2 4 2)
   37 -> wheatCropPattern lx ly     -- wheat crop (V2 5 2)
   38 -> oakSaplingPattern lx ly    -- oak sapling (V2 6 2)
+  39 -> leverPattern lx ly          -- lever (V2 7 2)
+  40 -> redstoneDustPattern lx ly   -- redstone dust (V2 8 2)
   -- Fallback: checkerboard pattern so missing tiles are visible
   _  -> let checker = (lx + ly) `mod` 2 == 0
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
@@ -359,6 +361,22 @@ tileFull tileIdx lx ly = case tileIdx of
           n = pixHash x y 2300 `mod` 30
       in if isLeaf then (30 + fromIntegral n, 120 + fromIntegral n, 20, 255)
          else if isStem then (100, 70, 30, 255)
+         else (0, 0, 0, 0)
+
+    -- Lever: gray stick on stone background
+    leverPattern x y =
+      let isStick = x >= 7 && x <= 8 && y >= 4 && y <= 13
+          isBase  = x >= 5 && x <= 10 && y >= 13 && y <= 15
+      in if isStick then (120, 120, 120, 255)
+         else if isBase then stonePattern x y
+         else (0, 0, 0, 0)
+
+    -- Redstone dust: red cross pattern (powered)
+    redstoneDustPattern x y =
+      let isCross = (x >= 6 && x <= 9) || (y >= 6 && y <= 9)
+          isCenter = x >= 6 && x <= 9 && y >= 6 && y <= 9
+      in if isCenter then (200, 0, 0, 255)
+         else if isCross then (140, 0, 0, 255)
          else (0, 0, 0, 0)
 
 -- | Create a texture from raw RGBA pixel data

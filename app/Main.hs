@@ -39,6 +39,8 @@ import Game.BlockEntity
 import Engine.Sound
 import Game.Particle
 
+import World.Redstone (newRedstoneState, setPower, getPower, propagateRedstone)
+
 import Control.Monad (unless, when, forM_, forM, void)
 import Control.Concurrent.STM (readTVarIO, atomically, writeTVar)
 import Control.Exception (finally)
@@ -182,6 +184,9 @@ main = do
     -- Block entity storage (chests)
     blockEntityMapRef <- newBlockEntityMap
     chestPosRef <- newIORef (Nothing :: Maybe (V3 Int))
+
+    -- Redstone state
+    redstoneStateRef <- newIORef =<< newRedstoneState
 
     -- Sound system (no-op stub, ready for real audio backend)
     soundSystem <- initSoundSystem
@@ -631,6 +636,15 @@ main = do
                           writeIORef furnacePosRef (Just (V3 bx by bz))
                           GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
                           writeIORef lastCursorRef Nothing
+                        Lever -> do
+                          -- Toggle lever: update redstone state
+                          rsState <- readIORef redstoneStateRef
+                          let pos = V3 bx by bz
+                          currentPower <- getPower rsState pos
+                          let newPower = if currentPower > 0 then 0 else 15
+                          setPower rsState pos newPower
+                          propagateRedstone rsState [(pos, newPower)]
+                          rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
                         _ -> do
                           -- Place block from hotbar (skip if eating food)
                           inv <- readIORef inventoryRef
@@ -2216,6 +2230,8 @@ itemColor (BlockItem bt) = case bt of
   Farmland    -> (0.35, 0.22, 0.1, 1.0)
   WheatCrop   -> (0.6, 0.7, 0.2, 1.0)
   OakSapling  -> (0.2, 0.55, 0.15, 1.0)
+  Lever       -> (0.5, 0.5, 0.5, 1.0)
+  RedstoneDust -> (0.8, 0.1, 0.1, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)

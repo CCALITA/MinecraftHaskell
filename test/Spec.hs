@@ -17,6 +17,7 @@ import Game.Save (SaveData(..), inventoryToSlotList, slotListToInventory)
 import Game.BlockEntity
 import Game.Furnace
 import World.Weather
+import World.Redstone
 
 import Data.Binary (encode, decode)
 import Linear (V2(..), V3(..))
@@ -44,6 +45,7 @@ main = hspec $ do
   voidDamageSpec
   weatherSpec
   waterPhysicsSpec
+  redstoneBlockSpec
 
 -- =========================================================================
 -- Block
@@ -985,3 +987,92 @@ waterPhysicsSpec = describe "Water physics and air supply" $ do
     -- Player should have moved upward
     let V3 _ newY _ = plPos player1
     newY `shouldSatisfy` (>= 80.0)
+
+-- =========================================================================
+-- Redstone blocks
+-- =========================================================================
+redstoneBlockSpec :: Spec
+redstoneBlockSpec = describe "Redstone blocks (Lever & RedstoneDust)" $ do
+  -- Block properties
+  it "Lever is solid and opaque" $ do
+    isSolid Lever `shouldBe` True
+    isTransparent Lever `shouldBe` False
+
+  it "Lever has hardness 0.5" $ do
+    bpHardness (blockProperties Lever) `shouldBe` 0.5
+
+  it "RedstoneDust is not solid and is transparent" $ do
+    isSolid RedstoneDust `shouldBe` False
+    isTransparent RedstoneDust `shouldBe` True
+
+  it "RedstoneDust has hardness 0.0" $ do
+    bpHardness (blockProperties RedstoneDust) `shouldBe` 0.0
+
+  it "Lever emits no light" $ do
+    bpLightEmit (blockProperties Lever) `shouldBe` 0
+
+  it "RedstoneDust emits no light" $ do
+    bpLightEmit (blockProperties RedstoneDust) `shouldBe` 0
+
+  -- Enum roundtrip
+  it "new block types have correct enum values" $ do
+    fromEnum Lever `shouldBe` 36
+    fromEnum RedstoneDust `shouldBe` 37
+    toEnum 36 `shouldBe` (Lever :: BlockType)
+    toEnum 37 `shouldBe` (RedstoneDust :: BlockType)
+
+  -- Texture coords
+  it "Lever has valid texture coords" $ do
+    let V2 u v = blockFaceTexCoords Lever FaceTop
+    u `shouldSatisfy` (>= 0)
+    v `shouldSatisfy` (>= 0)
+
+  it "RedstoneDust has valid texture coords" $ do
+    let V2 u v = blockFaceTexCoords RedstoneDust FaceTop
+    u `shouldSatisfy` (>= 0)
+    v `shouldSatisfy` (>= 0)
+
+  -- Block drops
+  it "Lever drops itself" $ do
+    blockDrops Lever `shouldBe` [(BlockItem Lever, 1)]
+
+  it "RedstoneDust drops itself" $ do
+    blockDrops RedstoneDust `shouldBe` [(BlockItem RedstoneDust, 1)]
+
+  -- Crafting recipes
+  it "stick + cobblestone crafts a lever" $ do
+    let s = Just StickItem
+        c = Just (BlockItem Cobblestone)
+        grid = setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3) 0 0 s) 1 0 c
+    tryCraft grid `shouldBe` CraftSuccess (BlockItem Lever) 1
+
+  it "cobblestone + coal crafts redstone dust" $ do
+    let c = Just (BlockItem Cobblestone)
+        coal = Just (MaterialItem Coal)
+        grid = setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3) 0 0 c) 1 0 coal
+    tryCraft grid `shouldBe` CraftSuccess (BlockItem RedstoneDust) 4
+
+  -- Redstone state
+  it "newRedstoneState has zero power everywhere" $ do
+    rs <- newRedstoneState
+    p <- getPower rs (V3 0 0 0)
+    p `shouldBe` 0
+
+  it "setPower and getPower roundtrip" $ do
+    rs <- newRedstoneState
+    setPower rs (V3 5 10 5) 15
+    p <- getPower rs (V3 5 10 5)
+    p `shouldBe` 15
+
+  it "setPower to 0 clears power" $ do
+    rs <- newRedstoneState
+    setPower rs (V3 1 2 3) 10
+    setPower rs (V3 1 2 3) 0
+    p <- getPower rs (V3 1 2 3)
+    p `shouldBe` 0
+
+  it "isRedstoneConductor for common blocks" $ do
+    isRedstoneConductor Stone `shouldBe` True
+    isRedstoneConductor Cobblestone `shouldBe` True
+    isRedstoneConductor Air `shouldBe` False
+    isRedstoneConductor Glass `shouldBe` False

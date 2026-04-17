@@ -52,6 +52,8 @@ data BlockType
   | Farmland
   | WheatCrop
   | OakSapling
+  | Lever
+  | RedstoneDust
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -121,6 +123,8 @@ blockProperties = \case
   Farmland     -> BlockProperties True  False 0  0.6
   WheatCrop    -> BlockProperties False True  0  0
   OakSapling   -> BlockProperties False True  0  0
+  Lever        -> BlockProperties True  False 0  0.5
+  RedstoneDust -> BlockProperties False True  0  0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -199,3 +203,5 @@ blockFaceTexCoords blockType face = case blockType of
     _          -> V2 2 0  -- dirt sides
   WheatCrop   -> V2 5 2
   OakSapling  -> V2 6 2
+  Lever       -> V2 7 2
+  RedstoneDust -> V2 8 2
