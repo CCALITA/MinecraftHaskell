@@ -26,7 +26,8 @@ import Game.Inventory
 import Game.Item
 import Game.Crafting
 import Game.DayNight
-import World.Weather
+import World.Biome (biomeAt)
+import World.Weather (WeatherState(..), WeatherType(..), newWeatherState, updateWeather, isRaining, weatherSkyMultiplier, weatherAmbientMultiplier)
 import Game.Furnace
 import World.Fluid
 import World.Light
@@ -67,6 +68,25 @@ import Data.Char (isDigit)
 -- | Game UI mode
 data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen | FurnaceOpen | DeathScreen
   deriving stock (Show, Eq)
+
+-- | Debug overlay information shown when F3 is active
+data DebugInfo = DebugInfo
+  { dbgPos         :: !(V3 Float)
+  , dbgYaw         :: !Float
+  , dbgPitch       :: !Float
+  , dbgFps         :: !Int
+  , dbgChunkCount  :: !Int
+  , dbgBiome       :: !String
+  , dbgTargetBlock :: !String
+  , dbgLightLevel  :: !String
+  , dbgEntityCount :: !Int
+  , dbgWeather     :: !String
+  , dbgGameMode    :: !String
+  , dbgHealth      :: !Int
+  , dbgHunger      :: !Int
+  , dbgTimeOfDay   :: !String
+  , dbgDayTime     :: !Float
+  }
 
 -- | Arrow projectile fired by Skeletons
 data Projectile = Projectile
@@ -1362,9 +1382,39 @@ main = do
             case sleepMsg of
               Just t  -> writeIORef sleepMessageRef (if t - dt > 0 then Just (t - dt) else Nothing)
               Nothing -> pure ()
-            let debugInfo = if showDebug
-                  then Just (plPos player', plYaw player', plPitch player', fpsVal, HM.size chunks)
-                  else Nothing
+            debugInfo <- if showDebug
+                  then do
+                    let V3 px' _ pz' = plPos player'
+                        biomeName = show (biomeAt seed (realToFrac px') (realToFrac pz'))
+                    targetBlockName <- case targetBlock of
+                      Just (V3 bx by bz) -> show <$> worldGetBlock world (V3 bx by bz)
+                      Nothing -> pure "NONE"
+                    entCount <- entityCount entityWorld
+                    let weatherStr = case wsType weatherVal of
+                          Clear -> "CLEAR"
+                          Rain  -> "RAIN (" ++ showF2 (wsIntensity weatherVal) ++ ")"
+                        gameModeStr = if plFlying player' then "FLYING" else "PLAYING"
+                        dnc = dayNightVal
+                        todStr = show (getTimeOfDay dnc)
+                        dayTime = dncTime dnc
+                    pure $ Just DebugInfo
+                      { dbgPos         = plPos player'
+                      , dbgYaw         = plYaw player'
+                      , dbgPitch       = plPitch player'
+                      , dbgFps         = fpsVal
+                      , dbgChunkCount  = HM.size chunks
+                      , dbgBiome       = biomeName
+                      , dbgTargetBlock = targetBlockName
+                      , dbgLightLevel  = "N/A"
+                      , dbgEntityCount = entCount
+                      , dbgWeather     = weatherStr
+                      , dbgGameMode    = gameModeStr
+                      , dbgHealth      = plHealth player'
+                      , dbgHunger      = plHunger player'
+                      , dbgTimeOfDay   = todStr
+                      , dbgDayTime     = dayTime
+                      }
+                  else pure Nothing
             -- Get chest inventory if a chest is open
             mChestInv <- case mode of
               ChestOpen -> do
@@ -1479,6 +1529,25 @@ dirFromPlayer player =
   let yawR   = plYaw player * pi / 180
       pitchR = plPitch player * pi / 180
   in normalize $ V3 (sin yawR * cos pitchR) (sin pitchR) (cos yawR * cos pitchR)
+
+-- | Show a float with a given number of decimal places
+showFloatN :: Int -> Float -> String
+showFloatN decimals f =
+  let factor = 10 ^ decimals
+      n = round (f * fromIntegral factor) :: Int
+      whole = div (abs n) factor
+      frac  = mod (abs n) factor
+      sign  = if f < 0 && n /= 0 then "-" else ""
+      pad   = replicate (decimals - length (show frac)) '0'
+  in sign ++ show whole ++ "." ++ pad ++ show frac
+
+-- | Show a float with 1 decimal place
+showF1 :: Float -> String
+showF1 = showFloatN 1
+
+-- | Show a float with 2 decimal places
+showF2 :: Float -> String
+showF2 = showFloatN 2
 
 -- | Check if a GLFW key is pressed
 isKeyDown :: GLFW.Window -> GLFW.Key -> IO Bool
@@ -1730,10 +1799,10 @@ checkLogNearby world (V3 wx wy wz) radius = go offsets
       if bt == OakLog then pure True else go rest
 
 -- | Build HUD vertices from current state
--- debugInfo: Just (pos, yaw, pitch, fps, chunkCount) when F3 overlay is active
+-- debugInfo: Just DebugInfo when F3 overlay is active
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- showSleepMsg: True when "You can only sleep at night" should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> FurnaceState -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> Bool -> Float -> Float -> Float -> VS.Vector Float
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Bool -> Float -> Float -> Float -> VS.Vector Float
 buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv furnaceState debugInfo targetInfo showSleepMsg damageFlash mouseX mouseY = VS.fromList $
   case mode of
     MainMenu -> menuVerts
@@ -1874,23 +1943,29 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
           itemBlock = quad (armX + 0.02) (armY - 0.12) (armX + 0.18) armY heldColor
       in arm ++ itemBlock
 
-    -- F3 debug overlay: position, direction, FPS, chunk count
+    -- F3 debug overlay: extended debug information
     debugVerts = case debugInfo of
       Nothing -> []
-      Just (V3 px py pz, yaw, pitch, fps, chunkCount) ->
-        let dc = (1.0, 1.0, 1.0, 0.9)  -- white text
+      Just di ->
+        let V3 px py pz = dbgPos di
+            dc = (1.0, 1.0, 1.0, 0.9)  -- white text
             bgc = (0.0, 0.0, 0.0, 0.5)  -- semi-transparent background
             sc = 0.7 :: Float
             lh = 0.07 :: Float  -- line height
             x0 = -0.98 :: Float -- left margin
             y0 = -0.95 :: Float -- top (Vulkan NDC: -1 = top)
-            showF1 f = let n = round (f * 10) :: Int
-                           s = show (div n 10) ++ "." ++ show (mod (abs n) 10)
-                       in if f < 0 && n > -10 then "-" ++ s else s
-            lines' = [ "FPS: " ++ show fps
+            lines' = [ "FPS: " ++ show (dbgFps di)
                      , "XYZ: " ++ showF1 px ++ " / " ++ showF1 py ++ " / " ++ showF1 pz
-                     , "YAW: " ++ showF1 yaw ++ "  PITCH: " ++ showF1 pitch
-                     , "CHUNKS: " ++ show chunkCount
+                     , "YAW: " ++ showF1 (dbgYaw di) ++ "  PITCH: " ++ showF1 (dbgPitch di)
+                     , "CHUNKS: " ++ show (dbgChunkCount di)
+                     , "BIOME: " ++ dbgBiome di
+                     , "TARGET: " ++ dbgTargetBlock di
+                     , "LIGHT: " ++ dbgLightLevel di
+                     , "ENTITIES: " ++ show (dbgEntityCount di)
+                     , "WEATHER: " ++ dbgWeather di
+                     , "MODE: " ++ dbgGameMode di
+                     , "HP: " ++ show (dbgHealth di) ++ "/20  HUNGER: " ++ show (dbgHunger di) ++ "/20"
+                     , dbgTimeOfDay di ++ " (" ++ showF1 (dbgDayTime di) ++ ")"
                      ]
             bgW = 0.75 :: Float
             bgH = fromIntegral (length lines') * lh + 0.02

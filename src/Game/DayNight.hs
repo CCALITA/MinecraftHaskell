@@ -7,6 +7,7 @@ module Game.DayNight
   , getSkyColor
   , getAmbientLight
   , getSunDirection
+  , getTimeOfDay
   , isNight
   , isDawn
   , isDusk
