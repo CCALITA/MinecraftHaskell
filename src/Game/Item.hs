@@ -190,6 +190,8 @@ blockDrops = \case
   Fire        -> []
   Cactus      -> [(BlockItem Cactus, 1)]
   SugarCane   -> [(BlockItem SugarCane, 1)]
+  StoneSlab   -> [(BlockItem StoneSlab, 1)]
+  OakSlab     -> [(BlockItem OakSlab, 1)]
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
@@ -243,6 +245,8 @@ blockPreferredTool = \case
   TrapdoorOpen   -> Just Axe
   StoneStairs -> Just Pickaxe
   OakStairs   -> Just Axe
+  StoneSlab   -> Just Pickaxe
+  OakSlab     -> Just Axe
   _           -> Nothing
 
 -- | How much hunger a food type restores

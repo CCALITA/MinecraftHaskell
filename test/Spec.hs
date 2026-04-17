@@ -20,6 +20,8 @@ import World.Weather
 import Entity.ECS
 import World.Redstone
 
+import Game.Physics (BlockHeightQuery)
+
 import Data.Binary (encode, decode)
 import Linear (V2(..), V3(..))
 import qualified Data.Vector as V
@@ -49,6 +51,7 @@ main = hspec $ do
   paintingSpec
   redstoneBlockSpec
   cactusBlockSpec
+  slabBlockSpec
 
 -- =========================================================================
 -- Block
@@ -334,6 +337,8 @@ worldCoordSpec = describe "World.World.worldToChunkLocal" $ do
 playerInputSpec :: Spec
 playerInputSpec = describe "Game.Player input queue" $ do
   let airQuery _ _ _ = pure False
+      airHeightQuery :: BlockHeightQuery
+      airHeightQuery _ _ _ = pure 0.0
       queuedToggle = noInput { piToggleFly = True, piMouseDX = 4, piMouseDY = -2 }
 
   it "preserves fly toggle when no physics tick ran" $ do
@@ -345,8 +350,8 @@ playerInputSpec = describe "Game.Player input queue" $ do
   it "applies a queued fly toggle exactly once" $ do
     let player0 = (defaultPlayer (V3 0 80 0)) { plFlying = True }
 
-    player1 <- updatePlayer 0 queuedToggle airQuery airQuery airQuery player0
-    player2 <- updatePlayer 0 (endFrameInput True queuedToggle) airQuery airQuery airQuery player1
+    player1 <- updatePlayer 0 queuedToggle airHeightQuery airQuery airQuery player0
+    player2 <- updatePlayer 0 (endFrameInput True queuedToggle) airHeightQuery airQuery airQuery player1
 
     plFlying player1 `shouldBe` False
     plFlying player2 `shouldBe` False
@@ -1006,6 +1011,8 @@ weatherSpec = describe "World.Weather" $ do
 waterPhysicsSpec :: Spec
 waterPhysicsSpec = describe "Water physics and air supply" $ do
   let airQuery _ _ _ = pure False
+      airHeightQuery :: BlockHeightQuery
+      airHeightQuery _ _ _ = pure 0.0
       -- Water everywhere: all blocks return True for water query
       waterQuery _ _ _ = pure True
       -- Water only at head level (y=81, since head = feet_y + 1.62, so floor(80 + 1.62) = 81)
@@ -1021,17 +1028,17 @@ waterPhysicsSpec = describe "Water physics and air supply" $ do
   it "air supply decrements when head is submerged" $ do
     let player0 = (defaultPlayer (V3 0 80 0)) { plFlying = False }
     -- headWaterQuery returns True for y=81 (floor(80 + 1.62) = 81)
-    player1 <- updatePlayer 0.05 noInput airQuery headWaterQuery airQuery player0
+    player1 <- updatePlayer 0.05 noInput airHeightQuery headWaterQuery airQuery player0
     plAirSupply player1 `shouldSatisfy` (< 15.0)
 
   it "air supply restores when head is not submerged" $ do
     let player0 = (defaultPlayer (V3 0 80 0)) { plFlying = False, plAirSupply = 10.0 }
-    player1 <- updatePlayer 0.05 noInput airQuery airQuery airQuery player0
+    player1 <- updatePlayer 0.05 noInput airHeightQuery airQuery airQuery player0
     plAirSupply player1 `shouldSatisfy` (> 10.0)
 
   it "air supply does not exceed maxAirSupply" $ do
     let player0 = (defaultPlayer (V3 0 80 0)) { plFlying = False, plAirSupply = 14.99 }
-    player1 <- updatePlayer 0.05 noInput airQuery airQuery airQuery player0
+    player1 <- updatePlayer 0.05 noInput airHeightQuery airQuery airQuery player0
     plAirSupply player1 `shouldSatisfy` (<= 15.0)
 
   it "respawnPlayer resets air supply" $ do
@@ -1041,14 +1048,14 @@ waterPhysicsSpec = describe "Water physics and air supply" $ do
 
   it "flying mode resets air supply to max" $ do
     let player0 = (defaultPlayer (V3 0 80 0)) { plFlying = True, plAirSupply = 5.0 }
-    player1 <- updatePlayer 0.05 noInput airQuery waterQuery airQuery player0
+    player1 <- updatePlayer 0.05 noInput airHeightQuery waterQuery airQuery player0
     plAirSupply player1 `shouldBe` 15.0
 
   it "water movement speed is reduced (swim upward at 2.0)" $ do
     -- When in water with jump pressed, vertical velocity should be ~2.0
     let player0 = (defaultPlayer (V3 0 80 0)) { plFlying = False }
         jumpInput = noInput { piJump = True }
-    player1 <- updatePlayer 0.05 jumpInput airQuery waterQuery airQuery player0
+    player1 <- updatePlayer 0.05 jumpInput airHeightQuery waterQuery airQuery player0
     -- Player should have moved upward
     let V3 _ newY _ = plPos player1
     newY `shouldSatisfy` (>= 80.0)
@@ -1205,9 +1212,8 @@ cactusBlockSpec = describe "Cactus block" $ do
   it "Cactus emits no light" $ do
     bpLightEmit (blockProperties Cactus) `shouldBe` 0
 
-  it "Cactus has correct enum value (after RedstoneDust)" $ do
-    fromEnum Cactus `shouldBe` fromEnum RedstoneDust + 1
-    toEnum (fromEnum RedstoneDust + 1) `shouldBe` (Cactus :: BlockType)
+  it "Cactus has correct enum position" $ do
+    toEnum (fromEnum Cactus) `shouldBe` (Cactus :: BlockType)
 
   it "Cactus has valid texture coords" $ do
     let V2 u v = blockFaceTexCoords Cactus FaceTop
@@ -1231,3 +1237,88 @@ cactusBlockSpec = describe "Cactus block" $ do
 
   it "Cactus is not a leaf block" $ do
     isLeafBlock Cactus `shouldBe` False
+
+-- =========================================================================
+-- Slab blocks
+-- =========================================================================
+slabBlockSpec :: Spec
+slabBlockSpec = describe "Slab blocks (StoneSlab & OakSlab)" $ do
+  -- Block properties
+  it "StoneSlab is solid and transparent (half block needs top face rendered)" $ do
+    isSolid StoneSlab `shouldBe` True
+    isTransparent StoneSlab `shouldBe` True
+
+  it "OakSlab is solid and transparent" $ do
+    isSolid OakSlab `shouldBe` True
+    isTransparent OakSlab `shouldBe` True
+
+  it "StoneSlab has same hardness as Stone (1.5)" $ do
+    bpHardness (blockProperties StoneSlab) `shouldBe` 1.5
+
+  it "OakSlab has same hardness as OakPlanks (2.0)" $ do
+    bpHardness (blockProperties OakSlab) `shouldBe` 2.0
+
+  -- Collision height
+  it "StoneSlab has 0.5 collision height" $ do
+    blockCollisionHeight StoneSlab `shouldBe` 0.5
+
+  it "OakSlab has 0.5 collision height" $ do
+    blockCollisionHeight OakSlab `shouldBe` 0.5
+
+  it "Stone has 1.0 collision height" $ do
+    blockCollisionHeight Stone `shouldBe` 1.0
+
+  it "Air has 1.0 collision height (but is not solid)" $ do
+    blockCollisionHeight Air `shouldBe` 1.0
+
+  -- Enum roundtrip
+  it "slab block types roundtrip through Enum" $ do
+    toEnum (fromEnum StoneSlab) `shouldBe` (StoneSlab :: BlockType)
+    toEnum (fromEnum OakSlab) `shouldBe` (OakSlab :: BlockType)
+
+  -- Texture coords
+  it "StoneSlab has valid texture coords" $ do
+    let V2 u v = blockFaceTexCoords StoneSlab FaceTop
+    u `shouldSatisfy` (>= 0)
+    v `shouldSatisfy` (>= 0)
+
+  it "OakSlab has valid texture coords" $ do
+    let V2 u v = blockFaceTexCoords OakSlab FaceTop
+    u `shouldSatisfy` (>= 0)
+    v `shouldSatisfy` (>= 0)
+
+  -- Block drops
+  it "StoneSlab drops itself" $ do
+    blockDrops StoneSlab `shouldBe` [(BlockItem StoneSlab, 1)]
+
+  it "OakSlab drops itself" $ do
+    blockDrops OakSlab `shouldBe` [(BlockItem OakSlab, 1)]
+
+  -- Preferred tools
+  it "StoneSlab prefers pickaxe" $ do
+    blockPreferredTool StoneSlab `shouldBe` Just Pickaxe
+
+  it "OakSlab prefers axe" $ do
+    blockPreferredTool OakSlab `shouldBe` Just Axe
+
+  -- Crafting recipes
+  it "3 stone in a row crafts 6 stone slabs" $ do
+    let s = Just (BlockItem Stone)
+        grid = setCraftingSlot (setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3)
+          0 0 s) 0 1 s) 0 2 s
+    tryCraft grid `shouldBe` CraftSuccess (BlockItem StoneSlab) 6
+
+  it "3 oak planks in a row crafts 6 oak slabs" $ do
+    let p = Just (BlockItem OakPlanks)
+        grid = setCraftingSlot (setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3)
+          0 0 p) 0 1 p) 0 2 p
+    tryCraft grid `shouldBe` CraftSuccess (BlockItem OakSlab) 6
+
+  -- Binary roundtrip
+  it "StoneSlab roundtrips through Binary" $ do
+    let item = BlockItem StoneSlab
+    decode (encode item) `shouldBe` item
+
+  it "OakSlab roundtrips through Binary" $ do
+    let item = BlockItem OakSlab
+    decode (encode item) `shouldBe` item

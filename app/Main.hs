@@ -16,12 +16,12 @@ import Engine.Vulkan.Command
 import Engine.Vulkan.Memory
 import Engine.Vulkan.Descriptor
 import Engine.Vulkan.Texture
-import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid, isGravityAffected, isLeafBlock)
+import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid, isGravityAffected, isLeafBlock, blockCollisionHeight)
 import World.Chunk
 import World.Generation
 import World.World
 import Game.Player
-import Game.Physics (BlockQuery)
+import Game.Physics (BlockQuery, BlockHeightQuery)
 import Game.Inventory
 import Game.Item
 import Game.Crafting
@@ -972,8 +972,13 @@ main = do
           bt <- worldGetBlock world (V3 bx by bz)
           pure (predicate bt)
 
-    let blockQuery :: BlockQuery
-        blockQuery = mkBlockQuery World.Block.isSolid
+    let blockQuery :: BlockHeightQuery
+        blockQuery bx by bz = do
+          bt <- worldGetBlock world (V3 bx by bz)
+          pure (if World.Block.isSolid bt then blockCollisionHeight bt else 0.0)
+
+    let solidQuery :: BlockQuery
+        solidQuery = mkBlockQuery World.Block.isSolid
 
     let waterQuery :: BlockQuery
         waterQuery = mkBlockQuery (== Water)
@@ -1255,7 +1260,7 @@ main = do
               player <- readIORef playerRef
               dayNight <- readIORef dayNightRef
               weather <- readIORef weatherRef
-              _ <- trySpawnMobs defaultSpawnRules entityWorld dayNight weather blockQuery (plPos player) spawnRngRef
+              _ <- trySpawnMobs defaultSpawnRules entityWorld dayNight weather solidQuery (plPos player) spawnRngRef
               pure ()
 
             -- Update mob AI (every 3 frames)
@@ -1268,7 +1273,7 @@ main = do
                 let eid = entId ent
                     mobType = readMobType (entTag ent)
                     currentAI = HM.lookupDefault (AIIdle 2.0) eid aiStates
-                (ent', newAI) <- updateMobAI dt ent mobType (plPos player) blockQuery currentAI spawnRngRef
+                (ent', newAI) <- updateMobAI dt ent mobType (plPos player) solidQuery currentAI spawnRngRef
                 updateEntity entityWorld eid (const ent')
                 modifyIORef' aiStatesRef (HM.insert eid newAI)
                 -- Skeleton ranged attack, Creeper explosion, or melee
@@ -1705,7 +1710,7 @@ main = do
       putStrLn "Goodbye!"
 
 -- | Run physics ticks consuming accumulated time
-playerLoop :: PlayerInput -> BlockQuery -> BlockQuery -> BlockQuery -> IORef Float -> Float -> IORef Player -> IO ()
+playerLoop :: PlayerInput -> BlockHeightQuery -> BlockQuery -> BlockQuery -> IORef Float -> Float -> IORef Player -> IO ()
 playerLoop input blockQuery waterQuery ladderQuery accumRef accum playerRef
   | accum < tickRate = writeIORef accumRef accum
   | otherwise = do
@@ -2717,6 +2722,8 @@ itemColor (BlockItem bt) = case bt of
   Fire        -> (1.0, 0.5, 0.0, 1.0)
   Cactus      -> (0.2, 0.6, 0.2, 1.0)
   SugarCane   -> (0.4, 0.7, 0.3, 1.0)
+  StoneSlab   -> (0.5, 0.5, 0.5, 1.0)
+  OakSlab     -> (0.78, 0.65, 0.43, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)

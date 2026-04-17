@@ -7,8 +7,8 @@ module World.Block
   , isSolid
   , isGravityAffected
   , isLeafBlock
-  , blockFaceTexCoords
   , blockCollisionHeight
+  , blockFaceTexCoords
   , allBlockFaces
   ) where
 
@@ -67,6 +67,8 @@ data BlockType
   | Fire
   | Cactus
   | SugarCane
+  | StoneSlab
+  | OakSlab
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -150,6 +152,8 @@ blockProperties = \case
   Fire         -> BlockProperties False True  15 0.0
   Cactus       -> BlockProperties True  True  0  0.4
   SugarCane    -> BlockProperties False True  0  0
+  StoneSlab    -> BlockProperties True  True  0  1.5
+  OakSlab      -> BlockProperties True  True  0  2.0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -167,6 +171,14 @@ isGravityAffected _      = False
 isLeafBlock :: BlockType -> Bool
 isLeafBlock OakLeaves = True
 isLeafBlock _         = False
+
+-- | Collision height for a block type. Slabs are half-height (0.5), all others are 1.0.
+blockCollisionHeight :: BlockType -> Float
+blockCollisionHeight StoneStairs = 0.5
+blockCollisionHeight OakStairs   = 0.5
+blockCollisionHeight StoneSlab = 0.5
+blockCollisionHeight OakSlab   = 0.5
+blockCollisionHeight _         = 1.0
 
 -- | Texture atlas coordinates for each block face.
 --   Returns (u, v) tile position in a 16x16 texture atlas.
@@ -242,9 +254,5 @@ blockFaceTexCoords blockType face = case blockType of
   Fire        -> V2 11 2
   Cactus      -> V2 3 5
   SugarCane   -> V2 4 5
-
--- | Collision height for a block (1.0 = full block, 0.5 = half-height for auto-step)
-blockCollisionHeight :: BlockType -> Float
-blockCollisionHeight StoneStairs = 0.5
-blockCollisionHeight OakStairs   = 0.5
-blockCollisionHeight _           = 1.0
+  StoneSlab   -> V2 1 0
+  OakSlab     -> V2 4 0

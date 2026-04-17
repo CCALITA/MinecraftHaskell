@@ -123,7 +123,7 @@ mouseSensitivity :: Float
 mouseSensitivity = 0.15
 
 -- | Update player for one physics tick
-updatePlayer :: Float -> PlayerInput -> BlockQuery -> BlockQuery -> BlockQuery -> Player -> IO Player
+updatePlayer :: Float -> PlayerInput -> BlockHeightQuery -> BlockQuery -> BlockQuery -> Player -> IO Player
 updatePlayer dt input isSolidBlock isWaterBlock isLadderBlock player = do
   -- 1. Mouse look
   let yaw'   = plYaw player - piMouseDX input * mouseSensitivity
