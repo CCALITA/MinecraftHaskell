@@ -596,6 +596,8 @@ main = do
                     let doorToggle = case hitBlock of
                           OakDoorClosed -> Just OakDoorOpen
                           OakDoorOpen   -> Just OakDoorClosed
+                          FenceGateClosed -> Just FenceGateOpen
+                          FenceGateOpen   -> Just FenceGateClosed
                           _             -> Nothing
                     case doorToggle of
                       Just newDoor -> do
@@ -2213,6 +2215,8 @@ itemColor (BlockItem bt) = case bt of
   Ladder      -> (0.5, 0.35, 0.15, 1.0)
   Bed         -> (0.7, 0.15, 0.15, 1.0)
   OakFence    -> (0.55, 0.4, 0.2, 1.0)
+  FenceGateClosed -> (0.55, 0.4, 0.2, 1.0)
+  FenceGateOpen   -> (0.55, 0.4, 0.2, 1.0)
   Farmland    -> (0.35, 0.22, 0.1, 1.0)
   WheatCrop   -> (0.6, 0.7, 0.2, 1.0)
   OakSapling  -> (0.2, 0.55, 0.15, 1.0)

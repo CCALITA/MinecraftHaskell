@@ -169,6 +169,8 @@ blockDrops = \case
   WheatCrop   -> [(MaterialItem Wheat, 1)]
   OakSapling  -> [(BlockItem OakSapling, 1)]
   Wool        -> [(BlockItem Wool, 1)]
+  FenceGateClosed -> [(BlockItem FenceGateClosed, 1)]
+  FenceGateOpen   -> [(BlockItem FenceGateClosed, 1)]  -- always drops closed form
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
@@ -212,6 +214,8 @@ blockPreferredTool = \case
   OakDoorClosed -> Just Axe
   OakDoorOpen -> Just Axe
   OakFence    -> Just Axe
+  FenceGateClosed -> Just Axe
+  FenceGateOpen   -> Just Axe
   Bed         -> Just Axe
   _           -> Nothing
 

@@ -53,6 +53,8 @@ data BlockType
   | WheatCrop
   | OakSapling
   | Wool
+  | FenceGateClosed
+  | FenceGateOpen
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -123,6 +125,8 @@ blockProperties = \case
   WheatCrop    -> BlockProperties False True  0  0
   OakSapling   -> BlockProperties False True  0  0
   Wool         -> BlockProperties True  False 0  0.8
+  FenceGateClosed -> BlockProperties True  True  0  2.0
+  FenceGateOpen   -> BlockProperties False True  0  2.0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -202,3 +206,5 @@ blockFaceTexCoords blockType face = case blockType of
   WheatCrop   -> V2 5 2
   OakSapling  -> V2 6 2
   Wool        -> V2 0 3
+  FenceGateClosed -> V2 7 2
+  FenceGateOpen   -> V2 8 2

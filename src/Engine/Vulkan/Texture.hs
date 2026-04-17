@@ -119,6 +119,8 @@ tileFull tileIdx lx ly = case tileIdx of
   36 -> farmlandPattern lx ly      -- farmland (V2 4 2)
   37 -> wheatCropPattern lx ly     -- wheat crop (V2 5 2)
   38 -> oakSaplingPattern lx ly    -- oak sapling (V2 6 2)
+  39 -> fenceGateClosedPattern lx ly -- fence gate closed (V2 7 2)
+  40 -> fenceGateOpenPattern lx ly   -- fence gate open (V2 8 2)
   -- Fallback: checkerboard pattern so missing tiles are visible
   _  -> let checker = (lx + ly) `mod` 2 == 0
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
@@ -369,6 +371,25 @@ tileFull tileIdx lx ly = case tileIdx of
           v = if fiber then 210 + fromIntegral (n `mod` 15)
               else 235 + fromIntegral (n `mod` 20)
       in (v, v, v, 255)
+
+    -- Fence gate closed: brown planks with cross-brace pattern
+    fenceGateClosedPattern x y =
+      let isPost = (x >= 1 && x <= 3) || (x >= 12 && x <= 14)
+          isRail = (y >= 3 && y <= 5) || (y >= 10 && y <= 12)
+          isCrossBrace = x >= 4 && x <= 11 && (isRail || y == 7 || y == 8)
+          border = x == 0 || x == 15
+      in if border then (80, 55, 25, 255)
+         else if isPost then (130, 95, 45, 255)
+         else if isCrossBrace then (120, 85, 40, 255)
+         else (0, 0, 0, 0)
+
+    -- Fence gate open: thin side edges only (gate swung open)
+    fenceGateOpenPattern x y =
+      let isPost = (x >= 1 && x <= 3) || (x >= 12 && x <= 14)
+          isRail = (y >= 3 && y <= 5) || (y >= 10 && y <= 12)
+      in if isPost && isRail then (120, 85, 40, 255)
+         else if isPost then (130, 95, 45, 255)
+         else (0, 0, 0, 0)
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels
