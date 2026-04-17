@@ -180,11 +180,11 @@ allRecipes =
       , rcResult  = BlockItem Brick
       , rcCount   = 1
       }
-  -- TNT from sand + gravel pattern
+  -- TNT from gunpowder + sand pattern
   , Recipe
-      { rcPattern = [[bi Sand,   bi Gravel, bi Sand]
-                    ,[bi Gravel, bi Sand,   bi Gravel]
-                    ,[bi Sand,   bi Gravel, bi Sand]]
+      { rcPattern = [[ji (MaterialItem Gunpowder), bi Sand,                      ji (MaterialItem Gunpowder)]
+                    ,[bi Sand,                      ji (MaterialItem Gunpowder), bi Sand]
+                    ,[ji (MaterialItem Gunpowder), bi Sand,                      ji (MaterialItem Gunpowder)]]
       , rcResult  = BlockItem TNT
       , rcCount   = 1
       }
@@ -232,21 +232,28 @@ tool tt tm = ToolItem tt tm (tiMaxDurability (toolInfo tm))
 
 -- | Generate crafting recipes for all tool tiers
 toolRecipes :: [Recipe]
-toolRecipes = concatMap tierRecipes [(Wood, OakPlanks), (StoneTier, Cobblestone), (Iron, IronOre), (Diamond, DiamondOre)]
+toolRecipes = concatMap tierRecipes
+  [ (Wood,      bi OakPlanks)
+  , (StoneTier, bi Cobblestone)
+  , (Iron,      ji (MaterialItem IronIngot))
+  , (Diamond,   ji (MaterialItem DiamondGem))
+  ]
   where
     stick = ji StickItem
-    tierRecipes (mat, matBlock) =
-      let m = bi matBlock
-      in [ -- Pickaxe: 3 material on top, 2 sticks below
-           Recipe [[m, m, m], [Nothing, stick, Nothing], [Nothing, stick, Nothing]]
-                  (tool Pickaxe mat) 1
-         , -- Axe: 2 material + 1 material, 2 sticks
-           Recipe [[m, m, Nothing], [m, stick, Nothing], [Nothing, stick, Nothing]]
-                  (tool Axe mat) 1
-         , -- Shovel: 1 material on top, 2 sticks
-           Recipe [[m], [stick], [stick]]
-                  (tool Shovel mat) 1
-         , -- Sword: 2 material + 1 stick
-           Recipe [[m], [m], [stick]]
-                  (tool Sword mat) 1
-         ]
+    tierRecipes (mat, m) =
+      [ -- Pickaxe: 3 material on top, 2 sticks below
+        Recipe [[m, m, m], [Nothing, stick, Nothing], [Nothing, stick, Nothing]]
+               (tool Pickaxe mat) 1
+      , -- Axe: 2 material + 1 material, 2 sticks
+        Recipe [[m, m, Nothing], [m, stick, Nothing], [Nothing, stick, Nothing]]
+               (tool Axe mat) 1
+      , -- Shovel: 1 material on top, 2 sticks
+        Recipe [[m], [stick], [stick]]
+               (tool Shovel mat) 1
+      , -- Sword: 2 material + 1 stick
+        Recipe [[m], [m], [stick]]
+               (tool Sword mat) 1
+      , -- Hoe: 2 material + 2 sticks
+        Recipe [[m, m], [Nothing, stick], [Nothing, stick]]
+               (tool Hoe mat) 1
+      ]

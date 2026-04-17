@@ -14,7 +14,7 @@ module Game.Furnace
   , setFurnaceOutput
   ) where
 
-import Game.Item (Item(..), MaterialType(..))
+import Game.Item (Item(..), MaterialType(..), FoodType(..))
 import Game.Inventory (ItemStack(..))
 import World.Block (BlockType(..))
 
@@ -43,6 +43,9 @@ smeltRecipes =
   , SmeltRecipe (BlockItem Sand)        (BlockItem Glass)        10.0
   , SmeltRecipe (BlockItem Cobblestone) (BlockItem Stone)        10.0
   , SmeltRecipe (BlockItem CoalOre)     (MaterialItem Coal)      10.0
+  , SmeltRecipe (FoodItem RawPorkchop)  (FoodItem CookedPorkchop) 10.0
+  , SmeltRecipe (FoodItem RawBeef)      (FoodItem Steak)          10.0
+  , SmeltRecipe (FoodItem RawChicken)   (FoodItem CookedChicken)  10.0
   ]
 
 -- | How long a fuel item burns (in seconds). Returns 0 for non-fuel items.

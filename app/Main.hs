@@ -576,41 +576,27 @@ main = do
                       writeIORef craftingGridRef (emptyCraftingGrid 3)
                       GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
                       writeIORef lastCursorRef Nothing
+                    Furnace -> do
+                      writeIORef gameModeRef FurnaceOpen
+                      writeIORef furnacePosRef (Just (V3 bx by bz))
+                      GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+                      writeIORef lastCursorRef Nothing
                     _ -> do
                       -- Place block from hotbar (skip if eating food)
                       inv <- readIORef inventoryRef
                       case selectedItem inv of
-                if hitBlock == CraftingTable
-                  then do
-                    writeIORef gameModeRef CraftingOpen
-                    writeIORef craftingGridRef (emptyCraftingGrid 3)
-                    GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
-                    writeIORef lastCursorRef Nothing
-                else if hitBlock == Furnace
-                  then do
-                    writeIORef gameModeRef FurnaceOpen
-                    writeIORef furnaceStateRef newFurnaceState
-                    writeIORef furnacePosRef (Just (V3 bx by bz))
-                    GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
-                    writeIORef lastCursorRef Nothing
-                  else do
-                    -- Place block from hotbar
-                    inv <- readIORef inventoryRef
-                    case selectedItem inv of
-                      Nothing -> pure ()
-                      Just (ItemStack (FoodItem _) _) -> pure ()  -- eating handles food, don't place
-                      Just (ItemStack item _) -> case itemToBlock item of
                         Nothing -> pure ()
-                        Just bt -> do
+                        Just (ItemStack (FoodItem _) _) -> pure ()  -- eating handles food, don't place
+                        Just (ItemStack item _) -> case itemToBlock item of
+                          Nothing -> pure ()
+                          Just bt -> do
                             let V3 nx ny nz = rhFaceNormal hit
                                 placePos = V3 (bx + nx) (by + ny) (bz + nz)
                             let (inv', removed) = removeItem inv item 1
                             when (removed > 0) $ do
                               writeIORef inventoryRef inv'
                               worldSetBlock world placePos bt
-                              putStrLn $ "Placed " ++ show bt ++ " at " ++ show placePos
                               let V3 px' _ pz' = placePos
-                              -- If placed block is gravity-affected, let it fall
                               when (isGravityAffected bt) $
                                 void $ settleGravityBlock world placePos
                               rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
