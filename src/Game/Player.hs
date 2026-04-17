@@ -13,10 +13,13 @@ module Game.Player
   , damagePlayer
   , respawnPlayer
   , isPlayerDead
+  , totalArmorPoints
+  , applyArmorReduction
   ) where
 
 import Game.Physics
 import Game.Inventory (ItemStack(..))
+import Game.Item (Item(..), ArmorSlot(..), ArmorMaterial(..), armorDefensePoints)
 import World.Block (BlockType(..), isSolid)
 
 import Linear (V3(..), normalize, cross, (^*), norm)
@@ -276,6 +279,21 @@ respawnPlayer spawnPos player = player
 -- | Is the player dead?
 isPlayerDead :: Player -> Bool
 isPlayerDead = (<= 0) . plHealth
+
+-- | Sum of defense points from all equipped armor pieces
+totalArmorPoints :: Player -> Int
+totalArmorPoints p = sum $ zipWith armorPts [Helmet, Chestplate, Leggings, Boots] (plArmorSlots p)
+  where
+    armorPts slot (Just (ItemStack (ArmorItem s m _) _)) | s == slot = armorDefensePoints slot m
+    armorPts _ _ = 0
+
+-- | Reduce incoming damage based on equipped armor.
+--   Minecraft formula: damage * (1 - min(20, armorPoints) / 25), minimum 1.
+applyArmorReduction :: Player -> Int -> Int
+applyArmorReduction p dmg =
+  let armorPts = totalArmorPoints p
+      reduction = min 20 (fromIntegral armorPts) / 25.0 :: Float
+  in max 1 $ round $ fromIntegral dmg * (1.0 - reduction)
 
 -- | Result of a block raycast
 data RayHit = RayHit

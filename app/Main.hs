@@ -398,17 +398,33 @@ main = do
                     writeIORef craftingGridRef (emptyCraftingGrid 2)
                   _ -> pure ()
               CraftFailure -> pure ()
-          else do
-            -- Check inventory slot
-            let mSlot = hitInventorySlot ndcX ndcY
-            case mSlot of
-              Nothing -> pure ()
-              Just slotIdx -> do
-                inv <- readIORef inventoryRef
-                cursor <- readIORef cursorItemRef
-                let slotContent = getSlot inv slotIdx
-                writeIORef inventoryRef (setSlot inv slotIdx cursor)
-                writeIORef cursorItemRef slotContent
+          else case hitArmorSlot ndcX ndcY of
+            Just armorIdx -> do
+              -- Click on armor slot: swap cursor item with equipped armor
+              cursor <- readIORef cursorItemRef
+              p <- readIORef playerRef
+              let equipped = plArmorSlots p !! armorIdx
+              -- Only allow placing matching armor type, or picking up
+              case cursor of
+                Just (ItemStack (ArmorItem aSlot _ _) _)
+                  | fromEnum aSlot == armorIdx -> do
+                      writeIORef playerRef (p { plArmorSlots = replaceAt armorIdx cursor (plArmorSlots p) })
+                      writeIORef cursorItemRef equipped
+                Nothing -> do
+                  writeIORef playerRef (p { plArmorSlots = replaceAt armorIdx Nothing (plArmorSlots p) })
+                  writeIORef cursorItemRef equipped
+                _ -> pure ()
+            Nothing -> do
+              -- Check inventory slot
+              let mSlot = hitInventorySlot ndcX ndcY
+              case mSlot of
+                Nothing -> pure ()
+                Just slotIdx -> do
+                  inv <- readIORef inventoryRef
+                  cursor <- readIORef cursorItemRef
+                  let slotContent = getSlot inv slotIdx
+                  writeIORef inventoryRef (setSlot inv slotIdx cursor)
+                  writeIORef cursorItemRef slotContent
 
         CraftingOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
@@ -566,13 +582,20 @@ main = do
                   bt <- worldGetBlock world (V3 bx by bz)
                   pure (World.Block.isSolid bt)
 
-            -- RMB: start eating if holding food and hungry
+            -- RMB: start eating if holding food and hungry, or equip armor
             when (button == GLFW.MouseButton'2) $ do
               inv <- readIORef inventoryRef
               case selectedItem inv of
                 Just (ItemStack (FoodItem _) _)
                   | plHunger player < maxHunger -> do
                       modifyIORef' playerRef (\p -> p { plEatingTimer = 1.6 })
+                Just (ItemStack (ArmorItem slot mat dur) _) -> do
+                  let slotIdx = fromEnum slot
+                      armorStack = Just (ItemStack (ArmorItem slot mat dur) 1)
+                  p <- readIORef playerRef
+                  let oldArmor = plArmorSlots p !! slotIdx
+                  writeIORef playerRef (p { plArmorSlots = replaceAt slotIdx armorStack (plArmorSlots p) })
+                  writeIORef inventoryRef (setSlot inv (invSelected inv) oldArmor)
                 _ -> pure ()
 
             mHit <- raycastBlock blockQueryCb eyePos dir maxReach
@@ -998,7 +1021,7 @@ main = do
                             explodeAt world creeperPos explosionRadius droppedItems
                             let dmg = max 0 (floor (miAttackDmg info * (1.0 - distToPlayer / 7.0)) :: Int)
                             when (dmg > 0) $ do
-                              modifyIORef' playerRef (damagePlayer dmg)
+                              modifyIORef' playerRef (\p -> damagePlayer (applyArmorReduction p dmg) p)
                               putStrLn $ "Explosion dealt " ++ show dmg ++ " damage!"
                             updateEntity entityWorld eid (\e -> e { entAlive = False, entHealth = 0 })
                             destroyEntity entityWorld eid
@@ -1029,7 +1052,7 @@ main = do
                     (AIAttack _ cd, AIAttack _ 1.0) | cd <= 0 -> do
                       let dmg = floor $ miAttackDmg (mobInfo mobType)
                       when (dmg > 0) $ do
-                        modifyIORef' playerRef (damagePlayer dmg)
+                        modifyIORef' playerRef (\p -> damagePlayer (applyArmorReduction p dmg) p)
                         putStrLn $ entTag ent ++ " attacked you for " ++ show dmg ++ " damage!"
                     _ -> pure ()
                 -- Check for mob death and spawn item drops
@@ -1055,7 +1078,7 @@ main = do
                      playerDist = norm (newPos - plPos player)
                  if newAge > 5.0 then pure Nothing         -- despawn after 5 seconds
                  else if playerDist < 1.0 then do          -- hit player
-                   modifyIORef' playerRef (damagePlayer (projDamage proj))
+                   modifyIORef' playerRef (\p -> damagePlayer (applyArmorReduction p (projDamage proj)) p)
                    putStrLn $ "Arrow hit you for " ++ show (projDamage proj) ++ " damage!"
                    pure Nothing
                  else do
@@ -1170,7 +1193,7 @@ main = do
             let mouseNdcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
                 mouseNdcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
             furnaceState <- readIORef furnaceStateRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid mChestInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg mouseNdcX mouseNdcY
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid mChestInv furnaceState (plArmorSlots player') debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg mouseNdcX mouseNdcY
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
             when (hudVC > 0) $ do
@@ -1260,6 +1283,10 @@ dirFromPlayer player =
   let yawR   = plYaw player * pi / 180
       pitchR = plPitch player * pi / 180
   in normalize $ V3 (sin yawR * cos pitchR) (sin pitchR) (cos yawR * cos pitchR)
+
+-- | Replace element at index in a list (O(n), fine for small lists like armor slots)
+replaceAt :: Int -> a -> [a] -> [a]
+replaceAt idx val xs = take idx xs ++ [val] ++ drop (idx + 1) xs
 
 -- | Check if a GLFW key is pressed
 isKeyDown :: GLFW.Window -> GLFW.Key -> IO Bool
@@ -1358,6 +1385,21 @@ invGridY0 = -0.5    -- top edge
 invSlotW  = 0.1
 invSlotH  = 0.1
 invSlotPad = 0.008
+
+-- | Check if NDC coordinates hit an armor slot. Returns armor index 0-3.
+hitArmorSlot :: Float -> Float -> Maybe Int
+hitArmorSlot nx ny =
+  let armorX0 = -0.53 :: Float
+      armorY0 = -0.78 :: Float
+      armorSW = 0.08 :: Float
+      armorSH = 0.08 :: Float
+      idx = floor ((ny - armorY0) / 0.10) :: Int
+  in if nx >= armorX0 && nx <= armorX0 + armorSW
+        && idx >= 0 && idx < 4
+        && ny >= armorY0 + fromIntegral idx * 0.10
+        && ny <= armorY0 + fromIntegral idx * 0.10 + armorSH
+     then Just idx
+     else Nothing
 
 -- | Check if NDC coordinates hit an inventory slot. Returns slot index 0-35.
 hitInventorySlot :: Float -> Float -> Maybe Int
@@ -1471,8 +1513,8 @@ readMobType _          = Pig
 -- debugInfo: Just (pos, yaw, pitch, fps, chunkCount) when F3 overlay is active
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- showSleepMsg: True when "You can only sleep at night" should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> FurnaceState -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> Bool -> Float -> Float -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChestInv furnaceState debugInfo targetInfo showSleepMsg mouseX mouseY = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> FurnaceState -> [Maybe ItemStack] -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> Bool -> Float -> Float -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChestInv furnaceState armorSlots debugInfo targetInfo showSleepMsg mouseX mouseY = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
@@ -1767,8 +1809,16 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChe
           let x = -0.53; y = -0.78 + fromIntegral idx * 0.10
               sw = 0.08; sh = 0.08
               slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
-              label = renderText (x + 0.02) (y + 0.02) 0.4 (0.5, 0.5, 0.5, 0.5) (armorLabels !! idx)
-          in slotBg ++ label
+          in case armorSlots !! idx of
+            Just (ItemStack item _) ->
+              let colors = itemMiniIcon item
+                  pixW = sw / 3; pixH = sh / 3
+              in slotBg ++ concatMap (\(r, c, clr) ->
+                   quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                        (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+            Nothing ->
+              let label = renderText (x + 0.02) (y + 0.02) 0.4 (0.5, 0.5, 0.5, 0.5) (armorLabels !! idx)
+              in slotBg ++ label
 
     -- Crafting screen: grid + output + inventory below
     craftScreenVerts =

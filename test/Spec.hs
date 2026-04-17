@@ -40,6 +40,7 @@ main = hspec $ do
   saveSpec
   blockEntitySpec
   furnaceSpec
+  armorSpec
 
 -- =========================================================================
 -- Block
@@ -846,3 +847,89 @@ furnaceSpec = describe "Game.Furnace" $ do
   it "MaterialItem does not convert to block" $ do
     itemToBlock (MaterialItem IronIngot) `shouldBe` Nothing
     itemToBlock (MaterialItem GoldIngot) `shouldBe` Nothing
+
+-- =========================================================================
+-- Armor system
+-- =========================================================================
+armorSpec :: Spec
+armorSpec = describe "Armor system" $ do
+  let spawn = V3 0 80 0
+      naked = defaultPlayer spawn
+
+  it "totalArmorPoints is 0 with no armor" $ do
+    totalArmorPoints naked `shouldBe` 0
+
+  it "totalArmorPoints sums equipped armor defense" $ do
+    let p = naked { plArmorSlots =
+              [ Just (ItemStack (ArmorItem Helmet DiamondArmor 100) 1)
+              , Just (ItemStack (ArmorItem Chestplate DiamondArmor 100) 1)
+              , Nothing
+              , Nothing
+              ] }
+    -- Diamond helmet=3, diamond chestplate=8
+    totalArmorPoints p `shouldBe` 11
+
+  it "totalArmorPoints ignores mismatched slot/item" $ do
+    -- Put a helmet in the chestplate slot -- should not count
+    let p = naked { plArmorSlots =
+              [ Nothing
+              , Just (ItemStack (ArmorItem Helmet IronArmor 100) 1)
+              , Nothing
+              , Nothing
+              ] }
+    totalArmorPoints p `shouldBe` 0
+
+  it "totalArmorPoints with full diamond armor" $ do
+    let p = naked { plArmorSlots =
+              [ Just (ItemStack (ArmorItem Helmet DiamondArmor 100) 1)
+              , Just (ItemStack (ArmorItem Chestplate DiamondArmor 100) 1)
+              , Just (ItemStack (ArmorItem Leggings DiamondArmor 100) 1)
+              , Just (ItemStack (ArmorItem Boots DiamondArmor 100) 1)
+              ] }
+    -- 3 + 8 + 6 + 3 = 20
+    totalArmorPoints p `shouldBe` 20
+
+  it "applyArmorReduction returns at least 1" $ do
+    let p = naked { plArmorSlots =
+              [ Just (ItemStack (ArmorItem Helmet DiamondArmor 100) 1)
+              , Just (ItemStack (ArmorItem Chestplate DiamondArmor 100) 1)
+              , Just (ItemStack (ArmorItem Leggings DiamondArmor 100) 1)
+              , Just (ItemStack (ArmorItem Boots DiamondArmor 100) 1)
+              ] }
+    applyArmorReduction p 1 `shouldBe` 1
+
+  it "applyArmorReduction reduces damage with armor" $ do
+    let p = naked { plArmorSlots =
+              [ Just (ItemStack (ArmorItem Helmet DiamondArmor 100) 1)
+              , Just (ItemStack (ArmorItem Chestplate DiamondArmor 100) 1)
+              , Just (ItemStack (ArmorItem Leggings DiamondArmor 100) 1)
+              , Just (ItemStack (ArmorItem Boots DiamondArmor 100) 1)
+              ] }
+    -- 20 armor points -> 20/25 = 0.8 reduction -> 10 * 0.2 = 2
+    applyArmorReduction p 10 `shouldBe` 2
+
+  it "applyArmorReduction with no armor returns full damage" $ do
+    applyArmorReduction naked 10 `shouldBe` 10
+
+  it "applyArmorReduction with partial armor" $ do
+    let p = naked { plArmorSlots =
+              [ Just (ItemStack (ArmorItem Helmet IronArmor 100) 1)
+              , Nothing
+              , Nothing
+              , Just (ItemStack (ArmorItem Boots IronArmor 100) 1)
+              ] }
+    -- Iron helmet=2, iron boots=2 -> 4 points -> 4/25 = 0.16 reduction
+    -- 10 * 0.84 = 8.4 -> round = 8
+    applyArmorReduction p 10 `shouldBe` 8
+
+  it "damagePlayer with armor reduces damage" $ do
+    let p = naked { plArmorSlots =
+              [ Just (ItemStack (ArmorItem Helmet DiamondArmor 100) 1)
+              , Just (ItemStack (ArmorItem Chestplate DiamondArmor 100) 1)
+              , Just (ItemStack (ArmorItem Leggings DiamondArmor 100) 1)
+              , Just (ItemStack (ArmorItem Boots DiamondArmor 100) 1)
+              ] }
+        reduced = applyArmorReduction p 10
+        p' = damagePlayer reduced p
+    -- Full diamond: 20 pts, 10 * 0.2 = 2 dmg, 20 - 2 = 18 health
+    plHealth p' `shouldBe` 18
