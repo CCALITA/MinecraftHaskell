@@ -633,19 +633,22 @@ main = do
                               Just bt -> do
                                 let V3 nx ny nz = rhFaceNormal hit
                                     placePos = V3 (bx + nx) (by + ny) (bz + nz)
+                                    V3 _ placeY _ = placePos
                                     sel = invSelected inv
-                                -- Consume from selected slot directly
-                                case getSlot inv sel of
-                                  Just (ItemStack si cnt) | si == item ->
-                                    if cnt <= 1
-                                      then writeIORef inventoryRef (setSlot inv sel Nothing)
-                                      else writeIORef inventoryRef (setSlot inv sel (Just (ItemStack si (cnt - 1))))
-                                  _ -> pure ()
-                                worldSetBlock world placePos bt
-                                let V3 px' _ pz' = placePos
-                                when (isGravityAffected bt) $
-                                  void $ settleGravityBlock world placePos
-                                rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
+                                -- Height limit: only place blocks in valid range [0, chunkHeight)
+                                when (placeY >= 0 && placeY < chunkHeight) $ do
+                                  -- Consume from selected slot directly
+                                  case getSlot inv sel of
+                                    Just (ItemStack si cnt) | si == item ->
+                                      if cnt <= 1
+                                        then writeIORef inventoryRef (setSlot inv sel Nothing)
+                                        else writeIORef inventoryRef (setSlot inv sel (Just (ItemStack si (cnt - 1))))
+                                    _ -> pure ()
+                                  worldSetBlock world placePos bt
+                                  let V3 px' _ pz' = placePos
+                                  when (isGravityAffected bt) $
+                                    void $ settleGravityBlock world placePos
+                                  rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
                   _ -> pure ()
 
     -- Key callback
@@ -1236,7 +1239,10 @@ playerLoop input blockQuery waterQuery ladderQuery accumRef accum playerRef
   | otherwise = do
       player <- readIORef playerRef
       player' <- updatePlayer tickRate input blockQuery waterQuery ladderQuery player
-      writeIORef playerRef player'
+      -- Void damage: kill player below Y=0
+      let V3 _ py _ = plPos player'
+          player'' = if py < 0 then damagePlayer 4 player' else player'
+      writeIORef playerRef player''
       playerLoop (input { piToggleFly = False }) blockQuery waterQuery ladderQuery accumRef (accum - tickRate) playerRef
 
 -- | Convert player state to Camera

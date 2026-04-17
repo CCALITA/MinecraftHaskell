@@ -40,6 +40,7 @@ main = hspec $ do
   saveSpec
   blockEntitySpec
   furnaceSpec
+  voidDamageSpec
 
 -- =========================================================================
 -- Block
@@ -846,3 +847,30 @@ furnaceSpec = describe "Game.Furnace" $ do
   it "MaterialItem does not convert to block" $ do
     itemToBlock (MaterialItem IronIngot) `shouldBe` Nothing
     itemToBlock (MaterialItem GoldIngot) `shouldBe` Nothing
+
+-- =========================================================================
+-- Void damage
+-- =========================================================================
+voidDamageSpec :: Spec
+voidDamageSpec = describe "Void damage" $ do
+  it "damagePlayer reduces health" $ do
+    let player = defaultPlayer (V3 0 80 0)
+    plHealth (damagePlayer 4 player) `shouldBe` (maxHealth - 4)
+
+  it "damagePlayer does not go below 0" $ do
+    let player = (defaultPlayer (V3 0 80 0)) { plHealth = 2 }
+    plHealth (damagePlayer 4 player) `shouldBe` 0
+
+  it "player below Y=0 should be considered in void" $ do
+    let player = (defaultPlayer (V3 0 (-5) 0)) { plFlying = False }
+        V3 _ py _ = plPos player
+    py `shouldSatisfy` (< 0)
+
+  it "isPlayerDead detects zero health" $ do
+    let player = (defaultPlayer (V3 0 80 0)) { plHealth = 0 }
+    isPlayerDead player `shouldBe` True
+
+  it "respawnPlayer restores full health" $ do
+    let player = (defaultPlayer (V3 0 80 0)) { plHealth = 0 }
+        respawned = respawnPlayer (V3 0 80 0) player
+    plHealth respawned `shouldBe` maxHealth
