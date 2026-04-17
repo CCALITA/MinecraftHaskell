@@ -443,6 +443,7 @@ main = do
               let slotContent = getSlot curInv idx
               modifyIORef' inventoryRef (\i -> setSlot i idx cursor)
               writeIORef cursorItemRef slotContent
+            Nothing -> pure ()
         FurnaceOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
           (winW, winH) <- getWindowSize wh
@@ -901,6 +902,7 @@ main = do
 
             -- Update mob AI (every 3 frames)
             when (frameIdx `mod` 3 == 0) $ do
+              let aiDt = dt * 3  -- compensate for running every 3rd frame
               player <- readIORef playerRef
               ents <- livingEntities entityWorld
               aiStates <- readIORef aiStatesRef
@@ -917,7 +919,7 @@ main = do
                     AIAttack _ _ -> do
                       cooldowns <- readIORef skeletonCooldownRef
                       let cd = HM.lookupDefault 0 eid cooldowns
-                          cd' = cd + dt
+                          cd' = cd + aiDt
                       if cd' >= 2.0
                         then do
                           modifyIORef' skeletonCooldownRef (HM.insert eid 0)
@@ -943,7 +945,7 @@ main = do
                       AIAttack _ _ | distToPlayer < miAttackRange info -> do
                         fuseMap <- readIORef creeperFuseRef
                         let oldFuse = IM.findWithDefault 0.0 eid fuseMap
-                            newFuse = oldFuse + dt
+                            newFuse = oldFuse + aiDt
                         if newFuse >= 1.5
                           then do
                             putStrLn $ "Creeper exploded at " ++ show creeperPos ++ "!"
