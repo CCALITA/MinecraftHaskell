@@ -211,6 +211,13 @@ allRecipes =
       , rcResult  = BlockItem OakFence
       , rcCount   = 3
       }
+  -- Fence gate: sticks and planks in alternating pattern
+  , Recipe
+      { rcPattern = [[ji StickItem, bi OakPlanks, ji StickItem]
+                    ,[ji StickItem, bi OakPlanks, ji StickItem]]
+      , rcResult  = BlockItem FenceGateClosed
+      , rcCount   = 1
+      }
   -- Bed: 3 planks bottom + 3 planks top (wool placeholder)
   , Recipe
       { rcPattern = [[bi OakPlanks, bi OakPlanks, bi OakPlanks]
