@@ -174,6 +174,7 @@ blockDrops = \case
   FenceGateOpen   -> [(BlockItem FenceGateClosed, 1)]  -- always drops closed form
   Lever       -> [(BlockItem Lever, 1)]
   RedstoneDust -> [(BlockItem RedstoneDust, 1)]
+  Cactus      -> [(BlockItem Cactus, 1)]
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond

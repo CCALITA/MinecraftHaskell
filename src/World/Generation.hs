@@ -167,6 +167,42 @@ generateChunk cfg chunkCoord = do
                     when (dy == depth - 1 && py > 1) $
                       MUV.write mvec (blockIndex px (py - 1) pz) (blockW8 Sand)
 
+  -- Pass 7: Cactus placement in desert biomes
+  forM_ [1..chunkWidth-2] $ \lx ->
+    forM_ [1..chunkDepth-2] $ \lz -> do
+      let wx = cx * chunkWidth + lx
+          wz = cz * chunkDepth + lz
+          wxd = fromIntegral wx :: Double
+          wzd = fromIntegral wz :: Double
+          biome = biomeAt seed wxd wzd
+      when (biome == Desert) $ do
+        let h = hashPos (seed + 9000) wx wz
+            roll = h `mod` 1000
+        -- 2% chance per surface block, with 4-block spacing via grid quantization
+        when (roll < 20 && (wx `mod` 4 == 0) && (wz `mod` 4 == 0)) $ do
+          surfY <- findSurface mvec lx lz (chunkHeight - 1)
+          surfBlock <- MUV.read mvec (blockIndex lx surfY lz)
+          when (surfBlock == blockW8 Sand && surfY > gcSeaLevel cfg && surfY < chunkHeight - 5) $ do
+            -- Check 4-side air clearance (within chunk bounds)
+            let checkAir dx dz = do
+                  let px = lx + dx; pz = lz + dz
+                  if px >= 0 && px < chunkWidth && pz >= 0 && pz < chunkDepth
+                    then do b <- MUV.read mvec (blockIndex px (surfY + 1) pz)
+                            pure (b == blockW8 Air)
+                    else pure True  -- out of chunk = assume air
+            n <- checkAir 1 0
+            s <- checkAir (-1) 0
+            e <- checkAir 0 1
+            w <- checkAir 0 (-1)
+            when (n && s && e && w) $ do
+              -- Place cactus column (1-3 tall)
+              let hHeight = hashPos (seed + 9500) wx wz
+                  cactusH = 1 + hHeight `mod` 3  -- 1 to 3
+              forM_ [1..cactusH] $ \dy -> do
+                let y = surfY + dy
+                when (y < chunkHeight) $
+                  MUV.write mvec (blockIndex lx y lz) (blockW8 Cactus)
+
   writeIORef (chunkDirty chunk) True
   pure chunk
 

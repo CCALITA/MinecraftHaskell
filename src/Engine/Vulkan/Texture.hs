@@ -109,6 +109,7 @@ tileFull tileIdx lx ly = case tileIdx of
   72 -> clayPattern lx ly      -- clay (V2 8 4)
   -- Row 5: tileIdx 80+
   80 -> torchPattern lx ly     -- torch (V2 0 5)
+  81 -> cactusPattern lx ly    -- cactus (V2 1 5)
   -- New block textures (tiles 27-38)
   27 -> obsidianPattern lx ly      -- obsidian (V2 11 1)
   28 -> oakDoorClosedPattern lx ly -- oak door closed (V2 12 1)
@@ -408,6 +409,24 @@ tileFull tileIdx lx ly = case tileIdx of
       in if isCenter then (200, 0, 0, 255)
          else if isCross then (140, 0, 0, 255)
          else (0, 0, 0, 0)
+
+    -- Cactus: green body with darker vertical stripes and small thorns
+    cactusPattern x y =
+      let n = pixHash x y 2500 `mod` 100
+          -- Vertical stripes every 4 pixels
+          stripe = x `mod` 4 == 0
+          -- Thorns: small dots scattered on the surface
+          thorn = (x + y * 3) `mod` 7 == 0 && n < 40
+          -- Border (slightly inset to show it's narrower than a full block)
+          border = x == 0 || x == 15 || y == 0 || y == 15
+          (r, g, b)
+            | border    = (20, 80, 15)
+            | thorn     = (140, 160, 80)
+            | stripe    = (25, 100, 20)
+            | n < 30    = (35, 130, 25)
+            | n < 60    = (45, 150, 35)
+            | otherwise = (40, 140, 30)
+      in (r, g, b, 255)
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels
