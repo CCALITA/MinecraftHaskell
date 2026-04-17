@@ -245,6 +245,13 @@ allRecipes =
       , rcResult  = BlockItem RedstoneDust
       , rcCount   = 4
       }
+  -- Flint and steel: iron ingot + flint
+  , Recipe
+      { rcPattern = [[ji (MaterialItem IronIngot)]
+                    ,[ji (MaterialItem Flint)]]
+      , rcResult  = FlintAndSteelItem 64
+      , rcCount   = 1
+      }
   ] ++ toolRecipes
 
 -- | Helper to create a tool item with full durability

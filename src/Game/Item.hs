@@ -57,7 +57,7 @@ data FoodType
 data MaterialType
   = Coal | DiamondGem | IronIngot | GoldIngot
   | Bone | ArrowMat | StringMat | Gunpowder
-  | Feather | Leather | WheatSeeds | Wheat
+  | Feather | Leather | WheatSeeds | Wheat | Flint
   deriving stock (Show, Eq, Ord, Enum, Bounded)
 
 -- | Armor equipment slots
@@ -76,6 +76,7 @@ data Item
   | FoodItem     !FoodType
   | MaterialItem !MaterialType
   | ArmorItem    !ArmorSlot !ArmorMaterial !Int  -- slot, material, remaining durability
+  | FlintAndSteelItem !Int  -- remaining durability (max 64)
   deriving stock (Show, Eq)
 
 -- | Tool properties
@@ -114,6 +115,7 @@ itemToBlock StickItem         = Nothing
 itemToBlock (FoodItem _)      = Nothing
 itemToBlock (MaterialItem _)  = Nothing
 itemToBlock (ArmorItem {})    = Nothing
+itemToBlock (FlintAndSteelItem _) = Nothing
 
 -- | Is this a placeable block item?
 isBlockItem :: Item -> Bool
@@ -128,6 +130,7 @@ itemStackLimit StickItem        = 64
 itemStackLimit (FoodItem _)     = 64
 itemStackLimit (MaterialItem _) = 64
 itemStackLimit (ArmorItem {})   = 1
+itemStackLimit (FlintAndSteelItem _) = 1
 
 -- | What items a block drops when broken. Returns (item, count).
 --   Some blocks require a minimum harvest level to drop anything.
@@ -138,7 +141,7 @@ blockDrops = \case
   Dirt        -> [(BlockItem Dirt, 1)]
   Grass       -> [(BlockItem Dirt, 1)]
   Sand        -> [(BlockItem Sand, 1)]
-  Gravel      -> [(BlockItem Gravel, 1)]
+  Gravel      -> [(MaterialItem Flint, 1)]
   OakLog      -> [(BlockItem OakLog, 1)]
   OakLeaves   -> [(BlockItem OakSapling, 1)]  -- always drops sapling when broken by player
   Water       -> []
@@ -174,6 +177,7 @@ blockDrops = \case
   FenceGateOpen   -> [(BlockItem FenceGateClosed, 1)]  -- always drops closed form
   Lever       -> [(BlockItem Lever, 1)]
   RedstoneDust -> [(BlockItem RedstoneDust, 1)]
+  Fire        -> []
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
@@ -276,6 +280,7 @@ materialName = \case
   Leather    -> "Leather"
   WheatSeeds -> "Wheat Seeds"
   Wheat      -> "Wheat"
+  Flint      -> "Flint"
 
 -- | Defense points for armor by slot and material
 armorDefensePoints :: ArmorSlot -> ArmorMaterial -> Int
@@ -351,6 +356,7 @@ instance Binary Item where
   put (FoodItem ft) = put (3 :: Word8) >> put ft
   put (MaterialItem mt) = put (4 :: Word8) >> put mt
   put (ArmorItem slot mat dur) = put (5 :: Word8) >> put slot >> put mat >> put dur
+  put (FlintAndSteelItem dur) = put (6 :: Word8) >> put dur
   get = do
     tag <- get :: Get Word8
     case tag of
@@ -360,4 +366,5 @@ instance Binary Item where
       3 -> FoodItem <$> get
       4 -> MaterialItem <$> get
       5 -> ArmorItem <$> get <*> get <*> get
+      6 -> FlintAndSteelItem <$> get
       _ -> fail "Unknown Item tag"
