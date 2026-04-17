@@ -26,6 +26,7 @@ import Game.Inventory
 import Game.Item
 import Game.Crafting
 import Game.DayNight
+import World.Weather
 import Game.Furnace
 import World.Fluid
 import World.Light
@@ -170,6 +171,7 @@ main = do
     dayNightRef <- newIORef (case mSavedData of
       Just sd -> newDayNightCycle { dncTime = sdDayTime sd, dncDayCount = sdDayCount sd }
       Nothing -> newDayNightCycle)
+    weatherRef <- newIORef newWeatherState
     spawnPointRef <- newIORef spawnPos
     sleepMessageRef <- newIORef (Nothing :: Maybe Float)
     fluidState <- newFluidState
@@ -936,6 +938,9 @@ main = do
             -- Update day/night cycle
             modifyIORef' dayNightRef (updateDayNight dt)
 
+            -- Update weather (rain/clear transitions)
+            readIORef weatherRef >>= updateWeather dt >>= writeIORef weatherRef
+
             -- Tick furnace when open
             when (gameMode == FurnaceOpen) $
               modifyIORef' furnaceStateRef (tickFurnace dt)
@@ -958,7 +963,8 @@ main = do
             when (frameIdx `mod` 120 == 0) $ do
               player <- readIORef playerRef
               dayNight <- readIORef dayNightRef
-              _ <- trySpawnMobs defaultSpawnRules entityWorld dayNight blockQuery (plPos player) spawnRngRef
+              weather <- readIORef weatherRef
+              _ <- trySpawnMobs defaultSpawnRules entityWorld dayNight weather blockQuery (plPos player) spawnRngRef
               pure ()
 
             -- Update mob AI (every 3 frames)
@@ -1116,6 +1122,7 @@ main = do
 
             sc' <- readIORef scRef
             dayNightVal <- readIORef dayNightRef
+            weatherVal <- readIORef weatherRef
             let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
             let cam = cameraFromPlayer player
                 aspect = fromIntegral extW / fromIntegral extH
@@ -1125,7 +1132,7 @@ main = do
                   , uboView         = transpose $ cameraViewMatrix cam
                   , uboProjection   = transpose $ cameraProjectionMatrix aspect 0.1 1000 cam
                   , uboSunDirection = V4 sx sy sz 0
-                  , uboAmbientLight = getAmbientLight dayNightVal
+                  , uboAmbientLight = getAmbientLight dayNightVal * weatherAmbientMultiplier weatherVal
                   , _uboPad1        = 0
                   , _uboPad2        = 0
                   , _uboPad3        = 0
@@ -1143,8 +1150,10 @@ main = do
                              , isAABBInFrustum frustum minCorner maxCorner
                              ]
 
-            -- Compute sky color from day/night cycle
-            let V4 skyR skyG skyB skyA = getSkyColor dayNightVal
+            -- Compute sky color from day/night cycle, adjusted for weather
+            let skyMul = weatherSkyMultiplier weatherVal
+                V4 r g b a = getSkyColor dayNightVal
+                V4 skyR skyG skyB skyA = V4 (r * skyMul) (g * skyMul) (b * skyMul) a
 
             -- Per-frame raycast for block target highlight
             do let eyePos = plPos player + V3 0 1.62 0

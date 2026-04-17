@@ -60,6 +60,7 @@ library
     World.Light
     World.Redstone
     World.Fluid
+    World.Weather
     Game.Physics
     Game.Player
     Game.BlockEntity

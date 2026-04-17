@@ -16,6 +16,7 @@ import Game.DroppedItem
 import Game.Save (SaveData(..), inventoryToSlotList, slotListToInventory)
 import Game.BlockEntity
 import Game.Furnace
+import World.Weather
 
 import Data.Binary (encode, decode)
 import Linear (V2(..), V3(..))
@@ -41,6 +42,7 @@ main = hspec $ do
   blockEntitySpec
   furnaceSpec
   voidDamageSpec
+  weatherSpec
 
 -- =========================================================================
 -- Block
@@ -874,3 +876,59 @@ voidDamageSpec = describe "Void damage" $ do
     let player = (defaultPlayer (V3 0 80 0)) { plHealth = 0 }
         respawned = respawnPlayer (V3 0 80 0) player
     plHealth respawned `shouldBe` maxHealth
+
+-- Weather
+-- =========================================================================
+weatherSpec :: Spec
+weatherSpec = describe "World.Weather" $ do
+  it "newWeatherState starts clear" $ do
+    wsType newWeatherState `shouldBe` Clear
+    isRaining newWeatherState `shouldBe` False
+
+  it "newWeatherState has zero intensity" $ do
+    wsIntensity newWeatherState `shouldBe` 0.0
+
+  it "newWeatherState has 300s timer" $ do
+    wsTimer newWeatherState `shouldBe` 300.0
+
+  it "weatherSkyMultiplier is 1.0 at zero intensity" $ do
+    weatherSkyMultiplier newWeatherState `shouldBe` 1.0
+
+  it "weatherAmbientMultiplier is 1.0 at zero intensity" $ do
+    weatherAmbientMultiplier newWeatherState `shouldBe` 1.0
+
+  it "weatherSkyMultiplier decreases with intensity" $ do
+    let rainy = WeatherState Rain 100.0 1.0
+    weatherSkyMultiplier rainy `shouldBe` 0.7
+
+  it "weatherAmbientMultiplier decreases with intensity" $ do
+    let rainy = WeatherState Rain 100.0 1.0
+    weatherAmbientMultiplier rainy `shouldBe` 0.8
+
+  it "updateWeather decrements timer" $ do
+    ws <- updateWeather 1.0 newWeatherState
+    wsTimer ws `shouldSatisfy` (< wsTimer newWeatherState)
+
+  it "updateWeather transitions Clear to Rain when timer expires" $ do
+    let almostDone = WeatherState Clear 0.5 0.0
+    ws <- updateWeather 1.0 almostDone
+    wsType ws `shouldBe` Rain
+    wsTimer ws `shouldSatisfy` (>= 180.0)
+    wsTimer ws `shouldSatisfy` (<= 300.0)
+
+  it "updateWeather transitions Rain to Clear when timer expires" $ do
+    let almostDone = WeatherState Rain 0.5 1.0
+    ws <- updateWeather 1.0 almostDone
+    wsType ws `shouldBe` Clear
+    wsTimer ws `shouldSatisfy` (>= 300.0)
+    wsTimer ws `shouldSatisfy` (<= 600.0)
+
+  it "intensity ramps up during Rain" $ do
+    let rainy = WeatherState Rain 100.0 0.0
+    ws <- updateWeather 1.0 rainy
+    wsIntensity ws `shouldSatisfy` (> 0.0)
+
+  it "intensity ramps down during Clear" $ do
+    let clearing = WeatherState Clear 100.0 1.0
+    ws <- updateWeather 1.0 clearing
+    wsIntensity ws `shouldSatisfy` (< 1.0)
