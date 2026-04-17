@@ -168,6 +168,7 @@ blockDrops = \case
   Farmland    -> [(BlockItem Dirt, 1)]
   WheatCrop   -> [(MaterialItem Wheat, 1)]
   OakSapling  -> [(BlockItem OakSapling, 1)]
+  Wool        -> [(BlockItem Wool, 1)]
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
@@ -275,7 +276,7 @@ mobDrops tag = case tag of
   "Chicken"  -> do meat  <- randomDrops [(FoodItem RawChicken, 1, 1)]
                    feath <- randomDrops [(MaterialItem Feather, 0, 2)]
                    pure (meat ++ feath)
-  "Sheep"    -> pure [(BlockItem OakPlanks, 1)]  -- wool placeholder
+  "Sheep"    -> pure [(BlockItem Wool, 1)]
   "Zombie"   -> randomDrops [(FoodItem RottenFlesh, 0, 2)]
   "Skeleton" -> do bones  <- randomDrops [(MaterialItem Bone, 0, 2)]
                    arrows <- randomDrops [(MaterialItem ArrowMat, 0, 2)]

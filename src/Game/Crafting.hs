@@ -211,9 +211,9 @@ allRecipes =
       , rcResult  = BlockItem OakFence
       , rcCount   = 3
       }
-  -- Bed: 3 planks bottom + 3 planks top (wool placeholder)
+  -- Bed: 3 wool on top + 3 planks on bottom
   , Recipe
-      { rcPattern = [[bi OakPlanks, bi OakPlanks, bi OakPlanks]
+      { rcPattern = [[bi Wool, bi Wool, bi Wool]
                     ,[bi OakPlanks, bi OakPlanks, bi OakPlanks]]
       , rcResult  = BlockItem Bed
       , rcCount   = 1

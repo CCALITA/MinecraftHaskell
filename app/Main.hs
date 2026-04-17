@@ -2216,6 +2216,7 @@ itemColor (BlockItem bt) = case bt of
   Farmland    -> (0.35, 0.22, 0.1, 1.0)
   WheatCrop   -> (0.6, 0.7, 0.2, 1.0)
   OakSapling  -> (0.2, 0.55, 0.15, 1.0)
+  Wool        -> (0.95, 0.95, 0.95, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)
