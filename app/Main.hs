@@ -670,50 +670,47 @@ main = do
               GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
               writeIORef lastCursorRef Nothing
             _ -> pure ()
-          _ -> case key of  -- InventoryOpen, CraftingOpen, or ChestOpen
+          _ -> case key of  -- InventoryOpen, CraftingOpen, ChestOpen, or FurnaceOpen
             GLFW.Key'Escape -> closeUIScreen
             GLFW.Key'E      -> closeUIScreen
             _ -> pure ()
             where
               closeUIScreen = do
                 curMode <- readIORef gameModeRef
-                when (curMode == ChestOpen) $
-                  writeIORef chestPosRef Nothing
-                writeIORef gameModeRef Playing
-                GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
-                writeIORef lastCursorRef Nothing
+                -- Return cursor item to inventory
                 mCursor <- readIORef cursorItemRef
                 case mCursor of
                   Just (ItemStack item cnt) -> do
                     modifyIORef' inventoryRef (\inv -> fst $ addItem inv item cnt)
                     writeIORef cursorItemRef Nothing
                   Nothing -> pure ()
-          _ -> do  -- InventoryOpen, CraftingOpen, or FurnaceOpen
-            let returnStack mStack =
-                  case mStack of
-                    Just (ItemStack item cnt) ->
-                      modifyIORef' inventoryRef (\inv' -> fst $ addItem inv' item cnt)
-                    Nothing -> pure ()
-                closeUI = do
-                  curMode <- readIORef gameModeRef
-                  writeIORef gameModeRef Playing
-                  GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
-                  writeIORef lastCursorRef Nothing
-                  -- Return cursor item to inventory
-                  readIORef cursorItemRef >>= returnStack
-                  writeIORef cursorItemRef Nothing
-                  -- When closing furnace, return all furnace slots to inventory
-                  when (curMode == FurnaceOpen) $ do
-                    fs <- readIORef furnaceStateRef
-                    returnStack (getFurnaceInput fs)
-                    returnStack (getFurnaceFuel fs)
-                    returnStack (getFurnaceOutput fs)
-                    writeIORef furnaceStateRef newFurnaceState
-                    writeIORef furnacePosRef Nothing
-            case key of
-              GLFW.Key'Escape -> closeUI
-              GLFW.Key'E      -> closeUI
-              _               -> pure ()
+                -- Return crafting grid items to inventory when closing crafting screen
+                when (curMode == CraftingOpen) $ do
+                  grid <- readIORef craftingGridRef
+                  forM_ [(r,c) | r <- [0..2], c <- [0..2]] $ \(r,c) ->
+                    case getCraftingSlot grid r c of
+                      Just item -> modifyIORef' inventoryRef (\inv -> fst $ addItem inv item 1)
+                      Nothing -> pure ()
+                  writeIORef craftingGridRef (emptyCraftingGrid 3)
+                -- Clear chest reference when closing chest
+                when (curMode == ChestOpen) $
+                  writeIORef chestPosRef Nothing
+                -- Return furnace slot items when closing furnace
+                when (curMode == FurnaceOpen) $ do
+                  fs <- readIORef furnaceStateRef
+                  let returnStack mStack = case mStack of
+                        Just (ItemStack itm cnt) ->
+                          modifyIORef' inventoryRef (\inv' -> fst $ addItem inv' itm cnt)
+                        Nothing -> pure ()
+                  returnStack (getFurnaceInput fs)
+                  returnStack (getFurnaceFuel fs)
+                  returnStack (getFurnaceOutput fs)
+                  writeIORef furnaceStateRef newFurnaceState
+                  writeIORef furnacePosRef Nothing
+                -- Switch back to playing
+                writeIORef gameModeRef Playing
+                GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
+                writeIORef lastCursorRef Nothing
 
     -- Timing
     frameRef <- newIORef (0 :: Int)
@@ -1134,8 +1131,12 @@ main = do
                   Just cPos -> getChestInventory blockEntityMapRef cPos
                   Nothing   -> pure Nothing
               _ -> pure Nothing
+            (mx, my) <- readIORef mousePosRef
+            (winW, winH) <- getWindowSize wh
+            let mouseNdcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+                mouseNdcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
             furnaceState <- readIORef furnaceStateRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid mChestInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid mChestInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg mouseNdcX mouseNdcY
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
             when (hudVC > 0) $ do
@@ -1436,8 +1437,8 @@ readMobType _          = Pig
 -- debugInfo: Just (pos, yaw, pitch, fps, chunkCount) when F3 overlay is active
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- showSleepMsg: True when "You can only sleep at night" should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> FurnaceState -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> Bool -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChestInv furnaceState debugInfo targetInfo showSleepMsg = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> FurnaceState -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> Bool -> Float -> Float -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChestInv furnaceState debugInfo targetInfo showSleepMsg mouseX mouseY = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
@@ -1902,7 +1903,9 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChe
       Nothing -> []
       Just (ItemStack item _) ->
         let colors = itemMiniIcon item
-            x = -0.05; y = -0.05; sw = 0.1; sh = 0.1; pixW = sw/3; pixH = sh/3
+            sw = 0.08; sh = 0.08
+            x = mouseX - sw / 2; y = mouseY - sh / 2
+            pixW = sw/3; pixH = sh/3
         in concatMap (\(r, c, clr) ->
              quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                   (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
