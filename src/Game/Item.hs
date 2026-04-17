@@ -58,6 +58,7 @@ data MaterialType
   = Coal | DiamondGem | IronIngot | GoldIngot
   | Bone | ArrowMat | StringMat | Gunpowder
   | Feather | Leather | WheatSeeds | Wheat
+  | Paper
   deriving stock (Show, Eq, Ord, Enum, Bounded)
 
 -- | Armor equipment slots
@@ -174,6 +175,7 @@ blockDrops = \case
   FenceGateOpen   -> [(BlockItem FenceGateClosed, 1)]  -- always drops closed form
   Lever       -> [(BlockItem Lever, 1)]
   RedstoneDust -> [(BlockItem RedstoneDust, 1)]
+  SugarCane   -> [(BlockItem SugarCane, 1)]
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
@@ -276,6 +278,7 @@ materialName = \case
   Leather    -> "Leather"
   WheatSeeds -> "Wheat Seeds"
   Wheat      -> "Wheat"
+  Paper      -> "Paper"
 
 -- | Defense points for armor by slot and material
 armorDefensePoints :: ArmorSlot -> ArmorMaterial -> Int

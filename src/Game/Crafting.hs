@@ -245,6 +245,12 @@ allRecipes =
       , rcResult  = BlockItem RedstoneDust
       , rcCount   = 4
       }
+  -- Paper: 3 sugar cane in a row
+  , Recipe
+      { rcPattern = [[bi SugarCane, bi SugarCane, bi SugarCane]]
+      , rcResult  = MaterialItem Paper
+      , rcCount   = 3
+      }
   ] ++ toolRecipes
 
 -- | Helper to create a tool item with full durability

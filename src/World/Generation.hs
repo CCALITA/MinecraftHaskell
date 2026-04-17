@@ -167,6 +167,33 @@ generateChunk cfg chunkCoord = do
                     when (dy == depth - 1 && py > 1) $
                       MUV.write mvec (blockIndex px (py - 1) pz) (blockW8 Sand)
 
+  -- Pass 7: Sugar cane near water
+  forM_ [0..chunkWidth-1] $ \lx ->
+    forM_ [0..chunkDepth-1] $ \lz -> do
+      let wx = cx * chunkWidth + lx
+          wz = cz * chunkDepth + lz
+      surfY <- findSurface mvec lx lz (chunkHeight - 1)
+      surfBlock <- MUV.read mvec (blockIndex lx surfY lz)
+      when (surfBlock == blockW8 Sand || surfBlock == blockW8 Dirt) $ do
+        -- Check NSEW neighbors at same Y for water
+        let neighbors = [ (lx, lz - 1), (lx, lz + 1), (lx - 1, lz), (lx + 1, lz) ]
+        hasWater <- anyM (\(nx, nz) ->
+          if nx >= 0 && nx < chunkWidth && nz >= 0 && nz < chunkDepth
+            then do b <- MUV.read mvec (blockIndex nx surfY nz)
+                    pure (b == blockW8 Water)
+            else pure False) neighbors
+        when hasWater $ do
+          let roll = hashPos (seed + 9000) wx wz `mod` 1000
+          when (roll < 30) $ do  -- 3% chance
+            let heightRoll = hashPos (seed + 9001) wx wz `mod` 3
+                caneHeight = 1 + heightRoll  -- 1 to 3 tall
+            forM_ [1..caneHeight] $ \dy -> do
+              let y = surfY + dy
+              when (y < chunkHeight) $ do
+                cur <- MUV.read mvec (blockIndex lx y lz)
+                when (cur == blockW8 Air) $
+                  MUV.write mvec (blockIndex lx y lz) (blockW8 SugarCane)
+
   writeIORef (chunkDirty chunk) True
   pure chunk
 
@@ -279,3 +306,10 @@ placeTreeWorld getBlockCb setBlockCb (V3 bx by bz) = do
     cur <- getBlockCb (V3 bx crownY bz)
     when (cur == Air) $
       setBlockCb (V3 bx crownY bz) OakLeaves
+
+-- | Monadic version of 'any' — short-circuits on first True
+anyM :: Monad m => (a -> m Bool) -> [a] -> m Bool
+anyM _ []     = pure False
+anyM f (x:xs) = do
+  b <- f x
+  if b then pure True else anyM f xs
