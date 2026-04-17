@@ -231,6 +231,20 @@ allRecipes =
       , rcResult  = FoodItem Bread
       , rcCount   = 1
       }
+  -- Lever: 1 stick on top of 1 cobblestone (vertical)
+  , Recipe
+      { rcPattern = [[ji StickItem]
+                    ,[bi Cobblestone]]
+      , rcResult  = BlockItem Lever
+      , rcCount   = 1
+      }
+  -- Redstone dust: 1 cobblestone + 1 coal (placeholder recipe)
+  , Recipe
+      { rcPattern = [[bi Cobblestone]
+                    ,[ji (MaterialItem Coal)]]
+      , rcResult  = BlockItem RedstoneDust
+      , rcCount   = 4
+      }
   ] ++ toolRecipes
 
 -- | Helper to create a tool item with full durability

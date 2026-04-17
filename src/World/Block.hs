@@ -55,6 +55,8 @@ data BlockType
   | Wool
   | FenceGateClosed
   | FenceGateOpen
+  | Lever
+  | RedstoneDust
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -127,6 +129,8 @@ blockProperties = \case
   Wool         -> BlockProperties True  False 0  0.8
   FenceGateClosed -> BlockProperties True  True  0  2.0
   FenceGateOpen   -> BlockProperties False True  0  2.0
+  Lever        -> BlockProperties True  False 0  0.5
+  RedstoneDust -> BlockProperties False True  0  0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -208,3 +212,5 @@ blockFaceTexCoords blockType face = case blockType of
   Wool        -> V2 0 3
   FenceGateClosed -> V2 7 2
   FenceGateOpen   -> V2 8 2
+  Lever       -> V2 9 2
+  RedstoneDust -> V2 10 2

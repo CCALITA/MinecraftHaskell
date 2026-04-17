@@ -121,6 +121,8 @@ tileFull tileIdx lx ly = case tileIdx of
   38 -> oakSaplingPattern lx ly    -- oak sapling (V2 6 2)
   39 -> fenceGateClosedPattern lx ly -- fence gate closed (V2 7 2)
   40 -> fenceGateOpenPattern lx ly   -- fence gate open (V2 8 2)
+  41 -> leverPattern lx ly          -- lever (V2 9 2)
+  42 -> redstoneDustPattern lx ly   -- redstone dust (V2 10 2)
   -- Fallback: checkerboard pattern so missing tiles are visible
   _  -> let checker = (lx + ly) `mod` 2 == 0
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
@@ -389,6 +391,22 @@ tileFull tileIdx lx ly = case tileIdx of
           isRail = (y >= 3 && y <= 5) || (y >= 10 && y <= 12)
       in if isPost && isRail then (120, 85, 40, 255)
          else if isPost then (130, 95, 45, 255)
+         else (0, 0, 0, 0)
+
+    -- Lever: gray stick on stone background
+    leverPattern x y =
+      let isStick = x >= 7 && x <= 8 && y >= 4 && y <= 13
+          isBase  = x >= 5 && x <= 10 && y >= 13 && y <= 15
+      in if isStick then (120, 120, 120, 255)
+         else if isBase then stonePattern x y
+         else (0, 0, 0, 0)
+
+    -- Redstone dust: red cross pattern (powered)
+    redstoneDustPattern x y =
+      let isCross = (x >= 6 && x <= 9) || (y >= 6 && y <= 9)
+          isCenter = x >= 6 && x <= 9 && y >= 6 && y <= 9
+      in if isCenter then (200, 0, 0, 255)
+         else if isCross then (140, 0, 0, 255)
          else (0, 0, 0, 0)
 
 -- | Create a texture from raw RGBA pixel data
