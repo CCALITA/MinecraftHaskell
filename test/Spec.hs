@@ -772,6 +772,68 @@ blockEntitySpec = describe "Game.BlockEntity" $ do
         getChestSlot r1 0 `shouldBe` Just item1
         getChestSlot r2 0 `shouldBe` Just item2
       _ -> expectationFailure "Expected both chest inventories"
+
+  it "getFurnaceState returns Nothing for missing position" $ do
+    bem <- newBlockEntityMap
+    mFs <- getFurnaceState bem (V3 0 64 0)
+    mFs `shouldBe` Nothing
+
+  it "setFurnaceState/getFurnaceState roundtrip" $ do
+    bem <- newBlockEntityMap
+    let pos = V3 5 32 5
+        fs = setFurnaceInput newFurnaceState (Just (ItemStack (BlockItem IronOre) 3))
+    setFurnaceState bem pos fs
+    mFs <- getFurnaceState bem pos
+    case mFs of
+      Just fs' -> getFurnaceInput fs' `shouldBe` Just (ItemStack (BlockItem IronOre) 3)
+      Nothing  -> expectationFailure "Expected furnace state"
+
+  it "hasBlockEntity returns True after setFurnaceState" $ do
+    bem <- newBlockEntityMap
+    let pos = V3 1 2 3
+    setFurnaceState bem pos newFurnaceState
+    exists <- hasBlockEntity bem pos
+    exists `shouldBe` True
+
+  it "removeBlockEntity returns FurnaceData and clears it" $ do
+    bem <- newBlockEntityMap
+    let pos = V3 10 20 30
+    setFurnaceState bem pos newFurnaceState
+    mBe <- removeBlockEntity bem pos
+    case mBe of
+      Just (FurnaceData _) -> pure ()
+      _ -> expectationFailure "Expected FurnaceData"
+    exists <- hasBlockEntity bem pos
+    exists `shouldBe` False
+
+  it "furnace and chest at different positions are independent" $ do
+    bem <- newBlockEntityMap
+    let chestPos = V3 0 64 0
+        furnacePos = V3 10 64 10
+        fs = setFurnaceInput newFurnaceState (Just (ItemStack (MaterialItem Coal) 1))
+    setChestInventory bem chestPos emptyChestInventory
+    setFurnaceState bem furnacePos fs
+    mChest <- getChestInventory bem chestPos
+    mFurnace <- getFurnaceState bem furnacePos
+    case (mChest, mFurnace) of
+      (Just _, Just fs') -> getFurnaceInput fs' `shouldBe` Just (ItemStack (MaterialItem Coal) 1)
+      _ -> expectationFailure "Expected both entities"
+    -- Cross-type lookups return Nothing
+    mWrong1 <- getFurnaceState bem chestPos
+    mWrong1 `shouldBe` Nothing
+    mWrong2 <- getChestInventory bem furnacePos
+    mWrong2 `shouldBe` Nothing
+
+  it "allFurnaceEntities returns only furnaces" $ do
+    bem <- newBlockEntityMap
+    let fPos1 = V3 0 64 0
+        fPos2 = V3 10 64 10
+        cPos  = V3 20 64 20
+    setFurnaceState bem fPos1 newFurnaceState
+    setFurnaceState bem fPos2 (setFurnaceFuel newFurnaceState (Just (ItemStack (MaterialItem Coal) 5)))
+    setChestInventory bem cPos emptyChestInventory
+    furnaces <- allFurnaceEntities bem
+    length furnaces `shouldBe` 2
 -- Furnace
 -- =========================================================================
 furnaceSpec :: Spec
