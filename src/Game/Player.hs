@@ -16,6 +16,7 @@ module Game.Player
   ) where
 
 import Game.Physics
+import Game.Inventory (ItemStack(..))
 import World.Block (BlockType(..), isSolid)
 
 import Linear (V3(..), normalize, cross, (^*), norm)
@@ -34,6 +35,7 @@ data Player = Player
   , plHunger       :: !Int          -- 0-20 (10 drumsticks)
   , plFallDist     :: !Float        -- accumulated fall distance
   , plEatingTimer  :: !Float        -- 0.0 = not eating, counts down from 1.6
+  , plArmorSlots   :: ![Maybe ItemStack]  -- 4 armor slots: helmet, chestplate, leggings, boots
   } deriving stock (Show, Eq)
 
 -- | Max health (10 hearts = 20 half-hearts)
@@ -72,6 +74,7 @@ defaultPlayer spawnPos = Player
   , plHunger       = maxHunger
   , plFallDist     = 0
   , plEatingTimer  = 0.0
+  , plArmorSlots   = [Nothing, Nothing, Nothing, Nothing]
   }
 
 noInput :: PlayerInput

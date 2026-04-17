@@ -358,17 +358,57 @@ main = do
           (winW, winH) <- getWindowSize wh
           let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
               ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
-              -- Check which inventory slot was clicked
-              mSlot = hitInventorySlot ndcX ndcY
-          case mSlot of
-            Nothing -> pure ()
-            Just slotIdx -> do
-              inv <- readIORef inventoryRef
-              cursor <- readIORef cursorItemRef
-              let slotContent = getSlot inv slotIdx
-              -- Swap cursor and slot
-              writeIORef inventoryRef (setSlot inv slotIdx cursor)
-              writeIORef cursorItemRef slotContent
+          -- Check 2x2 crafting grid first (top-right area of inventory screen)
+          let craft2x2X0 = 0.20 :: Float
+              craft2x2Y0 = -0.50 :: Float
+              craft2x2Sz = 0.10 :: Float
+              craftCol = floor ((ndcX - craft2x2X0) / craft2x2Sz) :: Int
+              craftRow = floor ((ndcY - craft2x2Y0) / craft2x2Sz) :: Int
+              inCraftGrid = craftCol >= 0 && craftCol < 2 && craftRow >= 0 && craftRow < 2
+              -- Output slot area
+              outX0 = 0.50 :: Float; outY0 = -0.48 :: Float; outSz = 0.12 :: Float
+              inOutput = ndcX >= outX0 && ndcX <= outX0 + outSz && ndcY >= outY0 && ndcY <= outY0 + outSz
+          if inCraftGrid then do
+            -- Click on 2x2 crafting grid slot
+            cursor <- readIORef cursorItemRef
+            grid <- readIORef craftingGridRef
+            let slotContent = getCraftingSlot grid craftRow craftCol
+            case cursor of
+              Just (ItemStack item 1) -> do
+                writeIORef craftingGridRef (setCraftingSlot grid craftRow craftCol (Just item))
+                writeIORef cursorItemRef (fmap (\i -> ItemStack i 1) slotContent)
+              Just (ItemStack item n) | n > 1 -> case slotContent of
+                Nothing -> do
+                  writeIORef craftingGridRef (setCraftingSlot grid craftRow craftCol (Just item))
+                  writeIORef cursorItemRef (Just (ItemStack item (n - 1)))
+                _ -> pure ()
+              Nothing -> do
+                writeIORef craftingGridRef (setCraftingSlot grid craftRow craftCol Nothing)
+                writeIORef cursorItemRef (fmap (\i -> ItemStack i 1) slotContent)
+              _ -> pure ()
+          else if inOutput then do
+            -- Take crafted output from 2x2 grid
+            grid <- readIORef craftingGridRef
+            case tryCraft grid of
+              CraftSuccess item count -> do
+                cursor <- readIORef cursorItemRef
+                case cursor of
+                  Nothing -> do
+                    writeIORef cursorItemRef (Just (ItemStack item count))
+                    writeIORef craftingGridRef (emptyCraftingGrid 2)
+                  _ -> pure ()
+              CraftFailure -> pure ()
+          else do
+            -- Check inventory slot
+            let mSlot = hitInventorySlot ndcX ndcY
+            case mSlot of
+              Nothing -> pure ()
+              Just slotIdx -> do
+                inv <- readIORef inventoryRef
+                cursor <- readIORef cursorItemRef
+                let slotContent = getSlot inv slotIdx
+                writeIORef inventoryRef (setSlot inv slotIdx cursor)
+                writeIORef cursorItemRef slotContent
 
         CraftingOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
@@ -627,6 +667,7 @@ main = do
               modifyIORef' debugOverlayRef not
             GLFW.Key'E -> do
               writeIORef gameModeRef InventoryOpen
+              writeIORef craftingGridRef (emptyCraftingGrid 2)  -- 2x2 for inventory crafting
               GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
               writeIORef lastCursorRef Nothing
             GLFW.Key'1 -> selectSlot 0
@@ -1651,8 +1692,21 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChe
       ++ quad (invGridX0 - 0.02) (invGridY0 - 0.02)
               (invGridX0 + 9 * invSlotW + 0.02) (invGridY0 + 4 * invSlotH + 0.02)
               (0.3, 0.3, 0.3, 0.9)
-      -- Individual slots
+      -- Individual inventory slots
       ++ concatMap renderInvSlot [0..35]
+      -- 2x2 crafting grid (top-right)
+      ++ quad 0.18 (-0.52) 0.42 (-0.28) (0.35, 0.35, 0.3, 0.9)
+      ++ renderText 0.22 (-0.55) 0.5 (1, 1, 1, 0.8) "CRAFT"
+      ++ concatMap renderInvCraftSlot [(r, c) | r <- [0..1], c <- [0..1]]
+      -- Crafting output
+      ++ quad 0.48 (-0.50) 0.62 (-0.36) (0.25, 0.25, 0.2, 0.9)
+      ++ renderInvCraftOutput
+      -- Arrow between grid and output
+      ++ quad 0.44 (-0.45) 0.47 (-0.41) (1, 1, 1, 0.7)
+      -- 4 armor slots (left column)
+      ++ quad (-0.60) (-0.52) (-0.46) (-0.10) (0.35, 0.3, 0.35, 0.9)
+      ++ renderText (-0.58) (-0.55) 0.5 (1, 1, 1, 0.8) "ARMOR"
+      ++ concatMap renderArmorSlot [0..3]
       where
         renderInvSlot idx =
           let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
@@ -1670,6 +1724,48 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChe
               in slotBg ++ concatMap (\(r, c, clr) ->
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
+        craft2x2X0 = 0.20 :: Float
+        craft2x2Y0 = -0.50 :: Float
+        craft2x2Sz = 0.10 :: Float
+
+        renderInvCraftSlot (row, col) =
+          let x = craft2x2X0 + fromIntegral col * craft2x2Sz + 0.01
+              y = craft2x2Y0 + fromIntegral row * craft2x2Sz + 0.01
+              sw = craft2x2Sz - 0.02; sh = craft2x2Sz - 0.02
+              slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
+          in case getCraftingSlot craftGrid row col of
+            Nothing -> slotBg
+            Just item ->
+              let colors = itemMiniIcon item
+                  pixW = sw / 3; pixH = sh / 3
+              in slotBg ++ concatMap (\(r, c, clr) ->
+                   quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                        (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
+        renderInvCraftOutput =
+          let x = 0.50; y = -0.48; sz = 0.10
+              slotBg = quad x y (x + sz) (y + sz) (0.2, 0.2, 0.15, 0.9)
+          in case tryCraft craftGrid of
+            CraftSuccess item count ->
+              let colors = itemMiniIcon item
+                  pixW = sz / 3; pixH = sz / 3
+                  iconVerts = concatMap (\(r, c, clr) ->
+                       quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                            (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+                  countText = if count > 1
+                    then renderText (x + sz - 0.03) (y + sz - 0.025) 0.6 (1,1,1,1) (show count)
+                    else []
+              in slotBg ++ iconVerts ++ countText
+            CraftFailure -> slotBg
+
+        armorLabels = ["H", "C", "L", "B"]  -- Helmet, Chestplate, Leggings, Boots
+        renderArmorSlot idx =
+          let x = -0.58; y = -0.50 + fromIntegral idx * 0.10 + 0.01
+              sw = 0.10; sh = 0.08
+              slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
+              label = renderText (x + 0.01) (y + 0.01) 0.5 (0.5, 0.5, 0.5, 0.5) (armorLabels !! idx)
+          in slotBg ++ label
 
     -- Crafting screen: grid + output + inventory below
     craftScreenVerts =
@@ -2150,6 +2246,7 @@ playerFromSaveData sd =
     , plHunger    = sdHunger sd
     , plFallDist  = sdFallDist sd
     , plEatingTimer = 0.0
+    , plArmorSlots = [Nothing, Nothing, Nothing, Nothing]
     }
 
 -- | Restore player, inventory, and day/night state from SaveData into IORefs
