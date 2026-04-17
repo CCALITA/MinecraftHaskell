@@ -127,6 +127,7 @@ tileFull tileIdx lx ly = case tileIdx of
   42 -> redstoneDustPattern lx ly   -- redstone dust (V2 10 2)
   46 -> trapdoorClosedPattern lx ly  -- trapdoor closed (V2 14 2)
   47 -> trapdoorOpenPattern lx ly    -- trapdoor open (V2 15 2)
+  43 -> firePattern lx ly              -- fire (V2 11 2)
   -- Fallback: checkerboard pattern so missing tiles are visible
   _  -> let checker = (lx + ly) `mod` 2 == 0
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
@@ -455,6 +456,21 @@ tileFull tileIdx lx ly = case tileIdx of
           v = fromIntegral (160 + n) :: Word8
       in if isDoor then (v, v, fromIntegral (v + 5), 255)
          else (0, 0, 0, 0)  -- transparent
+
+    -- Fire: orange/yellow flickering flame pattern
+    firePattern x y =
+      let n = pixHash x y 2500 `mod` 100
+          -- Flame shape: wider at bottom, narrower at top
+          centerDist = abs (x - 7)
+          maxWidth = max 1 (8 - y `div` 2)
+          isFlame = centerDist <= maxWidth && y >= 2
+          isTip = y <= 4 && centerDist <= 2
+          isBase = y >= 12 && centerDist <= 6
+      in if not isFlame && not isBase then (0, 0, 0, 0)  -- transparent
+         else if isTip then (255, 255, fromIntegral (100 + n `mod` 80), 255)  -- bright yellow tip
+         else if y <= 6 then (255, fromIntegral (180 + n `mod` 60), fromIntegral (20 + n `mod` 30), 255)  -- orange-yellow upper
+         else if y <= 10 then (255, fromIntegral (120 + n `mod` 60), fromIntegral (10 + n `mod` 20), 255)  -- orange middle
+         else (220, fromIntegral (80 + n `mod` 40), 10, 255)  -- dark orange base
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels

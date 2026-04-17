@@ -791,6 +791,32 @@ main = do
                               updateEntity entityWorld eid (\e -> e { entYaw = paintingYaw })
                               putStrLn $ "Placed painting at " ++ show paintingPos
                             Just (ItemStack (FoodItem _) _) -> pure ()
+                            Just (ItemStack (FlintAndSteelItem dur) _) -> do
+                              let sel = invSelected inv
+                                  consumeDurability =
+                                    if dur <= 1
+                                      then writeIORef inventoryRef (setSlot inv sel Nothing)
+                                      else writeIORef inventoryRef (setSlot inv sel (Just (ItemStack (FlintAndSteelItem (dur - 1)) 1)))
+                              if hitBlock == TNT
+                                then do
+                                  worldSetBlock world (V3 bx by bz) Air
+                                  explodeAt world (fmap fromIntegral (V3 bx by bz) + V3 0.5 0.5 0.5) 3 droppedItems
+                                  playSound soundSystem SndExplosion
+                                  rebuildExplosionChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz 3
+                                  consumeDurability
+                                  putStrLn $ "Ignited TNT at " ++ show (V3 bx by bz)
+                                else do
+                                  let V3 nx ny nz = rhFaceNormal hit
+                                      firePos = V3 (bx + nx) (by + ny) (bz + nz)
+                                      V3 _ fireY _ = firePos
+                                  when (fireY >= 0 && fireY < chunkHeight) $ do
+                                    existing <- worldGetBlock world firePos
+                                    when (existing == Air) $ do
+                                      worldSetBlock world firePos Fire
+                                      consumeDurability
+                                      let V3 fpx _ fpz = firePos
+                                      rebuildChunkWithNeighbors world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef fpx fpz
+                                      putStrLn $ "Placed fire at " ++ show firePos
                             Just (ItemStack item _) -> case itemToBlock item of
                               Nothing -> pure ()
                               Just bt -> do
@@ -1226,22 +1252,8 @@ main = do
                             destroyEntity entityWorld eid
                             modifyIORef' aiStatesRef (HM.delete eid)
                             modifyIORef' creeperFuseRef (IM.delete eid)
-                            -- Rebuild only the chunks that overlap the blast sphere
                             let V3 cpx _ cpz = creeperPos
-                                bx0 = floor cpx - explosionRadius :: Int
-                                bz0 = floor cpz - explosionRadius :: Int
-                                bx1 = floor cpx + explosionRadius :: Int
-                                bz1 = floor cpz + explosionRadius :: Int
-                                cx0 = bx0 `div` chunkWidth
-                                cz0 = bz0 `div` chunkDepth
-                                cx1 = bx1 `div` chunkWidth
-                                cz1 = bz1 `div` chunkDepth
-                            forM_ [cx0 .. cx1] $ \chx ->
-                              forM_ [cz0 .. cz1] $ \chz -> do
-                                mChunk <- getChunk world (V2 chx chz)
-                                case mChunk of
-                                  Nothing -> pure ()
-                                  Just ch -> meshSingleChunk physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef ch
+                            rebuildExplosionChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef (floor cpx) (floor cpz) explosionRadius
                           else
                             modifyIORef' creeperFuseRef (IM.insert eid newFuse)
                       _ ->
@@ -1337,6 +1349,44 @@ main = do
                           spawnDrop droppedItems (BlockItem OakSapling) 1
                             (V3 (fromIntegral wx + 0.5) (fromIntegral ly + 0.5) (fromIntegral wz + 0.5))
                         modifyIORef' dirtyChunks (chunkPos chunk :)
+              remeshDirtyChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef dirtyChunks
+
+            -- Fire tick (every 60 frames / ~1 second): spread and burn out
+            when (frameIdx > 0 && frameIdx `mod` 60 == 0) $ do
+              chunks <- HM.toList <$> readTVarIO (worldChunks world)
+              dirtyChunks <- newIORef ([] :: [ChunkPos])
+              forM_ chunks $ \(V2 cx' cz', chunk) ->
+                forEachBlock chunk $ \lx ly lz bt ->
+                  when (bt == Fire) $ do
+                    let wx = cx' * chunkWidth + lx
+                        wz = cz' * chunkDepth + lz
+                        firePos = V3 wx ly wz
+                    -- 20% chance to burn out
+                    burnRoll <- randomRIO (1 :: Int, 5)
+                    if burnRoll == 1
+                      then do
+                        worldSetBlock world firePos Air
+                        modifyIORef' dirtyChunks (chunkPos chunk :)
+                      else do
+                        -- Check adjacent blocks for fire spread (5% chance per flammable neighbor)
+                        let neighbors = [ V3 (wx+1) ly wz, V3 (wx-1) ly wz
+                                        , V3 wx (ly+1) wz, V3 wx (ly-1) wz
+                                        , V3 wx ly (wz+1), V3 wx ly (wz-1) ]
+                        forM_ neighbors $ \nPos@(V3 nx' ny' nz') -> do
+                          nbt <- worldGetBlock world nPos
+                          when (isFlammable nbt) $ do
+                            spreadRoll <- randomRIO (1 :: Int, 20)
+                            when (spreadRoll == 1) $ do
+                              worldSetBlock world nPos Fire
+                              modifyIORef' dirtyChunks (chunkPos chunk :)
+                          -- Also try to spread to the air block above a flammable neighbor
+                          when (nbt == Air && ny' >= 0 && ny' < chunkHeight) $ do
+                            belowBt <- worldGetBlock world (V3 nx' (ny' - 1) nz')
+                            when (isFlammable belowBt) $ do
+                              spreadRoll <- randomRIO (1 :: Int, 20)
+                              when (spreadRoll == 1) $ do
+                                worldSetBlock world nPos Fire
+                                modifyIORef' dirtyChunks (chunkPos chunk :)
               remeshDirtyChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef dirtyChunks
 
             -- Update chunks periodically
@@ -1706,6 +1756,23 @@ remeshDirtyChunks world physDevice device cmdPool queue cacheRef dirtyRef = do
       Nothing -> pure ()
       Just ch -> meshSingleChunk physDevice device cmdPool queue cacheRef ch
 
+-- | Rebuild chunk meshes in the area affected by an explosion
+rebuildExplosionChunks
+  :: World -> Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue
+  -> IORef (HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
+  -> Int -> Int -> Int -> IO ()
+rebuildExplosionChunks world physDevice device cmdPool queue cacheRef centerX centerZ radius = do
+  let bx0 = centerX - radius; bz0 = centerZ - radius
+      bx1 = centerX + radius; bz1 = centerZ + radius
+      cx0 = bx0 `div` chunkWidth; cz0 = bz0 `div` chunkDepth
+      cx1 = bx1 `div` chunkWidth; cz1 = bz1 `div` chunkDepth
+  forM_ [cx0 .. cx1] $ \chx ->
+    forM_ [cz0 .. cz1] $ \chz -> do
+      mChunk <- getChunk world (V2 chx chz)
+      case mChunk of
+        Nothing -> pure ()
+        Just ch -> meshSingleChunk physDevice device cmdPool queue cacheRef ch
+
 -- | Inventory slot layout constants
 invGridX0, invGridY0, invSlotW, invSlotH, invSlotPad :: Float
 invGridX0 = -0.55   -- left edge of inventory grid in NDC
@@ -1821,6 +1888,14 @@ readMobType "Cow"      = Cow
 readMobType "Sheep"    = Sheep
 readMobType "Chicken"  = Chicken
 readMobType _          = Pig
+
+-- | Whether a block is flammable (can catch fire from adjacent fire blocks)
+isFlammable :: BlockType -> Bool
+isFlammable OakLog    = True
+isFlammable OakPlanks = True
+isFlammable OakLeaves = True
+isFlammable Wool      = True
+isFlammable _         = False
 
 -- | Check if an OakLog exists within a given Manhattan distance of a world position
 checkLogNearby :: World -> V3 Int -> Int -> IO Bool
@@ -2519,6 +2594,7 @@ itemColor (BlockItem bt) = case bt of
   RedstoneDust -> (0.8, 0.1, 0.1, 1.0)
   StoneStairs  -> (0.5, 0.5, 0.5, 1.0)
   OakStairs    -> (0.78, 0.65, 0.43, 1.0)
+  Fire        -> (1.0, 0.5, 0.0, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)
@@ -2549,12 +2625,14 @@ itemColor (MaterialItem mt) = case mt of
   Leather    -> (0.6, 0.35, 0.15, 1.0)
   WheatSeeds -> (0.3, 0.6, 0.2, 1.0)
   Wheat      -> (0.9, 0.8, 0.3, 1.0)
+  Flint      -> (0.4, 0.4, 0.4, 1.0)
 itemColor (ArmorItem _ mat _) = case mat of
   LeatherArmor -> (0.6, 0.35, 0.15, 1.0)
   IronArmor    -> (0.75, 0.75, 0.75, 1.0)
   GoldArmor    -> (0.9, 0.8, 0.3, 1.0)
   DiamondArmor -> (0.4, 0.9, 0.9, 1.0)
 itemColor (ShearsItem _) = (0.7, 0.7, 0.7, 1.0)
+itemColor (FlintAndSteelItem _) = (0.5, 0.5, 0.5, 1.0)
 
 -- | 3x3 mini-icon for item (row, col, color) — used in hotbar slot rendering
 itemMiniIcon :: Item -> [(Int, Int, (Float, Float, Float, Float))]
@@ -2613,6 +2691,8 @@ itemMiniIcon (MaterialItem mt) = case mt of
     where c = (0.3,0.6,0.2,1)
   Wheat      -> [(0,1,c), (1,0,c),(1,1,c),(1,2,c), (2,1,c)]
     where c = (0.9,0.8,0.3,1)
+  Flint      -> [(0,1,c), (1,0,c),(1,1,c), (2,1,c),(2,2,c)]
+    where c = (0.4,0.4,0.4,1)
   where fill c = [(r,col,c) | r <- [0..2], col <- [0..2]]
 itemMiniIcon (ArmorItem slot mat dur) = case slot of
   Helmet     -> [(0,0,c),(0,1,c),(0,2,c), (1,0,c),(1,2,c)]
@@ -2623,6 +2703,9 @@ itemMiniIcon (ArmorItem slot mat dur) = case slot of
 itemMiniIcon (ShearsItem _) =
   [(0,0,c),(0,2,c), (1,1,c), (2,0,c),(2,2,c)]
   where c = (0.7,0.7,0.7,1)
+itemMiniIcon (FlintAndSteelItem _) =
+  [(0,2,fl), (1,1,g),(1,2,fl), (2,0,g),(2,1,g)]
+  where g = (0.5,0.5,0.5,1); fl = (1.0,0.6,0.0,1)
 itemMiniIcon (BlockItem bt) = blockMiniIcon bt
   where
     fill c = [(r,col,c) | r <- [0..2], col <- [0..2]]

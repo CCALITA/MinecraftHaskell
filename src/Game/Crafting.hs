@@ -276,6 +276,13 @@ allRecipes =
       , rcResult  = BlockItem IronDoorClosed
       , rcCount   = 1
       }
+  -- Flint and steel: iron ingot + flint
+  , Recipe
+      { rcPattern = [[ji (MaterialItem IronIngot)]
+                    ,[ji (MaterialItem Flint)]]
+      , rcResult  = FlintAndSteelItem 64
+      , rcCount   = 1
+      }
   ] ++ toolRecipes ++ shearsRecipe
 
 -- | Shears crafting recipe: 2 iron ingots diagonal
