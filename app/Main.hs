@@ -645,7 +645,9 @@ main = do
                                 let V3 px' _ pz' = placePos
                                 when (isGravityAffected bt) $
                                   void $ settleGravityBlock world placePos
-                                rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
+                                if bpLightEmit (blockProperties bt) > 0
+                                  then rebuildChunkWithNeighbors world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
+                                  else rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
                   _ -> pure ()
 
     -- Key callback
@@ -889,8 +891,9 @@ main = do
                           putStrLn $ "Broke " ++ show bt ++ " at " ++ show blockPos
                           -- Trigger falling blocks above the broken block
                           void $ triggerGravityAbove world blockPos
-                          -- Rebuild chunk mesh once (covers both the break and any gravity cascade)
-                          rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
+                          if bpLightEmit (blockProperties bt) > 0
+                            then rebuildChunkWithNeighbors world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
+                            else rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
                           writeIORef miningRef Nothing
                         else writeIORef miningRef (Just (blockPos, newProgress))
 
@@ -1331,6 +1334,20 @@ rebuildChunkAt world physDevice device cmdPool queue cacheRef wx wz = do
   case mChunk of
     Nothing -> pure ()
     Just chunk -> meshSingleChunk physDevice device cmdPool queue cacheRef chunk
+
+-- | Rebuild the chunk at (wx, wz) plus its 4 cardinal neighbors.
+--   Light propagation is per-chunk, so neighbors must be re-meshed when
+--   a light-emitting block changes near a chunk boundary.
+rebuildChunkWithNeighbors
+  :: World -> Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue
+  -> IORef (HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
+  -> Int -> Int -> IO ()
+rebuildChunkWithNeighbors world physDevice device cmdPool queue cacheRef wx wz = do
+  let cx = wx `div` chunkWidth
+      cz = wz `div` chunkDepth
+      rebuild ncx ncz = rebuildChunkAt world physDevice device cmdPool queue cacheRef (ncx * chunkWidth) (ncz * chunkDepth)
+  forM_ [ (cx, cz), (cx - 1, cz), (cx + 1, cz), (cx, cz - 1), (cx, cz + 1) ] $
+    uncurry rebuild
 
 -- | Remove cached meshes for chunks that are no longer loaded
 pruneChunkMeshes
