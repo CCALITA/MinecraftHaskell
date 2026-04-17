@@ -268,7 +268,15 @@ allRecipes =
       , rcResult  = BlockItem OakStairs
       , rcCount   = 4
       }
-  ] ++ toolRecipes
+  ] ++ toolRecipes ++ shearsRecipe
+
+-- | Shears crafting recipe: 2 iron ingots diagonal
+shearsRecipe :: [Recipe]
+shearsRecipe =
+  [ Recipe [[Nothing, ji (MaterialItem IronIngot)]
+           ,[ji (MaterialItem IronIngot), Nothing]]
+           (ShearsItem 238) 1
+  ]
 
 -- | Helper to create a tool item with full durability
 tool :: ToolType -> ToolMaterial -> Item
