@@ -123,6 +123,8 @@ tileFull tileIdx lx ly = case tileIdx of
   40 -> fenceGateOpenPattern lx ly   -- fence gate open (V2 8 2)
   41 -> leverPattern lx ly          -- lever (V2 9 2)
   42 -> redstoneDustPattern lx ly   -- redstone dust (V2 10 2)
+  46 -> trapdoorClosedPattern lx ly  -- trapdoor closed (V2 14 2)
+  47 -> trapdoorOpenPattern lx ly    -- trapdoor open (V2 15 2)
   -- Fallback: checkerboard pattern so missing tiles are visible
   _  -> let checker = (lx + ly) `mod` 2 == 0
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
@@ -408,6 +410,28 @@ tileFull tileIdx lx ly = case tileIdx of
       in if isCenter then (200, 0, 0, 255)
          else if isCross then (140, 0, 0, 255)
          else (0, 0, 0, 0)
+
+    -- Trapdoor closed: brown planks with grid lines (flat hatch)
+    trapdoorClosedPattern x y =
+      let border = x == 0 || x == 15 || y == 0 || y == 15
+          gridLine = x == 7 || x == 8 || y == 7 || y == 8
+          n = pixHash x y 2500 `mod` 20
+          plankR = 140 + fromIntegral n
+          plankG = plankR * 75 `div` 140
+          plankB = plankR * 45 `div` 140
+      in if border then (80, 55, 25, 255)
+         else if gridLine then (100, 70, 35, 255)
+         else (plankR, plankG, plankB, 255)
+
+    -- Trapdoor open: thin horizontal edge (trapdoor seen from side, open position)
+    trapdoorOpenPattern x y =
+      let isTrapdoor = y <= 3
+          gridLine = y == 0 || x == 7 || x == 8
+          n = pixHash x y 2600 `mod` 15
+      in if isTrapdoor then
+           if gridLine then (100, 70, 35, 255)
+           else (130 + fromIntegral n, 90 + fromIntegral (n `div` 2), 40, 255)
+         else (0, 0, 0, 0)  -- transparent
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels
