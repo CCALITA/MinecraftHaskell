@@ -15,6 +15,7 @@ import Game.Player
 import Game.DroppedItem
 import Game.Save (SaveData(..), inventoryToSlotList, slotListToInventory)
 import Game.BlockEntity
+import Game.Furnace
 
 import Data.Binary (encode, decode)
 import Linear (V2(..), V3(..))
@@ -38,6 +39,7 @@ main = hspec $ do
   gravitySpec
   saveSpec
   blockEntitySpec
+  furnaceSpec
 
 -- =========================================================================
 -- Block
@@ -766,3 +768,81 @@ blockEntitySpec = describe "Game.BlockEntity" $ do
         getChestSlot r1 0 `shouldBe` Just item1
         getChestSlot r2 0 `shouldBe` Just item2
       _ -> expectationFailure "Expected both chest inventories"
+-- Furnace
+-- =========================================================================
+furnaceSpec :: Spec
+furnaceSpec = describe "Game.Furnace" $ do
+  it "new furnace state is empty" $ do
+    let fs = newFurnaceState
+    getFurnaceInput fs `shouldBe` Nothing
+    getFurnaceFuel fs `shouldBe` Nothing
+    getFurnaceOutput fs `shouldBe` Nothing
+    fsSmeltTime fs `shouldBe` 0
+    fsFuelTime fs `shouldBe` 0
+
+  it "has smelting recipes for ores" $ do
+    length smeltRecipes `shouldSatisfy` (>= 5)
+    -- Iron ore should have a recipe
+    let hasIronRecipe = any (\r -> srInput r == BlockItem IronOre) smeltRecipes
+    hasIronRecipe `shouldBe` True
+
+  it "coal has fuel burn time" $ do
+    fuelBurnTime (MaterialItem Coal) `shouldSatisfy` (> 0)
+
+  it "oak planks have fuel burn time" $ do
+    fuelBurnTime (BlockItem OakPlanks) `shouldSatisfy` (> 0)
+
+  it "stone has no fuel burn time" $ do
+    fuelBurnTime (BlockItem Stone) `shouldBe` 0
+
+  it "tickFurnace with no input/fuel does nothing" $ do
+    let fs = tickFurnace 1.0 newFurnaceState
+    getFurnaceInput fs `shouldBe` Nothing
+    getFurnaceOutput fs `shouldBe` Nothing
+
+  it "tickFurnace consumes fuel and smelts input" $ do
+    let fs0 = newFurnaceState
+          { fsInput = Just (ItemStack (BlockItem IronOre) 1)
+          , fsFuel  = Just (ItemStack (MaterialItem Coal) 1)
+          }
+        -- Tick enough to consume fuel and complete smelting (10 seconds)
+        fs1 = iterate (tickFurnace 1.0) fs0 !! 11
+    -- Output should have an iron ingot
+    getFurnaceOutput fs1 `shouldBe` Just (ItemStack (MaterialItem IronIngot) 1)
+    -- Input should be consumed
+    getFurnaceInput fs1 `shouldBe` Nothing
+
+  it "tickFurnace does not smelt without fuel" $ do
+    let fs0 = newFurnaceState
+          { fsInput = Just (ItemStack (BlockItem IronOre) 1)
+          }
+        fs1 = tickFurnace 5.0 fs0
+    getFurnaceOutput fs1 `shouldBe` Nothing
+    -- Input is unchanged
+    getFurnaceInput fs1 `shouldBe` Just (ItemStack (BlockItem IronOre) 1)
+
+  it "tickFurnace does not smelt invalid input" $ do
+    let fs0 = newFurnaceState
+          { fsInput = Just (ItemStack (BlockItem Dirt) 1)
+          , fsFuel  = Just (ItemStack (MaterialItem Coal) 1)
+          }
+        fs1 = tickFurnace 15.0 fs0
+    getFurnaceOutput fs1 `shouldBe` Nothing
+
+  it "setFurnaceInput/getFurnaceInput roundtrip" $ do
+    let stack = Just (ItemStack (BlockItem IronOre) 3)
+        fs = setFurnaceInput newFurnaceState stack
+    getFurnaceInput fs `shouldBe` stack
+
+  it "setFurnaceFuel/getFurnaceFuel roundtrip" $ do
+    let stack = Just (ItemStack (MaterialItem Coal) 5)
+        fs = setFurnaceFuel newFurnaceState stack
+    getFurnaceFuel fs `shouldBe` stack
+
+  it "MaterialItem has stack limit 64" $ do
+    itemStackLimit (MaterialItem IronIngot) `shouldBe` 64
+    itemStackLimit (MaterialItem Coal) `shouldBe` 64
+
+  it "MaterialItem does not convert to block" $ do
+    itemToBlock (MaterialItem IronIngot) `shouldBe` Nothing
+    itemToBlock (MaterialItem GoldIngot) `shouldBe` Nothing

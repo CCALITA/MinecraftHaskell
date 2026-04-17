@@ -64,6 +64,7 @@ library
     Game.BlockEntity
     Game.Inventory
     Game.Item
+    Game.Furnace
     Game.Crafting
     Game.DayNight
     Game.Save

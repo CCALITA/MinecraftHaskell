@@ -26,6 +26,7 @@ import Game.Inventory
 import Game.Item
 import Game.Crafting
 import Game.DayNight
+import Game.Furnace
 import World.Fluid
 import World.Light
 import Entity.ECS
@@ -57,7 +58,7 @@ import System.Environment (getArgs)
 import Data.Char (isDigit)
 
 -- | Game UI mode
-data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen
+data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen | FurnaceOpen
   deriving stock (Show, Eq)
 
 -- | Arrow projectile fired by Skeletons
@@ -161,6 +162,8 @@ main = do
     gameModeRef <- newIORef MainMenu
     cursorItemRef <- newIORef (Nothing :: Maybe ItemStack)  -- item held by mouse cursor
     craftingGridRef <- newIORef (emptyCraftingGrid 3)
+    furnaceStateRef <- newIORef newFurnaceState
+    furnacePosRef <- newIORef (Nothing :: Maybe (V3 Int))
     debugOverlayRef <- newIORef False
     targetBlockRef <- newIORef (Nothing :: Maybe (V3 Int))
     dayNightRef <- newIORef (case mSavedData of
@@ -435,6 +438,44 @@ main = do
                       writeIORef cursorItemRef slotContent
             Just (ChestInvSlot idx) -> do
               -- Click on player inventory slot: swap with cursor
+              curInv <- readIORef inventoryRef
+              cursor <- readIORef cursorItemRef
+              let slotContent = getSlot curInv idx
+              modifyIORef' inventoryRef (\i -> setSlot i idx cursor)
+              writeIORef cursorItemRef slotContent
+        FurnaceOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
+          (mx, my) <- readIORef mousePosRef
+          (winW, winH) <- getWindowSize wh
+          let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+              ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
+              mSlot = hitFurnaceSlot ndcX ndcY
+          case mSlot of
+            Just FurnaceInputSlot -> do
+              fs <- readIORef furnaceStateRef
+              cursor <- readIORef cursorItemRef
+              let slotContent = getFurnaceInput fs
+              writeIORef furnaceStateRef (setFurnaceInput fs cursor)
+              writeIORef cursorItemRef slotContent
+            Just FurnaceFuelSlot -> do
+              fs <- readIORef furnaceStateRef
+              cursor <- readIORef cursorItemRef
+              let slotContent = getFurnaceFuel fs
+              writeIORef furnaceStateRef (setFurnaceFuel fs cursor)
+              writeIORef cursorItemRef slotContent
+            Just FurnaceOutputSlot -> do
+              -- Output slot: only take, don't place
+              fs <- readIORef furnaceStateRef
+              cursor <- readIORef cursorItemRef
+              case (cursor, getFurnaceOutput fs) of
+                (Nothing, Just outStack) -> do
+                  writeIORef cursorItemRef (Just outStack)
+                  writeIORef furnaceStateRef (setFurnaceOutput fs Nothing)
+                (Just (ItemStack cItem cCount), Just (ItemStack oItem oCount))
+                  | cItem == oItem && cCount + oCount <= 64 -> do
+                      writeIORef cursorItemRef (Just (ItemStack cItem (cCount + oCount)))
+                      writeIORef furnaceStateRef (setFurnaceOutput fs Nothing)
+                _ -> pure ()
+            Just (FurnaceInvSlot idx) -> do
               inv <- readIORef inventoryRef
               cursor <- readIORef cursorItemRef
               let slotContent = getSlot inv idx
@@ -539,13 +580,28 @@ main = do
                       -- Place block from hotbar (skip if eating food)
                       inv <- readIORef inventoryRef
                       case selectedItem inv of
+                if hitBlock == CraftingTable
+                  then do
+                    writeIORef gameModeRef CraftingOpen
+                    writeIORef craftingGridRef (emptyCraftingGrid 3)
+                    GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+                    writeIORef lastCursorRef Nothing
+                else if hitBlock == Furnace
+                  then do
+                    writeIORef gameModeRef FurnaceOpen
+                    writeIORef furnaceStateRef newFurnaceState
+                    writeIORef furnacePosRef (Just (V3 bx by bz))
+                    GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+                    writeIORef lastCursorRef Nothing
+                  else do
+                    -- Place block from hotbar
+                    inv <- readIORef inventoryRef
+                    case selectedItem inv of
+                      Nothing -> pure ()
+                      Just (ItemStack (FoodItem _) _) -> pure ()  -- eating handles food, don't place
+                      Just (ItemStack item _) -> case itemToBlock item of
                         Nothing -> pure ()
-                        Just (ItemStack (FoodItem _) _) -> pure ()  -- eating, don't place
-                        Just (ItemStack item _) -> case itemToBlock item of
-                        Nothing -> pure ()
-                        Just (ItemStack item _) -> case itemToBlock item of
-                          Nothing -> pure ()
-                          Just bt -> do
+                        Just bt -> do
                             let V3 nx ny nz = rhFaceNormal hit
                                 placePos = V3 (bx + nx) (by + ny) (bz + nz)
                             let (inv', removed) = removeItem inv item 1
@@ -632,6 +688,32 @@ main = do
                     modifyIORef' inventoryRef (\inv -> fst $ addItem inv item cnt)
                     writeIORef cursorItemRef Nothing
                   Nothing -> pure ()
+          _ -> do  -- InventoryOpen, CraftingOpen, or FurnaceOpen
+            let returnStack mStack =
+                  case mStack of
+                    Just (ItemStack item cnt) ->
+                      modifyIORef' inventoryRef (\inv' -> fst $ addItem inv' item cnt)
+                    Nothing -> pure ()
+                closeUI = do
+                  curMode <- readIORef gameModeRef
+                  writeIORef gameModeRef Playing
+                  GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
+                  writeIORef lastCursorRef Nothing
+                  -- Return cursor item to inventory
+                  readIORef cursorItemRef >>= returnStack
+                  writeIORef cursorItemRef Nothing
+                  -- When closing furnace, return all furnace slots to inventory
+                  when (curMode == FurnaceOpen) $ do
+                    fs <- readIORef furnaceStateRef
+                    returnStack (getFurnaceInput fs)
+                    returnStack (getFurnaceFuel fs)
+                    returnStack (getFurnaceOutput fs)
+                    writeIORef furnaceStateRef newFurnaceState
+                    writeIORef furnacePosRef Nothing
+            case key of
+              GLFW.Key'Escape -> closeUI
+              GLFW.Key'E      -> closeUI
+              _               -> pure ()
 
     -- Timing
     frameRef <- newIORef (0 :: Int)
@@ -809,6 +891,10 @@ main = do
 
             -- Update day/night cycle
             modifyIORef' dayNightRef (updateDayNight dt)
+
+            -- Tick furnace when open
+            when (gameMode == FurnaceOpen) $
+              modifyIORef' furnaceStateRef (tickFurnace dt)
 
             -- Tick fluid simulation every physics update
             tickFluids fluidState world
@@ -1048,7 +1134,8 @@ main = do
                   Just cPos -> getChestInventory blockEntityMapRef cPos
                   Nothing   -> pure Nothing
               _ -> pure Nothing
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid mChestInv debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg
+            furnaceState <- readIORef furnaceStateRef
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') mode cursorItem craftGrid mChestInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
             when (hudVC > 0) $ do
@@ -1317,6 +1404,21 @@ hitChestSlot nx ny
   where
     chestY0  = -0.35 :: Float
     playerY0 = 0.1 :: Float
+-- | Furnace slot targets
+data FurnaceSlot = FurnaceInputSlot | FurnaceFuelSlot | FurnaceOutputSlot | FurnaceInvSlot !Int
+  deriving stock (Show, Eq)
+
+-- | Check if NDC coordinates hit a furnace slot
+hitFurnaceSlot :: Float -> Float -> Maybe FurnaceSlot
+hitFurnaceSlot nx ny
+  -- Input slot (top-left)
+  | nx >= -0.25 && nx <= -0.15 && ny >= -0.30 && ny <= -0.20 = Just FurnaceInputSlot
+  -- Fuel slot (bottom-left)
+  | nx >= -0.25 && nx <= -0.15 && ny >= -0.12 && ny <= -0.02 = Just FurnaceFuelSlot
+  -- Output slot (right)
+  | nx >= 0.1 && nx <= 0.23 && ny >= -0.24 && ny <= -0.11 = Just FurnaceOutputSlot
+  -- Inventory slots below
+  | otherwise = fmap FurnaceInvSlot (hitInventorySlot nx (ny + 0.3))
 
 -- | Parse mob type from entity tag string
 readMobType :: String -> MobType
@@ -1334,8 +1436,8 @@ readMobType _          = Pig
 -- debugInfo: Just (pos, yaw, pitch, fps, chunkCount) when F3 overlay is active
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- showSleepMsg: True when "You can only sleep at night" should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> Bool -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChestInv debugInfo targetInfo showSleepMsg = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> FurnaceState -> Maybe (V3 Float, Float, Float, Int, Int) -> Maybe (V3 Int, M44 Float) -> Bool -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChestInv furnaceState debugInfo targetInfo showSleepMsg = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
@@ -1343,6 +1445,7 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChe
     InventoryOpen -> invScreenVerts ++ cursorVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts
     ChestOpen     -> chestScreenVerts ++ cursorVerts
+    FurnaceOpen   -> furnaceScreenVerts ++ cursorVerts
   where
     -- Crosshair: white + at center
     cs = 0.015 :: Float  -- size
@@ -1674,6 +1777,114 @@ buildHudVertices inv miningProgress health hunger mode cursorItem craftGrid mChe
               col = if idx < 9 then idx else (idx - 9) `mod` 9
               x = invGridX0 + fromIntegral col * invSlotW + invSlotPad
               y = chestInvY0 + fromIntegral row * invSlotH + invSlotPad
+              sw = invSlotW - 2 * invSlotPad
+              sh = invSlotH - 2 * invSlotPad
+              slotBg = quad x y (x + sw) (y + sh) (0.2, 0.18, 0.12, 0.8)
+          in case getSlot inv idx of
+            Nothing -> slotBg
+            Just (ItemStack item _) ->
+              let colors = itemMiniIcon item
+                  pixW = sw / 3; pixH = sh / 3
+              in slotBg ++ concatMap (\(r, c, clr) ->
+                   quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                        (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
+    -- Furnace screen: input slot, fuel slot, output slot, progress arrows, inventory below
+    furnaceScreenVerts =
+      quad (-1) (-1) 1 1 (0, 0, 0, 0.5)
+      -- Title
+      ++ renderTextCentered (-0.42) 0.9 (1, 1, 1, 1) "FURNACE"
+      -- Background panel
+      ++ quad (-0.35) (-0.35) 0.35 0.02 (0.3, 0.3, 0.3, 0.9)
+      -- Input slot (top-left)
+      ++ renderFurnaceSlot furnInputX furnInputY (getFurnaceInput furnaceState)
+      -- Fuel slot (bottom-left)
+      ++ renderFurnaceSlot furnFuelX furnFuelY (getFurnaceFuel furnaceState)
+      -- Output slot (right, larger)
+      ++ renderFurnaceOutputSlot
+      -- Smelt progress arrow (between input and output)
+      ++ furnaceSmeltArrow
+      -- Fuel burn indicator (between fuel and input)
+      ++ furnaceFuelIndicator
+      -- Inventory grid below
+      ++ quad (invGridX0 - 0.02) 0.08 (invGridX0 + 9 * invSlotW + 0.02) (0.08 + 4 * invSlotH + 0.02) (0.3, 0.3, 0.3, 0.9)
+      ++ concatMap renderFurnaceInvSlot [0..35]
+      where
+        furnInputX = -0.25
+        furnInputY = -0.30
+        furnFuelX  = -0.25
+        furnFuelY  = -0.12
+        furnOutX   = 0.1
+        furnOutY   = -0.24
+        furnSlotSz = 0.1
+
+        renderFurnaceSlot sx sy mStack =
+          let slotBg = quad sx sy (sx + furnSlotSz) (sy + furnSlotSz) (0.15, 0.15, 0.15, 0.8)
+          in case mStack of
+            Nothing -> slotBg
+            Just (ItemStack item _cnt) ->
+              let colors = itemMiniIcon item
+                  pixW = furnSlotSz / 3; pixH = furnSlotSz / 3
+              in slotBg ++ concatMap (\(r, c, clr) ->
+                   quad (sx + fromIntegral c * pixW) (sy + fromIntegral r * pixH)
+                        (sx + fromIntegral (c+1) * pixW) (sy + fromIntegral (r+1) * pixH) clr) colors
+
+        renderFurnaceOutputSlot =
+          let sz = 0.13
+              slotBg = quad furnOutX furnOutY (furnOutX + sz) (furnOutY + sz) (0.2, 0.2, 0.15, 0.9)
+          in case getFurnaceOutput furnaceState of
+            Nothing -> slotBg
+            Just (ItemStack item cnt) ->
+              let colors = itemMiniIcon item
+                  pixW = sz / 3; pixH = sz / 3
+                  iconVerts = concatMap (\(r, c, clr) ->
+                       quad (furnOutX + fromIntegral c * pixW) (furnOutY + fromIntegral r * pixH)
+                            (furnOutX + fromIntegral (c+1) * pixW) (furnOutY + fromIntegral (r+1) * pixH) clr) colors
+                  countText = if cnt > 1
+                    then renderText (furnOutX + sz - 0.03) (furnOutY + sz - 0.025) 0.6 (1,1,1,1) (show cnt)
+                    else []
+              in slotBg ++ iconVerts ++ countText
+
+        -- Smelt progress arrow: fills left-to-right
+        furnaceSmeltArrow =
+          let arrowX = -0.10
+              arrowY = -0.25
+              arrowW = 0.15
+              arrowH = 0.04
+              progress = if fsSmeltTime furnaceState > 0
+                then case getFurnaceInput furnaceState of
+                  Just (ItemStack inputItem _) -> case findRecipe inputItem of
+                    Just r  -> fsSmeltTime furnaceState / srTime r
+                    Nothing -> 0
+                  Nothing -> 0
+                else 0
+              bg = quad arrowX arrowY (arrowX + arrowW) (arrowY + arrowH) (0.4, 0.4, 0.4, 0.7)
+              fill = if progress > 0
+                     then quad arrowX arrowY (arrowX + arrowW * min 1 progress) (arrowY + arrowH) (1, 1, 1, 0.9)
+                     else []
+          in bg ++ fill
+
+        -- Fuel burn indicator: fills bottom-to-top
+        furnaceFuelIndicator =
+          let indX = -0.22
+              indY = -0.07
+              indW = 0.04
+              indH = 0.06
+              progress = if fsMaxFuelTime furnaceState > 0
+                         then fsFuelTime furnaceState / fsMaxFuelTime furnaceState
+                         else 0
+              bg = quad indX indY (indX + indW) (indY + indH) (0.3, 0.15, 0.1, 0.7)
+              fill = if progress > 0
+                     then let fillH = indH * min 1 progress
+                          in quad indX (indY + indH - fillH) (indX + indW) (indY + indH) (1.0, 0.6, 0.1, 0.9)
+                     else []
+          in bg ++ fill
+
+        renderFurnaceInvSlot idx =
+          let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
+              col = if idx < 9 then idx else (idx - 9) `mod` 9
+              x = invGridX0 + fromIntegral col * invSlotW + invSlotPad
+              y = 0.1 + fromIntegral row * invSlotH + invSlotPad
               sw = invSlotW - 2 * invSlotPad
               sh = invSlotH - 2 * invSlotPad
               slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)

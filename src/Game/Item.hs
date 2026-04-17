@@ -67,7 +67,7 @@ data ArmorSlot = Helmet | Chestplate | Leggings | Boots
 data ArmorMaterial = LeatherArmor | IronArmor | GoldArmor | DiamondArmor
   deriving stock (Show, Eq, Ord, Enum, Bounded)
 
--- | An item in the inventory
+-- | An item in the inventory — a placeable block, a tool, or a material
 data Item
   = BlockItem    !BlockType
   | ToolItem     !ToolType !ToolMaterial !Int  -- tool type, material, remaining durability
