@@ -62,6 +62,8 @@ data BlockType
   | TrapdoorOpen
   | StoneStairs
   | OakStairs
+  | IronDoorClosed
+  | IronDoorOpen
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -140,6 +142,8 @@ blockProperties = \case
   TrapdoorOpen   -> BlockProperties False True  0  3.0
   StoneStairs  -> BlockProperties True  False 0  1.5
   OakStairs    -> BlockProperties True  False 0  2.0
+  IronDoorClosed -> BlockProperties True  False 0  5.0
+  IronDoorOpen -> BlockProperties False True  0  5.0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -227,6 +231,8 @@ blockFaceTexCoords blockType face = case blockType of
   TrapdoorOpen   -> V2 15 2
   StoneStairs  -> V2 1 0
   OakStairs    -> V2 4 0
+  IronDoorClosed -> V2 1 5
+  IronDoorOpen -> V2 2 5
 
 -- | Collision height for a block (1.0 = full block, 0.5 = half-height for auto-step)
 blockCollisionHeight :: BlockType -> Float

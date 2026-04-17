@@ -181,6 +181,8 @@ blockDrops = \case
   TrapdoorOpen   -> [(BlockItem TrapdoorClosed, 1)]  -- always drops closed form
   StoneStairs  -> [(BlockItem StoneStairs, 1)]
   OakStairs    -> [(BlockItem OakStairs, 1)]
+  IronDoorClosed -> [(BlockItem IronDoorClosed, 1)]
+  IronDoorOpen -> [(BlockItem IronDoorClosed, 1)]  -- always drops closed door
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
@@ -224,6 +226,8 @@ blockPreferredTool = \case
   Chest       -> Just Axe
   OakDoorClosed -> Just Axe
   OakDoorOpen -> Just Axe
+  IronDoorClosed -> Just Pickaxe
+  IronDoorOpen -> Just Pickaxe
   OakFence    -> Just Axe
   FenceGateClosed -> Just Axe
   FenceGateOpen   -> Just Axe

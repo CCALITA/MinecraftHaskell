@@ -40,7 +40,7 @@ import Game.BlockEntity
 import Engine.Sound
 import Game.Particle
 
-import World.Redstone (newRedstoneState, setPower, getPower, propagateRedstone)
+import World.Redstone (RedstoneState, newRedstoneState, setPower, getPower, propagateRedstone)
 
 import Control.Monad (unless, when, forM_, forM, void)
 import Control.Concurrent.STM (readTVarIO, atomically, writeTVar)
@@ -767,6 +767,8 @@ main = do
                           let newPower = if currentPower > 0 then 0 else 15
                           setPower rsState pos newPower
                           propagateRedstone rsState [(pos, newPower)]
+                          -- Update iron doors adjacent to redstone-powered positions
+                          updateIronDoors world rsState pos physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
                           rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
                         _ -> do
                           -- Place painting on wall face when hand is empty
@@ -2453,6 +2455,30 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
       ++ quad (-0.28) 0.32 0.28 0.48 (0.45, 0.15, 0.15, 1.0)
       ++ renderTextCentered 0.37 1.0 (1, 1, 1, 1) "QUIT GAME"
 
+-- | Update iron doors adjacent to a redstone source position.
+--   Checks 6-connected neighbors: if powered > 0, open the door;
+--   if power drops to 0, close it.
+updateIronDoors
+  :: World -> RedstoneState -> V3 Int
+  -> Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue
+  -> IORef (HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
+  -> IO ()
+updateIronDoors world rsState sourcePos physDevice device cmdPool queue meshCacheRef = do
+  let neighbors = [ sourcePos + d | d <- [ V3 1 0 0, V3 (-1) 0 0
+                                          , V3 0 1 0, V3 0 (-1) 0
+                                          , V3 0 0 1, V3 0 0 (-1) ] ]
+  forM_ neighbors $ \nPos@(V3 nx _ny nz) -> do
+    blk <- worldGetBlock world nPos
+    power <- getPower rsState nPos
+    case blk of
+      IronDoorClosed | power > 0 -> do
+        worldSetBlock world nPos IronDoorOpen
+        rebuildChunkAt world physDevice device cmdPool queue meshCacheRef nx nz
+      IronDoorOpen | power == 0 -> do
+        worldSetBlock world nPos IronDoorClosed
+        rebuildChunkAt world physDevice device cmdPool queue meshCacheRef nx nz
+      _ -> pure ()
+
 -- | Get a display color for an item (used for hotbar slot rendering)
 itemColor :: Item -> (Float, Float, Float, Float)
 itemColor (BlockItem bt) = case bt of
@@ -2476,6 +2502,8 @@ itemColor (BlockItem bt) = case bt of
   Obsidian    -> (0.12, 0.08, 0.16, 1.0)
   OakDoorClosed -> (0.6, 0.4, 0.2, 1.0)
   OakDoorOpen -> (0.6, 0.4, 0.2, 1.0)
+  IronDoorClosed -> (0.7, 0.7, 0.7, 1.0)
+  IronDoorOpen -> (0.7, 0.7, 0.7, 1.0)
   Ladder      -> (0.5, 0.35, 0.15, 1.0)
   Bed         -> (0.7, 0.15, 0.15, 1.0)
   OakFence    -> (0.55, 0.4, 0.2, 1.0)

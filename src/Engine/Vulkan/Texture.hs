@@ -109,6 +109,8 @@ tileFull tileIdx lx ly = case tileIdx of
   72 -> clayPattern lx ly      -- clay (V2 8 4)
   -- Row 5: tileIdx 80+
   80 -> torchPattern lx ly     -- torch (V2 0 5)
+  81 -> ironDoorClosedPattern lx ly -- iron door closed (V2 1 5)
+  82 -> ironDoorOpenPattern lx ly   -- iron door open (V2 2 5)
   -- New block textures (tiles 27-38)
   27 -> obsidianPattern lx ly      -- obsidian (V2 11 1)
   28 -> oakDoorClosedPattern lx ly -- oak door closed (V2 12 1)
@@ -431,6 +433,27 @@ tileFull tileIdx lx ly = case tileIdx of
       in if isTrapdoor then
            if gridLine then (100, 70, 35, 255)
            else (130 + fromIntegral n, 90 + fromIntegral (n `div` 2), 40, 255)
+         else (0, 0, 0, 0)  -- transparent
+
+    -- Iron door closed: gray metallic surface with rivets and border
+    ironDoorClosedPattern x y =
+      let border = x == 0 || x == 15 || y == 0 || y == 15
+          knob = x >= 11 && x <= 13 && y >= 7 && y <= 9
+          rivet = (x == 3 || x == 12) && (y == 3 || y == 12)
+          n = pixHash x y 2500 `mod` 20
+          base = fromIntegral (160 + n) :: Word8
+          dark = fromIntegral (120 + n) :: Word8
+      in if knob then (100, 100, 110, 255)
+         else if rivet then (200, 200, 210, 255)
+         else if border then (dark, dark, fromIntegral (dark + 5), 255)
+         else (base, base, fromIntegral (base + 5), 255)
+
+    -- Iron door open: thin gray edge (door seen from side)
+    ironDoorOpenPattern x y =
+      let isDoor = x >= 6 && x <= 9
+          n = pixHash x y 2510 `mod` 15
+          v = fromIntegral (160 + n) :: Word8
+      in if isDoor then (v, v, fromIntegral (v + 5), 255)
          else (0, 0, 0, 0)  -- transparent
 
 -- | Create a texture from raw RGBA pixel data

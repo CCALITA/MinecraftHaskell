@@ -268,6 +268,14 @@ allRecipes =
       , rcResult  = BlockItem OakStairs
       , rcCount   = 4
       }
+  -- Iron door: 6 iron ingots in 2x3
+  , Recipe
+      { rcPattern = [[ji (MaterialItem IronIngot), ji (MaterialItem IronIngot)]
+                    ,[ji (MaterialItem IronIngot), ji (MaterialItem IronIngot)]
+                    ,[ji (MaterialItem IronIngot), ji (MaterialItem IronIngot)]]
+      , rcResult  = BlockItem IronDoorClosed
+      , rcCount   = 1
+      }
   ] ++ toolRecipes ++ shearsRecipe
 
 -- | Shears crafting recipe: 2 iron ingots diagonal
