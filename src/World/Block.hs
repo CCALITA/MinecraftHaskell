@@ -6,6 +6,7 @@ module World.Block
   , isTransparent
   , isSolid
   , isGravityAffected
+  , isLeafBlock
   , blockFaceTexCoords
   , allBlockFaces
   ) where
@@ -132,6 +133,11 @@ isGravityAffected :: BlockType -> Bool
 isGravityAffected Sand   = True
 isGravityAffected Gravel = True
 isGravityAffected _      = False
+
+-- | Whether a block is a leaf block (subject to decay)
+isLeafBlock :: BlockType -> Bool
+isLeafBlock OakLeaves = True
+isLeafBlock _         = False
 
 -- | Texture atlas coordinates for each block face.
 --   Returns (u, v) tile position in a 16x16 texture atlas.

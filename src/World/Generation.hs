@@ -2,6 +2,7 @@ module World.Generation
   ( generateChunk
   , GenerationConfig(..)
   , defaultGenConfig
+  , placeTreeWorld
   ) where
 
 import World.Block (BlockType(..))
@@ -14,7 +15,7 @@ import Data.Bits (xor, shiftR)
 import Data.IORef (writeIORef)
 import Data.Word (Word8)
 import qualified Data.Vector.Unboxed.Mutable as MUV
-import Linear (V2(..))
+import Linear (V2(..), V3(..))
 
 -- | Configuration for world generation
 data GenerationConfig = GenerationConfig
@@ -237,3 +238,44 @@ hashPos seed x z =
       h1 = (h0 `xor` (h0 `shiftR` 13)) * 1274126177
       h2 = h1 `xor` (h1 `shiftR` 16)
   in abs h2
+
+-- | Place a tree at a given world-coordinate base position.
+--   Uses callback functions for block access to avoid circular imports.
+--   getBlockCb: read block at world position
+--   setBlockCb: write block at world position
+placeTreeWorld
+  :: (V3 Int -> IO BlockType)       -- ^ getBlock callback
+  -> (V3 Int -> BlockType -> IO ()) -- ^ setBlock callback
+  -> V3 Int                         -- ^ base position (sapling location)
+  -> IO ()
+placeTreeWorld getBlockCb setBlockCb (V3 bx by bz) = do
+  let trunkH = 5   -- standard trunk height
+      canopyR = 2  -- standard canopy radius
+  -- Place trunk
+  forM_ [1..trunkH] $ \dy -> do
+    let y = by + dy
+    when (y < chunkHeight) $
+      setBlockCb (V3 bx y bz) OakLog
+  -- Leaf canopy around trunk top
+  let topY = by + trunkH
+  forM_ [-canopyR..canopyR] $ \dx ->
+    forM_ [-canopyR..canopyR] $ \dz ->
+      forM_ [-1..2] $ \dy -> do
+        let lx = bx + dx; lz = bz + dz; ly = topY + dy
+            dist2 = dx * dx + dz * dz
+            maxR2 = case dy of
+              -1 -> canopyR * canopyR + 1
+              0  -> canopyR * canopyR + 1
+              1  -> canopyR * canopyR
+              _  -> if canopyR > 1 then 1 else 0
+            isTrunk = dx == 0 && dz == 0 && dy <= 0
+        when (dist2 <= maxR2 && not isTrunk && ly > 0 && ly < chunkHeight) $ do
+          cur <- getBlockCb (V3 lx ly lz)
+          when (cur == Air) $
+            setBlockCb (V3 lx ly lz) OakLeaves
+  -- Crown leaf on top
+  let crownY = topY + 3
+  when (crownY > 0 && crownY < chunkHeight) $ do
+    cur <- getBlockCb (V3 bx crownY bz)
+    when (cur == Air) $
+      setBlockCb (V3 bx crownY bz) OakLeaves

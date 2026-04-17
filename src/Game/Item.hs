@@ -139,7 +139,7 @@ blockDrops = \case
   Sand        -> [(BlockItem Sand, 1)]
   Gravel      -> [(BlockItem Gravel, 1)]
   OakLog      -> [(BlockItem OakLog, 1)]
-  OakLeaves   -> []  -- sometimes drops saplings, simplified to nothing
+  OakLeaves   -> [(BlockItem OakSapling, 1)]  -- always drops sapling when broken by player
   Water       -> []
   Lava        -> []
   Cobblestone -> [(BlockItem Cobblestone, 1)]
