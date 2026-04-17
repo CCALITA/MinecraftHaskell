@@ -673,6 +673,32 @@ main = do
                       modifyIORef' playerRef (\p -> p { plEatingTimer = 1.6 })
                 _ -> pure ()
 
+            -- RMB: shear sheep if holding shears
+            when (button == GLFW.MouseButton'2) $ do
+              inv <- readIORef inventoryRef
+              case selectedItem inv of
+                Just (ItemStack (ShearsItem _) _) -> do
+                  nearby <- entitiesInRange entityWorld (plPos player) 3.0
+                  let sheep = filter (\e -> entTag e == "Sheep") nearby
+                  case sheep of
+                    [] -> pure ()
+                    _  -> do
+                      let closest = foldr1 (\a b -> if distance (entPosition a) (plPos player)
+                                                      < distance (entPosition b) (plPos player)
+                                                    then a else b) sheep
+                      -- Drop 1-3 wool blocks
+                      woolCount <- randomRIO (1 :: Int, 3)
+                      spawnDrop droppedItems (BlockItem Wool) woolCount (entPosition closest)
+                      putStrLn $ "Sheared sheep for " ++ show woolCount ++ " wool!"
+                      -- Consume 1 durability from shears
+                      let inv' = case getSlot inv (invSelected inv) of
+                            Just (ItemStack (ShearsItem dur) 1)
+                              | dur <= 1  -> setSlot inv (invSelected inv) Nothing
+                              | otherwise -> setSlot inv (invSelected inv) (Just (ItemStack (ShearsItem (dur - 1)) 1))
+                            _ -> inv
+                      writeIORef inventoryRef inv'
+                _ -> pure ()
+
             mHit <- raycastBlock blockQueryCb eyePos dir maxReach
             case mHit of
               Nothing -> pure ()
@@ -990,6 +1016,8 @@ main = do
                       -- Tool speed multiplier
                       inv <- readIORef inventoryRef
                       let toolSpeed = case selectedItem inv of
+                            Just (ItemStack (ShearsItem _) _)
+                              | isLeafBlock bt -> 15.0  -- shears mine leaves very fast
                             Just (ItemStack (ToolItem tt tm _) _)
                               | blockPreferredTool bt == Just tt -> toolMiningSpeed tt tm
                             _ -> 1.0  -- hand speed
@@ -1006,7 +1034,11 @@ main = do
                           when (bt == Water || bt == Lava) $
                             removeFluid fluidState world blockPos
                           -- Drop items as entities in the world
-                          let drops = blockDrops bt
+                          -- Shears override: mining leaves with shears drops the leaf block
+                          let drops = case selectedItem inv of
+                                Just (ItemStack (ShearsItem _) _)
+                                  | isLeafBlock bt -> [(BlockItem bt, 1)]
+                                _ -> blockDrops bt
                               V3 bxf byf bzf = fmap fromIntegral blockPos :: V3 Float
                           mapM_ (\(item, cnt) -> spawnDrop droppedItems item cnt (V3 bxf byf bzf)) drops
                           -- If it's a chest, also drop all stored items and remove block entity
@@ -1033,12 +1065,15 @@ main = do
                                 dropStack (getFurnaceFuel fs)
                                 dropStack (getFurnaceOutput fs)
                               _ -> pure ()
-                          -- Consume tool durability
+                          -- Consume tool durability (regular tools and shears)
                           inv' <- readIORef inventoryRef
                           let inv'' = case getSlot inv' (invSelected inv') of
                                 Just (ItemStack (ToolItem tt tm dur) 1)
                                   | dur <= 1  -> setSlot inv' (invSelected inv') Nothing
                                   | otherwise -> setSlot inv' (invSelected inv') (Just (ItemStack (ToolItem tt tm (dur - 1)) 1))
+                                Just (ItemStack (ShearsItem dur) 1)
+                                  | dur <= 1  -> setSlot inv' (invSelected inv') Nothing
+                                  | otherwise -> setSlot inv' (invSelected inv') (Just (ItemStack (ShearsItem (dur - 1)) 1))
                                 _ -> inv'
                           writeIORef inventoryRef inv''
                           putStrLn $ "Broke " ++ show bt ++ " at " ++ show blockPos
@@ -2485,6 +2520,7 @@ itemColor (ArmorItem _ mat _) = case mat of
   IronArmor    -> (0.75, 0.75, 0.75, 1.0)
   GoldArmor    -> (0.9, 0.8, 0.3, 1.0)
   DiamondArmor -> (0.4, 0.9, 0.9, 1.0)
+itemColor (ShearsItem _) = (0.7, 0.7, 0.7, 1.0)
 
 -- | 3x3 mini-icon for item (row, col, color) — used in hotbar slot rendering
 itemMiniIcon :: Item -> [(Int, Int, (Float, Float, Float, Float))]
@@ -2550,6 +2586,9 @@ itemMiniIcon (ArmorItem slot mat dur) = case slot of
   Leggings   -> [(0,0,c),(0,1,c),(0,2,c), (1,0,c),(1,2,c), (2,0,c),(2,2,c)]
   Boots      -> [(1,0,c),(1,2,c), (2,0,c),(2,2,c)]
   where c = itemColor (ArmorItem slot mat dur)
+itemMiniIcon (ShearsItem _) =
+  [(0,0,c),(0,2,c), (1,1,c), (2,0,c),(2,2,c)]
+  where c = (0.7,0.7,0.7,1)
 itemMiniIcon (BlockItem bt) = blockMiniIcon bt
   where
     fill c = [(r,col,c) | r <- [0..2], col <- [0..2]]

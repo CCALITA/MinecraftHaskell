@@ -76,6 +76,7 @@ data Item
   | FoodItem     !FoodType
   | MaterialItem !MaterialType
   | ArmorItem    !ArmorSlot !ArmorMaterial !Int  -- slot, material, remaining durability
+  | ShearsItem   !Int                           -- remaining durability (max 238)
   deriving stock (Show, Eq)
 
 -- | Tool properties
@@ -114,6 +115,7 @@ itemToBlock StickItem         = Nothing
 itemToBlock (FoodItem _)      = Nothing
 itemToBlock (MaterialItem _)  = Nothing
 itemToBlock (ArmorItem {})    = Nothing
+itemToBlock (ShearsItem _)   = Nothing
 
 -- | Is this a placeable block item?
 isBlockItem :: Item -> Bool
@@ -128,6 +130,7 @@ itemStackLimit StickItem        = 64
 itemStackLimit (FoodItem _)     = 64
 itemStackLimit (MaterialItem _) = 64
 itemStackLimit (ArmorItem {})   = 1
+itemStackLimit (ShearsItem _)   = 1
 
 -- | What items a block drops when broken. Returns (item, count).
 --   Some blocks require a minimum harvest level to drop anything.
@@ -351,6 +354,7 @@ instance Binary Item where
   put (FoodItem ft) = put (3 :: Word8) >> put ft
   put (MaterialItem mt) = put (4 :: Word8) >> put mt
   put (ArmorItem slot mat dur) = put (5 :: Word8) >> put slot >> put mat >> put dur
+  put (ShearsItem dur) = put (6 :: Word8) >> put dur
   get = do
     tag <- get :: Get Word8
     case tag of
@@ -360,4 +364,5 @@ instance Binary Item where
       3 -> FoodItem <$> get
       4 -> MaterialItem <$> get
       5 -> ArmorItem <$> get <*> get <*> get
+      6 -> ShearsItem <$> get
       _ -> fail "Unknown Item tag"
