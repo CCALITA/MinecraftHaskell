@@ -93,6 +93,7 @@ data Item
   | GlassBottleItem
   | PotionItem !PotionType
   | BoatItem                -- placeable boat for water travel
+  | MinecartItem
   deriving stock (Show, Eq)
 
 -- | Tool properties
@@ -139,6 +140,7 @@ itemToBlock (FishingRodItem _) = Nothing
 itemToBlock GlassBottleItem  = Nothing
 itemToBlock (PotionItem _)   = Nothing
 itemToBlock BoatItem = Nothing
+itemToBlock MinecartItem     = Nothing
 
 -- | Is this a placeable block item?
 isBlockItem :: Item -> Bool
@@ -161,6 +163,7 @@ itemStackLimit (FishingRodItem _) = 1
 itemStackLimit GlassBottleItem  = 16
 itemStackLimit (PotionItem _)   = 1
 itemStackLimit BoatItem = 1
+itemStackLimit MinecartItem     = 1
 
 -- | What items a block drops when broken. Returns (item, count).
 --   Some blocks require a minimum harvest level to drop anything.
@@ -220,6 +223,7 @@ blockDrops = \case
   OakSlab     -> [(BlockItem OakSlab, 1)]
   Piston      -> [(BlockItem Piston, 1)]
   PistonHead  -> []
+  Rail        -> [(BlockItem Rail, 1)]
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
@@ -276,6 +280,7 @@ blockPreferredTool = \case
   StoneSlab   -> Just Pickaxe
   OakSlab     -> Just Axe
   Piston      -> Just Pickaxe
+  Rail        -> Just Pickaxe
   _           -> Nothing
 
 -- | How much hunger a food type restores
@@ -453,6 +458,7 @@ instance Binary Item where
   put GlassBottleItem = put (11 :: Word8)
   put (PotionItem pt) = put (12 :: Word8) >> put pt
   put BoatItem = put (13 :: Word8)
+  put MinecartItem = put (14 :: Word8)
   get = do
     tag <- get :: Get Word8
     case tag of
@@ -470,4 +476,5 @@ instance Binary Item where
       11 -> pure GlassBottleItem
       12 -> PotionItem <$> get
       13 -> pure BoatItem
+      14 -> pure MinecartItem
       _ -> fail "Unknown Item tag"

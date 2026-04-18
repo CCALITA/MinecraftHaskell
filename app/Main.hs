@@ -248,7 +248,7 @@ main = do
     -- Fishing rod state: Nothing = not fishing, Just (bobberPos, timer, ready)
     fishingStateRef <- newIORef (Nothing :: Maybe (V3 Float, Float, Bool))
 
-    -- Boat riding state (entity ID of boat currently ridden)
+    -- Boat/Minecart riding state (entity ID of boat/minecart currently ridden)
     ridingEntityRef <- newIORef (Nothing :: Maybe Int)
 
     -- Give player some starting blocks (only when no saved inventory)
@@ -385,6 +385,7 @@ main = do
             writeIORef ridingEntityRef Nothing
             writeIORef spawnCooldownRef 0.0
             writeIORef spawnPointRef spawnPos
+            writeIORef ridingEntityRef Nothing
             writeIORef sleepMessageRef Nothing
             writeIORef miningRef Nothing
             writeIORef weatherRef newWeatherState
@@ -849,6 +850,37 @@ main = do
                       putStrLn $ "Mounted boat (entity " ++ show (entId closestBoat) ++ ")"
                     [] -> pure ()
 
+            -- RMB: mount nearby minecart (when not already riding)
+            when (button == GLFW.MouseButton'2) $ do
+              riding <- readIORef ridingEntityRef
+              case riding of
+                Just _ -> pure ()  -- already riding
+                Nothing -> do
+                  nearby <- entitiesInRange entityWorld (plPos player) 3.0
+                  let carts = filter (\e -> entTag e == "Minecart" && entAlive e) nearby
+                  case carts of
+                    [] -> pure ()
+                    _  -> do
+                      let closest = closestEntityTo (plPos player) carts
+                      writeIORef ridingEntityRef (Just (entId closest))
+                      putStrLn $ "Mounted minecart " ++ show (entId closest)
+
+            -- LMB: break minecart entity (when not riding it)
+            when (button == GLFW.MouseButton'1) $ do
+              riding <- readIORef ridingEntityRef
+              nearby <- entitiesInRange entityWorld (plPos player) 3.0
+              let carts = filter (\e -> entTag e == "Minecart" && entAlive e) nearby
+              case carts of
+                [] -> pure ()
+                _  -> do
+                  let closest = closestEntityTo (plPos player) carts
+                  when (riding /= Just (entId closest)) $ do
+                    destroyEntity entityWorld (entId closest)
+                    inv <- readIORef inventoryRef
+                    let (inv', _) = addItem inv MinecartItem 1
+                    writeIORef inventoryRef inv'
+                    putStrLn $ "Broke minecart " ++ show (entId closest)
+
             mHit <- raycastBlock blockQueryCb eyePos dir maxReach
             case mHit of
               Nothing -> pure ()
@@ -955,6 +987,18 @@ main = do
                                 writeIORef inventoryRef inv''
                                 putStrLn "Filled glass bottle with water"
                             Just (ItemStack (PotionItem _) _) -> pure ()  -- handled in pre-raycast
+                            Just (ItemStack MinecartItem _) -> do
+                              -- Place minecart on rail
+                              when (hitBlock == Rail) $ do
+                                let sel = invSelected inv
+                                    cartPos = V3 (fromIntegral bx + 0.5) (fromIntegral by + 0.25) (fromIntegral bz + 0.5) :: V3 Float
+                                _ <- spawnEntity entityWorld cartPos 1.0 "Minecart"
+                                case getSlot inv sel of
+                                  Just (ItemStack MinecartItem cnt)
+                                    | cnt <= 1  -> writeIORef inventoryRef (setSlot inv sel Nothing)
+                                    | otherwise -> writeIORef inventoryRef (setSlot inv sel (Just (ItemStack MinecartItem (cnt - 1))))
+                                  _ -> pure ()
+                                putStrLn $ "Placed minecart at " ++ show cartPos
                             Just (ItemStack (FlintAndSteelItem dur) _) -> do
                               let sel = invSelected inv
                                   consumeDurability =
@@ -1021,6 +1065,11 @@ main = do
                                       e' <- worldGetBlock world (V3 placeX placeY (placeZ + 1))
                                       w' <- worldGetBlock world (V3 placeX placeY (placeZ - 1))
                                       pure ((below == Sand || below == Cactus) && n' == Air && s' == Air && e' == Air && w' == Air)
+                                  -- Rail placement validation: only on solid block
+                                  else if bt == Rail
+                                    then do
+                                      below <- worldGetBlock world (V3 placeX (placeY - 1) placeZ)
+                                      pure (isSolid below)
                                   else pure True
                                 -- Height limit: only place blocks in valid range [0, chunkHeight)
                                 when (placeY >= 0 && placeY < chunkHeight && canPlace) $ do
@@ -1272,6 +1321,72 @@ main = do
             when (healthAfter < healthBefore && healthAfter > 0)
               triggerDamageFlash
 
+            -- Minecart riding logic
+            when (gameMode == Playing) $ do
+              riding <- readIORef ridingEntityRef
+              case riding of
+                Nothing -> pure ()
+                Just cartId -> do
+                  mCart <- getEntity entityWorld cartId
+                  case mCart of
+                    Nothing -> writeIORef ridingEntityRef Nothing  -- cart was destroyed
+                    Just cart -> do
+                      -- Sneak to dismount
+                      if piSneak input
+                        then do
+                          writeIORef ridingEntityRef Nothing
+                          let V3 cx cy cz = entPosition cart
+                          modifyIORef' playerRef (\p -> p { plPos = V3 cx (cy + 0.5) cz })
+                          putStrLn "Dismounted minecart"
+                        else do
+                          let V3 cx cy cz = entPosition cart
+                              cartBlockX = floor cx :: Int
+                              cartBlockY = floor cy :: Int
+                              cartBlockZ = floor cz :: Int
+                              maxCartSpeed = 8.0 :: Float
+                              -- Determine speed from W/S input
+                              accel = (if piForward input then 1.0 else 0.0)
+                                    + (if piBackward input then (-1.0) else 0.0)
+                          let V3 vx _vy vz = entVelocity cart
+                              speed = sqrt (vx * vx + vz * vz) * (if vx + vz >= 0 then 1 else (-1))
+                          -- Check adjacent rails to determine movement direction
+                          let checkRail dx dz = do
+                                let pos = V3 (cartBlockX + dx) cartBlockY (cartBlockZ + dz)
+                                b <- worldGetBlock world pos
+                                pure (b == Rail)
+                          hasN <- checkRail 0 1
+                          hasS <- checkRail 0 (-1)
+                          hasE <- checkRail 1 0
+                          hasW <- checkRail (-1) 0
+                          -- Determine rail direction: prefer Z-axis, then X-axis
+                          let (dirX, dirZ) = if hasN || hasS then (0.0 :: Float, 1.0 :: Float)
+                                             else if hasE || hasW then (1.0, 0.0)
+                                             else (0.0, 0.0)  -- no adjacent rails, don't move
+                          -- Apply speed with friction
+                          let newSpeed = clamp (-maxCartSpeed) maxCartSpeed ((speed + accel * dt * 4.0) * (1.0 - dt * 0.5))
+                              newVx = dirX * newSpeed
+                              newVz = dirZ * newSpeed
+                              newCx = cx + newVx * dt
+                              newCz = cz + newVz * dt
+                          -- Check if new position is on a rail
+                          let newBlockX = floor newCx :: Int
+                              newBlockZ = floor newCz :: Int
+                          onRail <- worldGetBlock world (V3 newBlockX cartBlockY newBlockZ)
+                          let (finalCx, finalCz, finalVx, finalVz) =
+                                if onRail == Rail
+                                  then (newCx, newCz, newVx, newVz)
+                                  else (cx, cz, 0, 0)  -- stop at rail edge
+                              newCartPos = V3 finalCx cy finalCz
+                          updateEntity entityWorld cartId (\e -> e
+                            { entPosition = newCartPos
+                            , entVelocity = V3 finalVx 0 finalVz
+                            })
+                          -- Snap player to cart position
+                          modifyIORef' playerRef (\p -> p
+                            { plPos = V3 finalCx (cy + 0.5) finalCz
+                            , plVelocity = V3 0 0 0
+                            })
+
             -- Cactus contact damage: 1 HP per second while player AABB overlaps any Cactus
             when (gameMode == Playing) $ do
               player' <- readIORef playerRef
@@ -1406,6 +1521,13 @@ main = do
                                     mapM_ (\(itm, cnt) -> spawnDrop droppedItems itm cnt (V3 abx aby abz)) (blockDrops SugarCane)
                                     cascadeBreak abovePos
                             cascadeBreak blockPos
+                          -- Rail cascade: break rail above if block below it is removed
+                          do let abovePos = blockPos + V3 0 1 0
+                             above <- worldGetBlock world abovePos
+                             when (above == Rail) $ do
+                               let V3 abx aby abz = fmap fromIntegral abovePos :: V3 Float
+                               worldSetBlock world abovePos Air
+                               mapM_ (\(itm, cnt) -> spawnDrop droppedItems itm cnt (V3 abx aby abz)) (blockDrops Rail)
                           -- Destroy paintings attached to the broken block
                           do let blockCenter = fmap fromIntegral blockPos + V3 0.5 0.5 0.5 :: V3 Float
                              nearby <- entitiesInRange entityWorld blockCenter 1.5
@@ -3139,6 +3261,7 @@ itemColor (BlockItem bt) = case bt of
   OakSlab     -> (0.78, 0.65, 0.43, 1.0)
   Piston      -> (0.5, 0.4, 0.3, 1.0)
   PistonHead  -> (0.55, 0.45, 0.3, 1.0)
+  Rail        -> (0.55, 0.45, 0.35, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)
@@ -3188,6 +3311,7 @@ itemColor (FishingRodItem _) = (0.55, 0.35, 0.15, 1.0)
 itemColor GlassBottleItem = (0.7, 0.85, 0.95, 0.6)
 itemColor (PotionItem pt) = potionColor pt
 itemColor BoatItem = (0.6, 0.4, 0.2, 1.0)
+itemColor MinecartItem          = (0.6, 0.6, 0.6, 1.0)
 
 -- | 3x3 mini-icon for item (row, col, color) — used in hotbar slot rendering
 itemMiniIcon :: Item -> [(Int, Int, (Float, Float, Float, Float))]
@@ -3376,3 +3500,13 @@ restoreFromSave playerRef inventoryRef dayNightRef sd = do
   writeIORef playerRef (playerFromSaveData sd)
   writeIORef inventoryRef (slotListToInventory (sdInventory sd) (sdSelectedSlot sd))
   writeIORef dayNightRef (newDayNightCycle { dncTime = sdDayTime sd, dncDayCount = sdDayCount sd })
+
+-- | Clamp a value between a minimum and maximum
+clamp :: Ord a => a -> a -> a -> a
+clamp lo hi x = max lo (min hi x)
+
+-- | Find the closest entity to a position from a non-empty list
+closestEntityTo :: V3 Float -> [Entity] -> Entity
+closestEntityTo pos = foldr1 (\a b -> if distance (entPosition a) pos
+                                        < distance (entPosition b) pos
+                                      then a else b)

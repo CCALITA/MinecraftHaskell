@@ -71,6 +71,7 @@ data BlockType
   | OakSlab
   | Piston
   | PistonHead
+  | Rail
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -158,6 +159,7 @@ blockProperties = \case
   OakSlab      -> BlockProperties True  True  0  2.0
   Piston       -> BlockProperties True  False 0  0.5
   PistonHead   -> BlockProperties True  False 0  0.5
+  Rail         -> BlockProperties False True  0  0.7
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -265,3 +267,4 @@ blockFaceTexCoords blockType face = case blockType of
     FaceBottom -> V2 4 0   -- wooden base on bottom
     _          -> V2 6 5   -- wooden side
   PistonHead  -> V2 7 5    -- flat wooden panel
+  Rail        -> V2 8 5

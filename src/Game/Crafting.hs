@@ -316,7 +316,7 @@ allRecipes =
       , rcResult  = GlassBottleItem
       , rcCount   = 3
       }
-  ] ++ toolRecipes ++ shearsRecipe ++ compassClockRecipes ++ fishingRodRecipe ++ boatRecipe
+  ] ++ toolRecipes ++ shearsRecipe ++ compassClockRecipes ++ fishingRodRecipe ++ boatRecipe ++ railRecipes
 
 -- | Shears crafting recipe: 2 iron ingots diagonal
 shearsRecipe :: [Recipe]
@@ -388,3 +388,17 @@ toolRecipes = concatMap tierRecipes
         Recipe [[m, m], [Nothing, stick], [Nothing, stick]]
                (tool Hoe mat) 1
       ]
+
+-- | Rail and Minecart crafting recipes
+railRecipes :: [Recipe]
+railRecipes =
+  [ -- Rail: 6 iron ingots + 1 stick → 16 rails
+    Recipe [[ji (MaterialItem IronIngot), Nothing, ji (MaterialItem IronIngot)]
+           ,[ji (MaterialItem IronIngot), ji StickItem, ji (MaterialItem IronIngot)]
+           ,[ji (MaterialItem IronIngot), Nothing, ji (MaterialItem IronIngot)]]
+           (BlockItem Rail) 16
+  , -- Minecart: 5 iron ingots in U-shape → 1 minecart
+    Recipe [[ji (MaterialItem IronIngot), Nothing, ji (MaterialItem IronIngot)]
+           ,[ji (MaterialItem IronIngot), ji (MaterialItem IronIngot), ji (MaterialItem IronIngot)]]
+           MinecartItem 1
+  ]
