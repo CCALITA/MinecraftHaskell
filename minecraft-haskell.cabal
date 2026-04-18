@@ -71,6 +71,7 @@ library
     Game.Enchanting
     Game.DayNight
     Game.Save
+    Game.State
     Game.DroppedItem
     Game.Particle
     Entity.ECS
