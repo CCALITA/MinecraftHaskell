@@ -78,6 +78,7 @@ library
     Entity.Mob
     Entity.Pathfinding
     Entity.Spawn
+    Entity.Villager
     Net.Protocol
     Net.Server
     Net.Client
