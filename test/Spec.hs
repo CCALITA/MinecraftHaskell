@@ -25,6 +25,8 @@ import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), AIState(..), mobIn
 import World.Redstone
 import World.BlockRegistry
 import Game.RecipeRegistry
+import World.BiomeFeatures
+import World.Biome (BiomeType(..))
 
 import Entity.Villager
 import qualified World.Dimension as Dim
@@ -86,6 +88,7 @@ main = hspec $ do
   tooltipSpec
   structureSpec
   blockRegistrySpec
+  biomeFeaturesSpec
   dimensionSpec
   screenRegistrySpec
   componentSpec
@@ -2949,7 +2952,6 @@ dimensionSpec = describe "World.Dimension" $ do
       ]
     any (== Torch) results `shouldBe` True
 
-<<<<<<< HEAD
   describe "Game.Config" $ do
     it "defaultConfig has render distance 4" $ do
       cfgRenderDistance defaultConfig `shouldBe` 4
@@ -3405,3 +3407,85 @@ recipeRegistrySpec = describe "Game.RecipeRegistry" $ do
                 0 0 p) 0 1 p) 1 0 p) 1 1 p
     result <- findMatchingRecipe reg grid
     result `shouldBe` CraftSuccess (BlockItem CraftingTable) 1
+
+-- =========================================================================
+-- BiomeFeatures
+-- =========================================================================
+biomeFeaturesSpec :: Spec
+biomeFeaturesSpec = describe "World.BiomeFeatures" $ do
+  it "biomeFeatures returns non-empty list for every biome" $ do
+    let allBiomes = [minBound .. maxBound] :: [BiomeType]
+    mapM_ (\b -> biomeFeatures b `shouldNotBe` []) allBiomes
+
+  it "Plains has at least one TreeFeature" $ do
+    let trees = featureTrees (biomeFeatures Plains)
+    length trees `shouldSatisfy` (> 0)
+
+  it "Plains has common ore features" $ do
+    let ores = featureOres (biomeFeatures Plains)
+    length ores `shouldSatisfy` (>= 4)
+
+  it "Forest total tree density exceeds Plains" $ do
+    let forestDensity = sum $ map treeDensity (featureTrees (biomeFeatures Forest))
+        plainsDensity = sum $ map treeDensity (featureTrees (biomeFeatures Plains))
+    forestDensity `shouldSatisfy` (> plainsDensity)
+
+  it "Desert has no TreeFeature" $ do
+    let trees = featureTrees (biomeFeatures Desert)
+    trees `shouldBe` []
+
+  it "Desert has Cactus DecorationFeature" $ do
+    let decos = featureDecorations (biomeFeatures Desert)
+        hasCactus = any (\(DecorationFeature bt _) -> bt == Cactus) decos
+    hasCactus `shouldBe` True
+
+  it "Mountains has SpruceTree feature" $ do
+    let trees = featureTrees (biomeFeatures Mountains)
+        hasSpruce = any (\(TreeFeature t _) -> t == SpruceTree) trees
+    hasSpruce `shouldBe` True
+
+  it "all OreFeature Y ranges are valid (minY < maxY, both > 0)" $ do
+    let allBiomes = [minBound .. maxBound] :: [BiomeType]
+        allOres = concatMap (featureOres . biomeFeatures) allBiomes
+    mapM_ (\ore -> do
+      oreMinY ore `shouldSatisfy` (> 0)
+      oreMaxY ore `shouldSatisfy` (> 0)
+      oreMinY ore `shouldSatisfy` (< oreMaxY ore)) allOres
+
+  it "treeDensity returns 0 for OreFeature" $ do
+    treeDensity (OreFeature CoalOre 4 80 0.7) `shouldBe` 0
+
+  it "treeLogBlock is defined for all TreeType values" $ do
+    let allTrees = [minBound .. maxBound] :: [TreeType]
+    mapM_ (\t -> treeLogBlock t `shouldSatisfy` const True) allTrees
+
+  it "treeLeafBlock is defined for all TreeType values" $ do
+    let allTrees = [minBound .. maxBound] :: [TreeType]
+    mapM_ (\t -> treeLeafBlock t `shouldSatisfy` const True) allTrees
+
+  it "at least one biome has a StructureFeature" $ do
+    let allBiomes = [minBound .. maxBound] :: [BiomeType]
+        allStructs = concatMap (featureStructures . biomeFeatures) allBiomes
+    length allStructs `shouldSatisfy` (> 0)
+
+  it "all DecorationFeature chances are in (0, 1)" $ do
+    let allBiomes = [minBound .. maxBound] :: [BiomeType]
+        allDecos = concatMap (featureDecorations . biomeFeatures) allBiomes
+    mapM_ (\d -> do
+      decorationChance d `shouldSatisfy` (> 0)
+      decorationChance d `shouldSatisfy` (< 1)) allDecos
+
+  it "all StructureFeature chances are in (0, 1)" $ do
+    let allBiomes = [minBound .. maxBound] :: [BiomeType]
+        allStructs = concatMap (featureStructures . biomeFeatures) allBiomes
+    mapM_ (\s -> do
+      structureChance s `shouldSatisfy` (> 0)
+      structureChance s `shouldSatisfy` (< 1)) allStructs
+
+  it "TreeType roundtrips through Enum" $ do
+    let allTrees = [minBound .. maxBound] :: [TreeType]
+    mapM_ (\t -> toEnum (fromEnum t) `shouldBe` t) allTrees
+
+  it "OakTree uses OakLog and OakLeaves" $ do
+    treeLogBlock OakTree `shouldBe` OakLog
+    treeLeafBlock OakTree `shouldBe` OakLeaves
