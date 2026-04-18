@@ -301,7 +301,7 @@ allRecipes =
       , rcResult  = BlockItem OakSlab
       , rcCount   = 6
       }
-  ] ++ toolRecipes ++ shearsRecipe
+  ] ++ toolRecipes ++ shearsRecipe ++ fishingRodRecipe
 
 -- | Shears crafting recipe: 2 iron ingots diagonal
 shearsRecipe :: [Recipe]
@@ -309,6 +309,15 @@ shearsRecipe =
   [ Recipe [[Nothing, ji (MaterialItem IronIngot)]
            ,[ji (MaterialItem IronIngot), Nothing]]
            (ShearsItem 238) 1
+  ]
+
+-- | Fishing rod recipe: 3 sticks diagonal + 2 string
+fishingRodRecipe :: [Recipe]
+fishingRodRecipe =
+  [ Recipe [[Nothing,       Nothing,       ji StickItem]
+           ,[Nothing,       ji StickItem,  ji (MaterialItem StringMat)]
+           ,[ji StickItem,  Nothing,       ji (MaterialItem StringMat)]]
+           (FishingRodItem 64) 1
   ]
 
 -- | Helper to create a tool item with full durability

@@ -52,6 +52,7 @@ main = hspec $ do
   redstoneBlockSpec
   cactusBlockSpec
   slabBlockSpec
+  fishingRodSpec
 
 -- =========================================================================
 -- Block
@@ -1322,3 +1323,103 @@ slabBlockSpec = describe "Slab blocks (StoneSlab & OakSlab)" $ do
   it "OakSlab roundtrips through Binary" $ do
     let item = BlockItem OakSlab
     decode (encode item) `shouldBe` item
+
+-- =========================================================================
+-- Fishing rod
+-- =========================================================================
+fishingRodSpec :: Spec
+fishingRodSpec = describe "Fishing rod" $ do
+  -- Item properties
+  it "FishingRodItem stacks to 1" $ do
+    itemStackLimit (FishingRodItem 64) `shouldBe` 1
+
+  it "FishingRodItem is not a block item" $ do
+    isBlockItem (FishingRodItem 64) `shouldBe` False
+    itemToBlock (FishingRodItem 64) `shouldBe` Nothing
+
+  it "FishingRodItem roundtrips through Binary" $ do
+    let item = FishingRodItem 64
+    decode (encode item) `shouldBe` item
+
+  it "FishingRodItem with partial durability roundtrips through Binary" $ do
+    let item = FishingRodItem 30
+    decode (encode item) `shouldBe` item
+
+  -- Fish food types
+  it "RawFish restores 2 hunger" $ do
+    foodHungerRestore RawFish `shouldBe` 2
+
+  it "CookedFish restores 5 hunger" $ do
+    foodHungerRestore CookedFish `shouldBe` 5
+
+  it "RawSalmon restores 2 hunger" $ do
+    foodHungerRestore RawSalmon `shouldBe` 2
+
+  it "CookedSalmon restores 5 hunger" $ do
+    foodHungerRestore CookedSalmon `shouldBe` 5
+
+  it "fish food items stack to 64" $ do
+    itemStackLimit (FoodItem RawFish) `shouldBe` 64
+    itemStackLimit (FoodItem CookedFish) `shouldBe` 64
+    itemStackLimit (FoodItem RawSalmon) `shouldBe` 64
+    itemStackLimit (FoodItem CookedSalmon) `shouldBe` 64
+
+  it "fish food items are not block items" $ do
+    isBlockItem (FoodItem RawFish) `shouldBe` False
+    itemToBlock (FoodItem RawSalmon) `shouldBe` Nothing
+
+  it "fish food items roundtrip through Binary" $ do
+    decode (encode (FoodItem RawFish)) `shouldBe` FoodItem RawFish
+    decode (encode (FoodItem CookedFish)) `shouldBe` FoodItem CookedFish
+    decode (encode (FoodItem RawSalmon)) `shouldBe` FoodItem RawSalmon
+    decode (encode (FoodItem CookedSalmon)) `shouldBe` FoodItem CookedSalmon
+
+  -- Crafting recipe
+  it "fishing rod recipe: 3 sticks diagonal + 2 string" $ do
+    let s = Just StickItem
+        st = Just (MaterialItem StringMat)
+        grid = setCraftingSlot (setCraftingSlot (setCraftingSlot
+              (setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3)
+                0 2 s) 1 1 s) 1 2 st) 2 0 s) 2 2 st
+    tryCraft grid `shouldBe` CraftSuccess (FishingRodItem 64) 1
+
+  -- Smelting recipes
+  it "RawFish smelts to CookedFish" $ do
+    let hasRecipe = any (\r -> srInput r == FoodItem RawFish && srOutput r == FoodItem CookedFish) smeltRecipes
+    hasRecipe `shouldBe` True
+
+  it "RawSalmon smelts to CookedSalmon" $ do
+    let hasRecipe = any (\r -> srInput r == FoodItem RawSalmon && srOutput r == FoodItem CookedSalmon) smeltRecipes
+    hasRecipe `shouldBe` True
+
+  it "furnace smelts RawFish to CookedFish" $ do
+    let fs0 = newFurnaceState
+          { fsInput = Just (ItemStack (FoodItem RawFish) 1)
+          , fsFuel  = Just (ItemStack (MaterialItem Coal) 1)
+          }
+        fs1 = iterate (tickFurnace 1.0) fs0 !! 11
+    getFurnaceOutput fs1 `shouldBe` Just (ItemStack (FoodItem CookedFish) 1)
+    getFurnaceInput fs1 `shouldBe` Nothing
+
+  it "furnace smelts RawSalmon to CookedSalmon" $ do
+    let fs0 = newFurnaceState
+          { fsInput = Just (ItemStack (FoodItem RawSalmon) 1)
+          , fsFuel  = Just (ItemStack (MaterialItem Coal) 1)
+          }
+        fs1 = iterate (tickFurnace 1.0) fs0 !! 11
+    getFurnaceOutput fs1 `shouldBe` Just (ItemStack (FoodItem CookedSalmon) 1)
+    getFurnaceInput fs1 `shouldBe` Nothing
+
+  -- Food saturation values
+  it "fish saturation values are correct" $ do
+    foodSaturation RawFish `shouldBe` 0.4
+    foodSaturation CookedFish `shouldBe` 6.0
+    foodSaturation RawSalmon `shouldBe` 0.4
+    foodSaturation CookedSalmon `shouldBe` 9.6
+
+  -- Food names
+  it "fish food names are correct" $ do
+    foodName RawFish `shouldBe` "Raw Fish"
+    foodName CookedFish `shouldBe` "Cooked Fish"
+    foodName RawSalmon `shouldBe` "Raw Salmon"
+    foodName CookedSalmon `shouldBe` "Cooked Salmon"

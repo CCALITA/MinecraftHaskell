@@ -46,6 +46,8 @@ smeltRecipes =
   , SmeltRecipe (FoodItem RawPorkchop)  (FoodItem CookedPorkchop) 10.0
   , SmeltRecipe (FoodItem RawBeef)      (FoodItem Steak)          10.0
   , SmeltRecipe (FoodItem RawChicken)   (FoodItem CookedChicken)  10.0
+  , SmeltRecipe (FoodItem RawFish)     (FoodItem CookedFish)     10.0
+  , SmeltRecipe (FoodItem RawSalmon)   (FoodItem CookedSalmon)   10.0
   ]
 
 -- | How long a fuel item burns (in seconds). Returns 0 for non-fuel items.
