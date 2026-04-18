@@ -69,6 +69,7 @@ data BlockType
   | SugarCane
   | StoneSlab
   | OakSlab
+  | EnchantingTable
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -154,6 +155,7 @@ blockProperties = \case
   SugarCane    -> BlockProperties False True  0  0
   StoneSlab    -> BlockProperties True  True  0  1.5
   OakSlab      -> BlockProperties True  True  0  2.0
+  EnchantingTable -> BlockProperties True  False 7  5.0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -256,3 +258,7 @@ blockFaceTexCoords blockType face = case blockType of
   SugarCane   -> V2 4 5
   StoneSlab   -> V2 1 0
   OakSlab     -> V2 4 0
+  EnchantingTable -> case face of
+    FaceTop    -> V2 5 5   -- enchanting table top (diamond-studded)
+    FaceBottom -> V2 11 1  -- obsidian bottom
+    _          -> V2 6 5   -- enchanting table side
