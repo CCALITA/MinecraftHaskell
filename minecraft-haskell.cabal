@@ -78,6 +78,7 @@ library
     Game.Save
     Game.State
     Game.ItemDisplay
+    Game.ItemRegistry
     Game.DroppedItem
     Game.Particle
     Entity.ECS
