@@ -341,7 +341,9 @@ mobDrops tag = case tag of
                    pure (bones ++ arrows)
   "Creeper"  -> randomDrops [(MaterialItem Gunpowder, 0, 2)]
   "Spider"   -> randomDrops [(MaterialItem StringMat, 0, 2)]
-  _          -> pure []
+  _ | tag `elem` ["Wolf", "TamedWolf", "TamedWolfSitting"]
+              -> randomDrops [(MaterialItem Bone, 0, 2)]
+    | otherwise -> pure []
  where
   randomDrops :: [(Item, Int, Int)] -> IO [(Item, Int)]
   randomDrops entries = do

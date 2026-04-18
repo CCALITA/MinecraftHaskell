@@ -18,6 +18,7 @@ import Game.BlockEntity
 import Game.Furnace
 import World.Weather
 import Entity.ECS
+import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), mobInfo)
 import World.Redstone
 
 import Game.Physics (BlockHeightQuery)
@@ -53,6 +54,7 @@ main = hspec $ do
   cactusBlockSpec
   slabBlockSpec
   compassClockSpec
+  wolfMobSpec
 
 -- =========================================================================
 -- Block
@@ -1367,3 +1369,63 @@ compassClockSpec = describe "Compass and Clock items" $ do
 
   it "ClockItem roundtrips through Binary" $ do
     decode (encode ClockItem) `shouldBe` ClockItem
+
+-- =========================================================================
+-- Wolf mob
+-- =========================================================================
+wolfMobSpec :: Spec
+wolfMobSpec = describe "Wolf mob" $ do
+  it "Wolf exists in MobType enum" $ do
+    show Wolf `shouldBe` "Wolf"
+
+  it "Wolf has correct health (8)" $ do
+    miMaxHealth (mobInfo Wolf) `shouldBe` 8
+
+  it "Wolf has correct attack damage (4)" $ do
+    miAttackDmg (mobInfo Wolf) `shouldBe` 4
+
+  it "Wolf has Neutral behavior" $ do
+    miBehavior (mobInfo Wolf) `shouldBe` Neutral
+
+  it "Wolf has detect range 16" $ do
+    miDetectRange (mobInfo Wolf) `shouldBe` 16
+
+  it "Wolf has attack range 1.5" $ do
+    miAttackRange (mobInfo Wolf) `shouldBe` 1.5
+
+  it "Wolf has speed 0.3" $ do
+    miSpeed (mobInfo Wolf) `shouldBe` 0.3
+
+  it "Wolf entity can be spawned with Wolf tag" $ do
+    ew <- newEntityWorld
+    eid <- spawnEntity ew (V3 5.0 64.0 5.0) 8.0 "Wolf"
+    mEnt <- getEntity ew eid
+    case mEnt of
+      Just ent -> do
+        entTag ent `shouldBe` "Wolf"
+        entHealth ent `shouldBe` 8.0
+      Nothing -> expectationFailure "Expected wolf entity"
+
+  it "Tamed wolf can be represented with TamedWolf tag" $ do
+    ew <- newEntityWorld
+    eid <- spawnEntity ew (V3 5.0 64.0 5.0) 8.0 "Wolf"
+    updateEntity ew eid (\e -> e { entTag = "TamedWolf" })
+    mEnt <- getEntity ew eid
+    case mEnt of
+      Just ent -> entTag ent `shouldBe` "TamedWolf"
+      Nothing -> expectationFailure "Expected tamed wolf entity"
+
+  it "Sitting wolf uses TamedWolfSitting tag" $ do
+    ew <- newEntityWorld
+    eid <- spawnEntity ew (V3 5.0 64.0 5.0) 8.0 "TamedWolfSitting"
+    mEnt <- getEntity ew eid
+    case mEnt of
+      Just ent -> entTag ent `shouldBe` "TamedWolfSitting"
+      Nothing -> expectationFailure "Expected sitting wolf entity"
+
+  it "Wolf entities appear in entitiesInRange" $ do
+    ew <- newEntityWorld
+    _ <- spawnEntity ew (V3 5.0 64.0 5.0) 8.0 "Wolf"
+    nearby <- entitiesInRange ew (V3 5.0 64.0 5.0) 10.0
+    let wolves = filter (\e -> entTag e == "Wolf") nearby
+    length wolves `shouldBe` 1

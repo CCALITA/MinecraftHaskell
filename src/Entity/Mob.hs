@@ -27,6 +27,7 @@ data MobType
   | Cow
   | Sheep
   | Chicken
+  | Wolf
   deriving stock (Show, Eq, Ord, Enum, Bounded)
 
 -- | AI state machine
@@ -64,6 +65,7 @@ mobInfo = \case
   Cow      -> MobInfo Cow      Passive 10 2.5  0.0 0.0  0.0
   Sheep    -> MobInfo Sheep    Passive 8  2.5  0.0 0.0  0.0
   Chicken  -> MobInfo Chicken  Passive 4  2.0  0.0 0.0  0.0
+  Wolf     -> MobInfo Wolf     Neutral 8  0.3  4.0 16.0 1.5
 
 isHostile :: MobType -> Bool
 isHostile mt = miBehavior (mobInfo mt) == Hostile

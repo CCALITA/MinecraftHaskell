@@ -702,6 +702,54 @@ main = do
                       writeIORef inventoryRef inv'
                 _ -> pure ()
 
+            -- RMB: wolf interactions (tame, sit toggle, heal)
+            when (button == GLFW.MouseButton'2) $ do
+              inv <- readIORef inventoryRef
+              player <- readIORef playerRef
+              nearby <- entitiesInRange entityWorld (plPos player) 3.0
+              let wolves = filter (\e -> entTag e `elem` ["Wolf", "TamedWolf", "TamedWolfSitting"]) nearby
+              case wolves of
+                [] -> pure ()
+                _  -> do
+                  let closest = foldr1 (\a b -> if distance (entPosition a) (plPos player)
+                                                  < distance (entPosition b) (plPos player)
+                                                then a else b) wolves
+                      eid = entId closest
+                      tag = entTag closest
+                  case selectedItem inv of
+                    -- Tame wild wolf with bone (33% chance)
+                    Just (ItemStack (MaterialItem Bone) _) | tag == "Wolf" -> do
+                      roll <- randomRIO (1 :: Int, 3)
+                      -- Consume 1 bone
+                      let (inv', _) = removeItem inv (MaterialItem Bone) 1
+                      writeIORef inventoryRef inv'
+                      if roll == 1
+                        then do
+                          updateEntity entityWorld eid (\e -> e { entTag = "TamedWolf" })
+                          putStrLn "Wolf tamed!"
+                        else
+                          putStrLn "Wolf not interested... (taming failed)"
+                    -- Heal tamed wolf with food
+                    Just (ItemStack (FoodItem ft) _) | tag `elem` ["TamedWolf", "TamedWolfSitting"] -> do
+                      mEnt <- getEntity entityWorld eid
+                      case mEnt of
+                        Just ent | entHealth ent < entMaxHealth ent -> do
+                          updateEntity entityWorld eid (\e -> e { entHealth = min (entMaxHealth e) (entHealth e + 2) })
+                          let (inv', _) = removeItem inv (FoodItem ft) 1
+                          writeIORef inventoryRef inv'
+                          putStrLn "Healed tamed wolf!"
+                        _ -> pure ()
+                    -- Toggle sit for tamed wolf (no item needed or non-bone/food item)
+                    _ | tag == "TamedWolf" -> do
+                          updateEntity entityWorld eid (\e -> e { entTag = "TamedWolfSitting" })
+                          modifyIORef' aiStatesRef (HM.insert eid (AIIdle 999999))
+                          putStrLn "Wolf is now sitting."
+                      | tag == "TamedWolfSitting" -> do
+                          updateEntity entityWorld eid (\e -> e { entTag = "TamedWolf" })
+                          modifyIORef' aiStatesRef (HM.insert eid (AIIdle 1.0))
+                          putStrLn "Wolf is now following."
+                      | otherwise -> pure ()
+
             mHit <- raycastBlock blockQueryCb eyePos dir maxReach
             case mHit of
               Nothing -> pure ()
@@ -1273,85 +1321,135 @@ main = do
               aiStates <- readIORef aiStatesRef
               forM_ ents $ \ent -> do
                 let eid = entId ent
-                    mobType = readMobType (entTag ent)
+                    tag = entTag ent
+                    mobType = readMobType tag
                     currentAI = HM.lookupDefault (AIIdle 2.0) eid aiStates
-                (ent', newAI) <- updateMobAI dt ent mobType (plPos player) solidQuery currentAI spawnRngRef
-                updateEntity entityWorld eid (const ent')
-                modifyIORef' aiStatesRef (HM.insert eid newAI)
-                -- Skeleton ranged attack, Creeper explosion, or melee
-                case mobType of
-                  Skeleton -> case newAI of
-                    AIAttack _ _ -> do
-                      cooldowns <- readIORef skeletonCooldownRef
-                      let cd = HM.lookupDefault 0 eid cooldowns
-                          cd' = cd + aiDt
-                      if cd' >= 2.0
-                        then do
-                          modifyIORef' skeletonCooldownRef (HM.insert eid 0)
-                          arrowDmg <- System.Random.randomRIO (2 :: Int, 5)
-                          let skelPos = entPosition ent'
-                              dir = normalize (plPos player - skelPos)
-                              vel = dir ^* 20.0 + V3 0 3.0 0
-                              arrow = Projectile
-                                { projPos = skelPos + V3 0 1.5 0
-                                , projVelocity = vel
-                                , projAge = 0
-                                , projDamage = arrowDmg
-                                }
-                          modifyIORef' projectilesRef (arrow :)
-                        else modifyIORef' skeletonCooldownRef (HM.insert eid cd')
-                    _ -> modifyIORef' skeletonCooldownRef (HM.delete eid)
-                  Creeper -> do
-                    let info = mobInfo Creeper
-                        creeperPos = entPosition ent'
-                        distToPlayer = distance creeperPos (plPos player)
-                        explosionRadius = 3 :: Int
-                    case newAI of
-                      AIAttack _ _ | distToPlayer < miAttackRange info -> do
-                        fuseMap <- readIORef creeperFuseRef
-                        let oldFuse = IM.findWithDefault 0.0 eid fuseMap
-                            newFuse = oldFuse + aiDt
-                        if newFuse >= 1.5
+
+                -- Tamed wolf following logic (skip normal AI)
+                if tag == "TamedWolf" then do
+                  let wolfPos = entPosition ent
+                      playerPos = plPos player
+                      distToOwner = distance wolfPos playerPos
+                  if distToOwner > 10.0
+                    then do
+                      -- Teleport wolf near player
+                      dx <- randomRIO (-2.0 :: Float, 2.0)
+                      dz <- randomRIO (-2.0 :: Float, 2.0)
+                      let tpPos = playerPos + V3 dx 0 dz
+                      updateEntity entityWorld eid (\e -> e { entPosition = tpPos })
+                      modifyIORef' aiStatesRef (HM.insert eid (AIIdle 0.5))
+                    else if distToOwner > 2.0
+                      then do
+                        -- Move toward player
+                        let dir = normalize (playerPos - wolfPos)
+                            speed = 0.3
+                            newVel = dir ^* speed
+                            newPos = wolfPos + newVel ^* aiDt
+                        updateEntity entityWorld eid (\e -> e { entPosition = newPos, entVelocity = newVel })
+                        modifyIORef' aiStatesRef (HM.insert eid (AIIdle 0.5))
+                      else
+                        modifyIORef' aiStatesRef (HM.insert eid (AIIdle 1.0))
+                -- Sitting wolves don't move
+                else if tag == "TamedWolfSitting" then
+                  pure ()
+                else do
+
+                  (ent', newAI) <- updateMobAI dt ent mobType (plPos player) solidQuery currentAI spawnRngRef
+                  updateEntity entityWorld eid (const ent')
+                  modifyIORef' aiStatesRef (HM.insert eid newAI)
+                  -- Skeleton ranged attack, Creeper explosion, or melee
+                  case mobType of
+                    Skeleton -> case newAI of
+                      AIAttack _ _ -> do
+                        cooldowns <- readIORef skeletonCooldownRef
+                        let cd = HM.lookupDefault 0 eid cooldowns
+                            cd' = cd + aiDt
+                        if cd' >= 2.0
                           then do
-                            putStrLn $ "Creeper exploded at " ++ show creeperPos ++ "!"
-                            playSound soundSystem SndExplosion
-                            explodeAt world creeperPos explosionRadius droppedItems
-                            let dmg = max 0 (floor (miAttackDmg info * (1.0 - distToPlayer / 7.0)) :: Int)
-                            when (dmg > 0) $ do
-                              modifyIORef' playerRef (damagePlayer dmg)
-                              triggerDamageFlash
-                              putStrLn $ "Explosion dealt " ++ show dmg ++ " damage!"
-                            updateEntity entityWorld eid (\e -> e { entAlive = False, entHealth = 0 })
-                            destroyEntity entityWorld eid
-                            modifyIORef' aiStatesRef (HM.delete eid)
-                            modifyIORef' creeperFuseRef (IM.delete eid)
-                            let V3 cpx _ cpz = creeperPos
-                            rebuildExplosionChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef (floor cpx) (floor cpz) explosionRadius
-                          else
-                            modifyIORef' creeperFuseRef (IM.insert eid newFuse)
-                      _ ->
-                        modifyIORef' creeperFuseRef (IM.delete eid)
-                  -- Apply melee attack damage for other mobs
-                  _ -> case (currentAI, newAI) of
-                    (AIAttack _ cd, AIAttack _ 1.0) | cd <= 0 -> do
-                      let dmg = floor $ miAttackDmg (mobInfo mobType)
-                      when (dmg > 0) $ do
-                        modifyIORef' playerRef (damagePlayer dmg)
-                        triggerDamageFlash
-                        putStrLn $ entTag ent ++ " attacked you for " ++ show dmg ++ " damage!"
-                    _ -> pure ()
-                -- Check for mob death and spawn item drops
-                when (entHealth ent' <= 0) $ do
-                  playSound soundSystem SndMobDeath
-                  destroyEntity entityWorld eid
-                  modifyIORef' aiStatesRef (HM.delete eid)
-                  modifyIORef' skeletonCooldownRef (HM.delete eid)
-                  let dropPos = entPosition ent'
-                  drops <- mobDrops (entTag ent)
-                  forM_ drops $ \(item, count) ->
-                    when (count > 0) $ do
-                      spawnDrop droppedItems item count dropPos
-                      putStrLn $ entTag ent ++ " died and dropped " ++ show count ++ "x " ++ show item
+                            modifyIORef' skeletonCooldownRef (HM.insert eid 0)
+                            arrowDmg <- System.Random.randomRIO (2 :: Int, 5)
+                            let skelPos = entPosition ent'
+                                dir = normalize (plPos player - skelPos)
+                                vel = dir ^* 20.0 + V3 0 3.0 0
+                                arrow = Projectile
+                                  { projPos = skelPos + V3 0 1.5 0
+                                  , projVelocity = vel
+                                  , projAge = 0
+                                  , projDamage = arrowDmg
+                                  }
+                            modifyIORef' projectilesRef (arrow :)
+                          else modifyIORef' skeletonCooldownRef (HM.insert eid cd')
+                      _ -> modifyIORef' skeletonCooldownRef (HM.delete eid)
+                    Creeper -> do
+                      let info = mobInfo Creeper
+                          creeperPos = entPosition ent'
+                          distToPlayer = distance creeperPos (plPos player)
+                          explosionRadius = 3 :: Int
+                      case newAI of
+                        AIAttack _ _ | distToPlayer < miAttackRange info -> do
+                          fuseMap <- readIORef creeperFuseRef
+                          let oldFuse = IM.findWithDefault 0.0 eid fuseMap
+                              newFuse = oldFuse + aiDt
+                          if newFuse >= 1.5
+                            then do
+                              putStrLn $ "Creeper exploded at " ++ show creeperPos ++ "!"
+                              playSound soundSystem SndExplosion
+                              explodeAt world creeperPos explosionRadius droppedItems
+                              let dmg = max 0 (floor (miAttackDmg info * (1.0 - distToPlayer / 7.0)) :: Int)
+                              when (dmg > 0) $ do
+                                modifyIORef' playerRef (damagePlayer dmg)
+                                triggerDamageFlash
+                                putStrLn $ "Explosion dealt " ++ show dmg ++ " damage!"
+                              updateEntity entityWorld eid (\e -> e { entAlive = False, entHealth = 0 })
+                              destroyEntity entityWorld eid
+                              modifyIORef' aiStatesRef (HM.delete eid)
+                              modifyIORef' creeperFuseRef (IM.delete eid)
+                              let V3 cpx _ cpz = creeperPos
+                              rebuildExplosionChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef (floor cpx) (floor cpz) explosionRadius
+                            else
+                              modifyIORef' creeperFuseRef (IM.insert eid newFuse)
+                        _ ->
+                          modifyIORef' creeperFuseRef (IM.delete eid)
+                    -- Apply melee attack damage for other mobs
+                    _ -> case (currentAI, newAI) of
+                      (AIAttack _ cd, AIAttack _ 1.0) | cd <= 0 -> do
+                        let dmg = floor $ miAttackDmg (mobInfo mobType)
+                        when (dmg > 0) $ do
+                          modifyIORef' playerRef (damagePlayer dmg)
+                          triggerDamageFlash
+                          putStrLn $ entTag ent ++ " attacked you for " ++ show dmg ++ " damage!"
+                          -- Tamed wolves retaliate against attacker
+                          allEnts <- livingEntities entityWorld
+                          let tamedWolves = filter (\w -> entTag w == "TamedWolf") allEnts
+                          forM_ tamedWolves $ \wolf -> do
+                            let wolfDist = distance (entPosition wolf) (plPos player)
+                            when (wolfDist < 16.0) $ do
+                              modifyIORef' aiStatesRef (HM.insert (entId wolf) (AIChase Nothing 0))
+                              -- Move wolf toward the attacking mob
+                              let attackerPos = entPosition ent'
+                                  wolfPos = entPosition wolf
+                                  dir = normalize (attackerPos - wolfPos)
+                                  speed = 0.3
+                                  newVel = dir ^* speed
+                                  newPos = wolfPos + newVel ^* aiDt
+                              updateEntity entityWorld (entId wolf) (\w -> w { entPosition = newPos, entVelocity = newVel })
+                              -- Deal wolf damage to attacker
+                              let wolfDmg = miAttackDmg (mobInfo Wolf)
+                              updateEntity entityWorld eid (\e -> damageEntity e wolfDmg)
+                              putStrLn $ "Tamed wolf attacked " ++ entTag ent ++ " for " ++ show wolfDmg ++ " damage!"
+                      _ -> pure ()
+                  -- Check for mob death and spawn item drops
+                  when (entHealth ent' <= 0) $ do
+                    playSound soundSystem SndMobDeath
+                    destroyEntity entityWorld eid
+                    modifyIORef' aiStatesRef (HM.delete eid)
+                    modifyIORef' skeletonCooldownRef (HM.delete eid)
+                    let dropPos = entPosition ent'
+                    drops <- mobDrops (entTag ent)
+                    forM_ drops $ \(item, count) ->
+                      when (count > 0) $ do
+                        spawnDrop droppedItems item count dropPos
+                        putStrLn $ entTag ent ++ " died and dropped " ++ show count ++ "x " ++ show item
 
             -- Tick arrow projectiles (every frame)
             do projectiles <- readIORef projectilesRef
@@ -2015,6 +2113,9 @@ readMobType "Pig"      = Pig
 readMobType "Cow"      = Cow
 readMobType "Sheep"    = Sheep
 readMobType "Chicken"  = Chicken
+readMobType "Wolf"     = Wolf
+readMobType "TamedWolf" = Wolf
+readMobType "TamedWolfSitting" = Wolf
 readMobType _          = Pig
 
 -- | Whether a block is flammable (can catch fire from adjacent fire blocks)
