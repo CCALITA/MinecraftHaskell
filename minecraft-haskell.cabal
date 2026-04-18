@@ -52,6 +52,7 @@ library
     Engine.Vulkan.Descriptor
     Engine.Vulkan.Texture
     World.Block
+    World.BlockRegistry
     World.Chunk
     World.Noise
     World.Biome
