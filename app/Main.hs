@@ -38,6 +38,7 @@ import Entity.Spawn
 import Game.Save
 import Game.DroppedItem
 import Game.BlockEntity
+import Game.State (GameState(..), GameMode(..), Projectile(..), newGameState)
 import Engine.Sound
 import Game.Particle
 
@@ -66,10 +67,6 @@ import System.Random (randomRIO)
 import System.Environment (getArgs)
 import Data.Char (isDigit)
 
--- | Game UI mode
-data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen | FurnaceOpen | DispenserOpen | EnchantingOpen | DeathScreen
-  deriving stock (Show, Eq)
-
 -- | Debug overlay information shown when F3 is active
 data DebugInfo = DebugInfo
   { dbgPos         :: !(V3 Float)
@@ -87,14 +84,6 @@ data DebugInfo = DebugInfo
   , dbgHunger      :: !Int
   , dbgTimeOfDay   :: !String
   , dbgDayTime     :: !Float
-  }
-
--- | Arrow projectile fired by Skeletons
-data Projectile = Projectile
-  { projPos      :: !(V3 Float)
-  , projVelocity :: !(V3 Float)
-  , projAge      :: !Float
-  , projDamage   :: !Int
   }
 
 -- | Fixed timestep for physics (20 ticks per second, like Minecraft)
@@ -188,76 +177,76 @@ main = do
 
     -- Player (try to load from save, else default)
     let spawnPos = V3 0 80 0
-    -- World save management: use world1 as default, create saveDirRef for dynamic switching
-    saveDirRef <- newIORef (savesRoot </> "world1")
+    -- Unified game state
+    gs <- newGameState spawnPos
+    let saveDirRef          = gsSaveDir gs
+        playerRef           = gsPlayer gs
+        inventoryRef        = gsInventory gs
+        gameModeRef         = gsGameMode gs
+        cursorItemRef       = gsCursorItem gs
+        craftingGridRef     = gsCraftingGrid gs
+        furnaceStateRef     = gsFurnaceState gs
+        furnacePosRef       = gsFurnacePos gs
+        debugOverlayRef     = gsDebugOverlay gs
+        targetBlockRef      = gsTargetBlock gs
+        dayNightRef         = gsDayNight gs
+        weatherRef          = gsWeather gs
+        spawnPointRef       = gsSpawnPoint gs
+        sleepMessageRef     = gsSleepMessage gs
+        blockEntityMapRef   = gsBlockEntities gs
+        chestPosRef         = gsChestPos gs
+        dispenserPosRef     = gsDispenserPos gs
+        redstoneStateRef    = gsRedstone gs
+        enchantMapRef       = gsEnchantMap gs
+        enchantItemRef      = gsEnchantItem gs
+        enchantOptionsRef   = gsEnchantOptions gs
+        playerXPRef         = gsPlayerXP gs
+        damageFlashRef      = gsDamageFlash gs
+        cactusDamageTimerRef = gsCactusDmgTimer gs
+        poisonTimerRef      = gsPoisonTimer gs
+        speedBuffTimerRef   = gsSpeedBuff gs
+        spawnRngRef         = gsSpawnRng gs
+        spawnCooldownRef    = gsSpawnCooldown gs
+        aiStatesRef         = gsAiStates gs
+        creeperFuseRef      = gsCreeperFuse gs
+        projectilesRef      = gsProjectiles gs
+        skeletonCooldownRef = gsSkeletonCd gs
+        fishingStateRef     = gsFishing gs
+        ridingEntityRef     = gsRiding gs
+        hudVertCountRef     = gsHudVertCount gs
+        meshCacheRef        = gsMeshCache gs
+        inputRef            = gsInput gs
+        lastCursorRef       = gsLastCursor gs
+        mousePosRef         = gsMousePos gs
+        miningRef           = gsMining gs
+        lmbHeldRef          = gsLmbHeld gs
+        rmbHeldRef          = gsRmbHeld gs
+        frameRef            = gsFrame gs
+        lastTimeRef         = gsLastTime gs
+        accumRef            = gsAccum gs
+        fpsCounterRef       = gsFpsCounter gs
+        fpsTimerRef         = gsFpsTimer gs
+        fpsDisplayRef       = gsFpsDisplay gs
+
+    -- World save management: use world1 as default
     let defaultSaveDir = savesRoot </> "world1"
     mSavedData <- loadPlayer defaultSaveDir
-    playerRef <- newIORef (case mSavedData of
-      Just sd -> playerFromSaveData sd
-      Nothing -> defaultPlayer spawnPos)
-    inventoryRef <- newIORef (case mSavedData of
-      Just sd -> slotListToInventory (sdInventory sd) (sdSelectedSlot sd)
-      Nothing -> emptyInventory)
-    gameModeRef <- newIORef MainMenu
-    cursorItemRef <- newIORef (Nothing :: Maybe ItemStack)  -- item held by mouse cursor
-    craftingGridRef <- newIORef (emptyCraftingGrid 3)
-    furnaceStateRef <- newIORef newFurnaceState
-    furnacePosRef <- newIORef (Nothing :: Maybe (V3 Int))
-    debugOverlayRef <- newIORef False
-    targetBlockRef <- newIORef (Nothing :: Maybe (V3 Int))
-    dayNightRef <- newIORef (case mSavedData of
-      Just sd -> newDayNightCycle { dncTime = sdDayTime sd, dncDayCount = sdDayCount sd }
-      Nothing -> newDayNightCycle)
-    weatherRef <- newIORef newWeatherState
-    spawnPointRef <- newIORef spawnPos
-    sleepMessageRef <- newIORef (Nothing :: Maybe Float)
+    -- Restore saved player state if available
+    case mSavedData of
+      Just sd -> do
+        writeIORef playerRef (playerFromSaveData sd)
+        writeIORef inventoryRef (slotListToInventory (sdInventory sd) (sdSelectedSlot sd))
+        writeIORef dayNightRef (newDayNightCycle { dncTime = sdDayTime sd, dncDayCount = sdDayCount sd })
+      Nothing -> pure ()
     fluidState <- newFluidState
     droppedItems <- newDroppedItems
     particleSystemRef <- newParticleSystem
 
-    -- Block entity storage (chests)
-    blockEntityMapRef <- newBlockEntityMap
-    chestPosRef <- newIORef (Nothing :: Maybe (V3 Int))
-    dispenserPosRef <- newIORef (Nothing :: Maybe (V3 Int))
-
-    -- Redstone state
-    redstoneStateRef <- newIORef =<< newRedstoneState
-
-    -- Enchanting state
-    enchantMapRef <- newEnchantmentMap
-    enchantItemRef <- newIORef (Nothing :: Maybe ItemStack)  -- item in enchanting slot
-    enchantOptionsRef <- newIORef ([] :: [(EnchantmentType, Int, Int)])  -- current enchant options
-    playerXPRef <- newIORef (30 :: Int)  -- player XP level (start at 30 for testing)
-
     -- Sound system (no-op stub, ready for real audio backend)
     soundSystem <- initSoundSystem
 
-    -- Damage flash effect (0.0 = no flash, set to 0.3 on damage)
-    damageFlashRef <- newIORef (0.0 :: Float)
-
-    -- Cactus contact damage timer (1 damage per second while touching)
-    cactusDamageTimerRef <- newIORef (0.0 :: Float)
-
-    -- Potion effect timers
-    poisonTimerRef <- newIORef (0.0 :: Float)   -- remaining seconds of poison
-    speedBuffTimerRef <- newIORef (0.0 :: Float) -- remaining seconds of speed buff
-
     -- Entity system
     entityWorld <- newEntityWorld
-    spawnRngRef <- newIORef =<< System.Random.newStdGen
-    spawnCooldownRef <- newIORef (0.0 :: Float)
-    aiStatesRef <- newIORef (HM.empty :: HM.HashMap Int AIState)
-    creeperFuseRef <- newIORef (IM.empty :: IM.IntMap Float)
-
-    -- Skeleton ranged attack state
-    projectilesRef <- newIORef ([] :: [Projectile])
-    skeletonCooldownRef <- newIORef (HM.empty :: HM.HashMap Int Float)
-
-    -- Fishing rod state: Nothing = not fishing, Just (bobberPos, timer, ready)
-    fishingStateRef <- newIORef (Nothing :: Maybe (V3 Float, Float, Bool))
-
-    -- Boat/Minecart riding state (entity ID of boat/minecart currently ridden)
-    ridingEntityRef <- newIORef (Nothing :: Maybe Int)
 
     -- Give player some starting blocks (only when no saved inventory)
     case mSavedData of
@@ -281,20 +270,10 @@ main = do
     hudBuf <- createBuffer physDevice device hudBufSize
       Vk.BUFFER_USAGE_VERTEX_BUFFER_BIT
       (Vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. Vk.MEMORY_PROPERTY_HOST_COHERENT_BIT)
-    hudVertCountRef <- newIORef (0 :: Int)
 
-    -- Per-chunk mesh cache: ChunkPos -> (vertBuf, idxBuf, indexCount)
-    meshCacheRef <- newIORef (HM.empty :: HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
     -- Settle gravity-affected blocks in all initially loaded chunks
     settleAllLoadedChunks world
     rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
-
-    -- Input state
-    inputRef <- newIORef noInput
-    lastCursorRef <- newIORef (Nothing :: Maybe (Double, Double))
-
-    -- Track mouse position for UI clicks
-    mousePosRef <- newIORef (0.0 :: Double, 0.0 :: Double)
 
     -- Mouse movement callback (FPS look in Playing, position tracking in UI)
     GLFW.setCursorPosCallback (whWindow wh) $ Just $ \_win xpos ypos -> do
@@ -346,11 +325,6 @@ main = do
               | otherwise = cur
         when (newSlot /= cur) cancelEating
         modifyIORef' inventoryRef (`selectHotbar` newSlot)
-
-    -- Mining state
-    miningRef <- newIORef (Nothing :: Maybe (V3 Int, Float))
-    lmbHeldRef <- newIORef False
-    rmbHeldRef <- newIORef False
 
     -- Mouse button callback
     GLFW.setMouseButtonCallback (whWindow wh) $ Just $ \_win button action _mods -> do
@@ -1311,13 +1285,8 @@ main = do
                 GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
                 writeIORef lastCursorRef Nothing
 
-    -- Timing
-    frameRef <- newIORef (0 :: Int)
-    lastTimeRef <- newIORef =<< maybe 0 id <$> GLFW.getTime
-    accumRef <- newIORef (0.0 :: Float)
-    fpsCounterRef <- newIORef (0 :: Int)       -- frames since last FPS update
-    fpsTimerRef   <- newIORef (0.0 :: Float)   -- time since last FPS update
-    fpsDisplayRef <- newIORef (0 :: Int)       -- displayed FPS value
+    -- Initialize last-time ref from GLFW clock (overrides default 0)
+    writeIORef lastTimeRef =<< maybe 0 id <$> GLFW.getTime
 
     -- Block queries for physics
     let mkBlockQuery :: (BlockType -> Bool) -> BlockQuery
