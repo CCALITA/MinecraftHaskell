@@ -21,6 +21,7 @@ import World.Weather
 import Entity.ECS
 import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), mobInfo)
 import World.Redstone
+import World.BlockRegistry
 
 import Entity.Villager
 import Game.Enchanting
@@ -74,6 +75,7 @@ main = hspec $ do
   villagerTradingSpec
   tooltipSpec
   structureSpec
+  blockRegistrySpec
 
 -- =========================================================================
 -- Block
@@ -2686,3 +2688,107 @@ structureSpec = describe "World.Structure" $ do
       y `shouldSatisfy` (\v -> v >= 0 && v < sy)
       z `shouldSatisfy` (\v -> v >= 0 && v < sz)
       ) (stBlocks villageHouseStructure)
+
+-- =========================================================================
+-- Block Registry
+-- =========================================================================
+blockRegistrySpec :: Spec
+blockRegistrySpec = describe "World.BlockRegistry" $ do
+  -- Creation
+  it "newBlockRegistry creates an empty registry" $ do
+    reg <- newBlockRegistry
+    entries <- registeredBlocks reg
+    length entries `shouldBe` 0
+
+  -- Register and lookup
+  it "registerBlock then lookupBlock roundtrips" $ do
+    reg <- newBlockRegistry
+    registerBlock reg Stone (mkBlockDef Stone)
+    result <- lookupBlock reg Stone
+    case result of
+      Just d  -> bdProperties d `shouldBe` blockProperties Stone
+      Nothing -> expectationFailure "Expected Stone block def"
+
+  it "lookupBlock returns Nothing for unregistered block" $ do
+    reg <- newBlockRegistry
+    result <- lookupBlock reg Dirt
+    case result of
+      Nothing -> pure ()
+      Just _  -> expectationFailure "Expected Nothing for unregistered block"
+
+  -- Overwrite
+  it "registerBlock overwrites previous definition" $ do
+    reg <- newBlockRegistry
+    let def1 = mkBlockDef Stone
+        def2 = (mkBlockDef Stone) { bdCollisionHeight = 0.5 }
+    registerBlock reg Stone def1
+    registerBlock reg Stone def2
+    result <- lookupBlock reg Stone
+    case result of
+      Just d  -> bdCollisionHeight d `shouldBe` 0.5
+      Nothing -> expectationFailure "Expected updated Stone block def"
+
+  -- registeredBlocks count
+  it "registeredBlocks returns all registered entries" $ do
+    reg <- newBlockRegistry
+    registerBlock reg Stone (mkBlockDef Stone)
+    registerBlock reg Dirt (mkBlockDef Dirt)
+    registerBlock reg Sand (mkBlockDef Sand)
+    entries <- registeredBlocks reg
+    length entries `shouldBe` 3
+
+  -- Default registry
+  it "defaultBlockRegistry contains all BlockType values" $ do
+    reg <- defaultBlockRegistry
+    entries <- registeredBlocks reg
+    let allBlockTypes = [minBound .. maxBound] :: [BlockType]
+    length entries `shouldBe` length allBlockTypes
+
+  it "defaultBlockRegistry properties match blockProperties for Stone" $ do
+    reg <- defaultBlockRegistry
+    result <- lookupBlock reg Stone
+    case result of
+      Just d  -> bdProperties d `shouldBe` blockProperties Stone
+      Nothing -> expectationFailure "Expected Stone in default registry"
+
+  it "defaultBlockRegistry properties match blockProperties for Air" $ do
+    reg <- defaultBlockRegistry
+    result <- lookupBlock reg Air
+    case result of
+      Just d  -> bdProperties d `shouldBe` blockProperties Air
+      Nothing -> expectationFailure "Expected Air in default registry"
+
+  it "defaultBlockRegistry drops match blockDrops for Stone" $ do
+    reg <- defaultBlockRegistry
+    result <- lookupBlock reg Stone
+    case result of
+      Just d  -> bdDrops d `shouldBe` blockDrops Stone
+      Nothing -> expectationFailure "Expected Stone in default registry"
+
+  it "defaultBlockRegistry preferred tool matches for OakLog" $ do
+    reg <- defaultBlockRegistry
+    result <- lookupBlock reg OakLog
+    case result of
+      Just d  -> bdPreferredTool d `shouldBe` blockPreferredTool OakLog
+      Nothing -> expectationFailure "Expected OakLog in default registry"
+
+  it "defaultBlockRegistry collision height matches for StoneSlab" $ do
+    reg <- defaultBlockRegistry
+    result <- lookupBlock reg StoneSlab
+    case result of
+      Just d  -> bdCollisionHeight d `shouldBe` blockCollisionHeight StoneSlab
+      Nothing -> expectationFailure "Expected StoneSlab in default registry"
+
+  it "defaultBlockRegistry harvest level matches for DiamondOre" $ do
+    reg <- defaultBlockRegistry
+    result <- lookupBlock reg DiamondOre
+    case result of
+      Just d  -> bdHarvestLevel d `shouldBe` blockRequiredHarvestLevel DiamondOre
+      Nothing -> expectationFailure "Expected DiamondOre in default registry"
+
+  it "defaultBlockRegistry tex coords match for Grass top face" $ do
+    reg <- defaultBlockRegistry
+    result <- lookupBlock reg Grass
+    case result of
+      Just d  -> bdTexCoords d FaceTop `shouldBe` blockFaceTexCoords Grass FaceTop
+      Nothing -> expectationFailure "Expected Grass in default registry"
