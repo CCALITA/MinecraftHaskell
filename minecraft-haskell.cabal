@@ -88,6 +88,7 @@ library
     UI.HUD
     UI.Menu
     UI.Text
+    UI.Tooltip
   build-depends:
     , base             >= 4.17  && < 5
     , vulkan           >= 3.26

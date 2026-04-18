@@ -3,6 +3,7 @@ module Engine.BitmapFont
   , renderTextCentered
   , charWidth
   , charHeight
+  , charSpacing
   ) where
 
 -- | Simple 3x5 bitmap font rendered as colored quads.
