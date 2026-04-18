@@ -25,6 +25,7 @@ import Game.Physics (BlockQuery, BlockHeightQuery)
 import Game.Inventory
 import Game.Item
 import Game.Crafting
+import Game.Enchanting
 import Game.DayNight
 import World.Biome (biomeAt)
 import World.Weather (WeatherState(..), WeatherType(..), newWeatherState, updateWeather, isRaining, weatherSkyMultiplier, weatherAmbientMultiplier)
@@ -66,7 +67,7 @@ import System.Environment (getArgs)
 import Data.Char (isDigit)
 
 -- | Game UI mode
-data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen | FurnaceOpen | DispenserOpen | DeathScreen
+data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen | FurnaceOpen | DispenserOpen | EnchantingOpen | DeathScreen
   deriving stock (Show, Eq)
 
 -- | Debug overlay information shown when F3 is active
@@ -221,6 +222,12 @@ main = do
 
     -- Redstone state
     redstoneStateRef <- newIORef =<< newRedstoneState
+
+    -- Enchanting state
+    enchantMapRef <- newEnchantmentMap
+    enchantItemRef <- newIORef (Nothing :: Maybe ItemStack)  -- item in enchanting slot
+    enchantOptionsRef <- newIORef ([] :: [(EnchantmentType, Int, Int)])  -- current enchant options
+    playerXPRef <- newIORef (30 :: Int)  -- player XP level (start at 30 for testing)
 
     -- Sound system (no-op stub, ready for real audio backend)
     soundSystem <- initSoundSystem
@@ -640,7 +647,6 @@ main = do
               mSlot = hitDispenserSlot ndcX ndcY
           case mSlot of
             Just (DispenserSlot idx) -> do
-              -- Click on dispenser slot (0-8): swap with cursor
               mDispPos <- readIORef dispenserPosRef
               case mDispPos of
                 Nothing -> pure ()
@@ -655,13 +661,71 @@ main = do
                       setDispenserInventory blockEntityMapRef dPos newDispInv
                       writeIORef cursorItemRef slotContent
             Just (DispenserInvSlot idx) -> do
-              -- Click on player inventory slot: swap with cursor
               curInv <- readIORef inventoryRef
               cursor <- readIORef cursorItemRef
               let slotContent = getSlot curInv idx
               modifyIORef' inventoryRef (\i -> setSlot i idx cursor)
               writeIORef cursorItemRef slotContent
             Nothing -> pure ()
+
+        EnchantingOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
+          (mx, my) <- readIORef mousePosRef
+          (winW, winH) <- getWindowSize wh
+          let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+              ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
+              itemSlotX0 = -0.26 :: Float
+              itemSlotY0 = -0.16 :: Float
+              itemSlotSz = 0.12 :: Float
+              inItemSlot = ndcX >= itemSlotX0 && ndcX <= itemSlotX0 + itemSlotSz
+                        && ndcY >= itemSlotY0 && ndcY <= itemSlotY0 + itemSlotSz
+              optBtnX0 = 0.05 :: Float
+              optBtnW  = 0.50 :: Float
+              optBtnH  = 0.10 :: Float
+              optBtnGap = 0.02 :: Float
+              optionIdx = if ndcX >= optBtnX0 && ndcX <= optBtnX0 + optBtnW
+                          then let relY = ndcY - (-0.25)
+                                   row = floor (relY / (optBtnH + optBtnGap)) :: Int
+                               in if row >= 0 && row < 3 && relY >= 0
+                                     && (relY - fromIntegral row * (optBtnH + optBtnGap)) <= optBtnH
+                                  then Just row
+                                  else Nothing
+                          else Nothing
+          if inItemSlot then do
+            cursor <- readIORef cursorItemRef
+            eItem <- readIORef enchantItemRef
+            writeIORef enchantItemRef cursor
+            writeIORef cursorItemRef eItem
+            xpLvl <- readIORef playerXPRef
+            eSeed <- randomRIO (0, 999999 :: Int)
+            writeIORef enchantOptionsRef (generateEnchantments xpLvl eSeed)
+          else case optionIdx of
+            Just idx -> do
+              eItem <- readIORef enchantItemRef
+              case eItem of
+                Just (ItemStack _item _cnt) -> do
+                  options <- readIORef enchantOptionsRef
+                  when (idx < length options) $ do
+                    let (etype, elvl, cost) = options !! idx
+                    xpLvl <- readIORef playerXPRef
+                    when (xpLvl >= cost) $ do
+                      writeIORef playerXPRef (xpLvl - cost)
+                      existingEnchants <- getEnchantments enchantMapRef 0
+                      let newEnchant = Enchantment etype elvl
+                      setEnchantments enchantMapRef 0 (newEnchant : existingEnchants)
+                      newXp <- readIORef playerXPRef
+                      eSeed <- randomRIO (0, 999999 :: Int)
+                      writeIORef enchantOptionsRef (generateEnchantments newXp eSeed)
+                Nothing -> pure ()
+            Nothing -> do
+              let mSlot = hitInventorySlot ndcX ndcY
+              case mSlot of
+                Just slotIdx -> do
+                  inv <- readIORef inventoryRef
+                  cursor <- readIORef cursorItemRef
+                  let slotContent = getSlot inv slotIdx
+                  writeIORef inventoryRef (setSlot inv slotIdx cursor)
+                  writeIORef cursorItemRef slotContent
+                Nothing -> pure ()
 
         DeathScreen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
@@ -971,6 +1035,15 @@ main = do
                           writeIORef craftingGridRef (emptyCraftingGrid 3)
                           GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
                           writeIORef lastCursorRef Nothing
+                        EnchantingTable -> do
+                          writeIORef gameModeRef EnchantingOpen
+                          writeIORef enchantItemRef Nothing
+                          -- Generate enchantment options with a random seed
+                          xpLvl <- readIORef playerXPRef
+                          eSeed <- randomRIO (0, 999999 :: Int)
+                          writeIORef enchantOptionsRef (generateEnchantments xpLvl eSeed)
+                          GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+                          writeIORef lastCursorRef Nothing
                         Furnace -> do
                           -- Load existing furnace state or create new one
                           let fPos = V3 bx by bz
@@ -1224,6 +1297,15 @@ main = do
                 -- Clear dispenser reference when closing dispenser
                 when (curMode == DispenserOpen) $
                   writeIORef dispenserPosRef Nothing
+                -- Return enchanting item to inventory when closing
+                when (curMode == EnchantingOpen) $ do
+                  mEItem <- readIORef enchantItemRef
+                  case mEItem of
+                    Just (ItemStack eItem eCnt) -> do
+                      modifyIORef' inventoryRef (\inv -> fst $ addItem inv eItem eCnt)
+                      writeIORef enchantItemRef Nothing
+                    Nothing -> pure ()
+                  clearEnchantments enchantMapRef 0
                 -- Switch back to playing
                 writeIORef gameModeRef Playing
                 GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
@@ -2592,6 +2674,7 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
     ChestOpen     -> chestScreenVerts ++ cursorVerts
     FurnaceOpen   -> furnaceScreenVerts ++ cursorVerts
     DispenserOpen -> dispenserScreenVerts ++ cursorVerts
+    EnchantingOpen -> enchantScreenVerts ++ cursorVerts
     DeathScreen   -> deathScreenVerts
   where
     -- Crosshair: white + at center
@@ -3226,6 +3309,58 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
 
+    -- Enchanting screen
+    enchantScreenVerts =
+      -- Dark semi-transparent background
+      quad (-1) (-1) 1 1 (0, 0, 0, 0.5)
+      -- Title
+      ++ renderTextCentered (-0.42) 0.9 (0.7, 0.3, 1.0, 1.0) "ENCHANTING TABLE"
+      -- Background panel
+      ++ quad (-0.35) (-0.35) 0.65 0.15 (0.15, 0.05, 0.25, 0.9)
+      -- Item slot (left side)
+      ++ quad enchItemX0 enchItemY0 (enchItemX0 + enchItemSz) (enchItemY0 + enchItemSz) (0.15, 0.15, 0.15, 0.8)
+      -- XP level display (below item slot)
+      ++ renderText (-0.26) (-0.02) 0.6 (0.5, 1.0, 0.5, 1.0) ("XP: " ++ show (0 :: Int))
+      -- 3 enchantment option buttons (right side)
+      ++ enchantOptionVerts
+      -- Inventory grid below
+      ++ quad (invGridX0 - 0.02) 0.20 (invGridX0 + 9 * invSlotW + 0.02) (0.20 + 4 * invSlotH + 0.02) (0.3, 0.3, 0.3, 0.9)
+      ++ concatMap renderEnchantInvSlot [0..35]
+      where
+        enchItemX0 = -0.26 :: Float
+        enchItemY0 = -0.16 :: Float
+        enchItemSz = 0.12 :: Float
+
+        optX0 = 0.05 :: Float
+        optW  = 0.50 :: Float
+        optH  = 0.10 :: Float
+        optGap = 0.02 :: Float
+
+        enchantOptionVerts = concatMap makeOption [0, 1, 2]
+        makeOption i =
+          let y0 = -0.25 + fromIntegral i * (optH + optGap)
+              bg = quad optX0 y0 (optX0 + optW) (y0 + optH) (0.2, 0.1, 0.35, 0.9)
+              label = renderText (optX0 + 0.02) (y0 + 0.02) 0.55 (0.9, 0.8, 1.0, 1.0)
+                        ("Option " ++ show (i + 1 :: Int))
+          in bg ++ label
+
+        renderEnchantInvSlot idx =
+          let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
+              col = if idx < 9 then idx else (idx - 9) `mod` 9
+              x = invGridX0 + fromIntegral col * invSlotW + invSlotPad
+              y = 0.22 + fromIntegral row * invSlotH + invSlotPad
+              sw = invSlotW - 2 * invSlotPad
+              sh = invSlotH - 2 * invSlotPad
+              slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
+          in case getSlot inv idx of
+            Nothing -> slotBg
+            Just (ItemStack item _) ->
+              let colors = itemMiniIcon item
+                  pixW = sw / 3; pixH = sh / 3
+              in slotBg ++ concatMap (\(r, c, clr) ->
+                   quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                        (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
     -- Cursor item (follows mouse position — simplified to center for now)
     cursorVerts = case cursorItem of
       Nothing -> []
@@ -3454,6 +3589,7 @@ itemColor (BlockItem bt) = case bt of
   PistonHead  -> (0.55, 0.45, 0.3, 1.0)
   Rail        -> (0.55, 0.45, 0.35, 1.0)
   Dispenser   -> (0.5, 0.5, 0.5, 1.0)
+  EnchantingTable -> (0.3, 0.1, 0.4, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)

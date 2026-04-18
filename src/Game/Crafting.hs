@@ -316,6 +316,14 @@ allRecipes =
       , rcResult  = GlassBottleItem
       , rcCount   = 3
       }
+  -- Enchanting table: diamond + planks + obsidian
+  , Recipe
+      { rcPattern = [[Nothing,                      bi OakPlanks,                  Nothing]
+                    ,[ji (MaterialItem DiamondGem), bi OakPlanks,                  ji (MaterialItem DiamondGem)]
+                    ,[bi Obsidian,                  bi Obsidian,                   bi Obsidian]]
+      , rcResult  = BlockItem EnchantingTable
+      , rcCount   = 1
+      }
   ] ++ toolRecipes ++ shearsRecipe ++ compassClockRecipes ++ fishingRodRecipe ++ boatRecipe ++ railRecipes ++ dispenserRecipe
 
 -- | Shears crafting recipe: 2 iron ingots diagonal

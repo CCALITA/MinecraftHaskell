@@ -135,6 +135,8 @@ tileFull tileIdx lx ly = case tileIdx of
   87 -> pistonHeadPattern lx ly      -- piston head (V2 7 5)
   88 -> railPattern lx ly              -- rail (V2 8 5)
   89 -> dispenserFrontPattern lx ly  -- dispenser front (V2 9 5)
+  90 -> enchantingTableTop lx ly     -- enchanting table top
+  91 -> enchantingTableSide lx ly    -- enchanting table side
   -- Fallback: checkerboard pattern so missing tiles are visible
   _  -> let checker = (lx + ly) `mod` 2 == 0
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
@@ -563,6 +565,39 @@ tileFull tileIdx lx ly = case tileIdx of
       in if isOpening then (30, 30, 35, 255)
          else if border then (90, 90, 95, 255)
          else (baseV, baseV, fromIntegral (baseV + 3), 255)
+
+    -- Enchanting table top: dark obsidian base with diamond-studded pattern and runes
+    enchantingTableTop x y =
+      let n = pixHash x y 2700 `mod` 100
+          -- Diamond studs at corners and center
+          isDiamond = (x == 2 && y == 2) || (x == 13 && y == 2)
+                   || (x == 2 && y == 13) || (x == 13 && y == 13)
+                   || (x >= 7 && x <= 8 && y >= 7 && y <= 8)
+          -- Rune symbols (glowing purple lines)
+          isRune = (x == 5 && y >= 4 && y <= 11)
+                || (x == 10 && y >= 4 && y <= 11)
+                || (y == 4 && x >= 5 && x <= 10)
+                || (y == 11 && x >= 5 && x <= 10)
+          -- Border
+          border = x == 0 || x == 15 || y == 0 || y == 15
+      in if isDiamond then (100, 220, 255, 255)  -- bright cyan diamond
+         else if isRune then (120, 50, 180, 255)  -- glowing purple rune
+         else if border then (15, 8, 20, 255)     -- dark border
+         else if n < 20 then (25, 12, 35, 255)    -- dark obsidian variant
+         else (20, 10, 30, 255)                    -- obsidian base
+
+    -- Enchanting table side: dark obsidian with subtle purple glow
+    enchantingTableSide x y =
+      let n = pixHash x y 2800 `mod` 100
+          -- Purple accents along the middle band
+          accentBand = y >= 6 && y <= 9
+          border = x == 0 || x == 15 || y == 0 || y == 15
+          streak = pixHash (x `div` 3) (y `div` 2) 2801 `mod` 10 < 2
+      in if border then (15, 8, 20, 255)
+         else if accentBand && streak then (80, 30, 120, 255)  -- purple accent
+         else if streak then (30, 15, 40, 255)                 -- subtle purple streak
+         else if n < 30 then (20, 10, 28, 255)
+         else (25, 12, 32, 255)
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels

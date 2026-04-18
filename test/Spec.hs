@@ -21,6 +21,7 @@ import Entity.ECS
 import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), mobInfo)
 import World.Redstone
 
+import Game.Enchanting
 import Game.Physics (BlockHeightQuery)
 
 import Data.Binary (encode, decode)
@@ -61,6 +62,8 @@ main = hspec $ do
   railBlockSpec
   minecartItemSpec
   dispenserBlockSpec
+  enchantingTableSpec
+  enchantingSystemSpec
 
 -- =========================================================================
 -- Block
@@ -1894,3 +1897,156 @@ dispenserBlockSpec = describe "Dispenser block" $ do
   -- Redstone conductor
   it "Dispenser is a redstone conductor" $ do
     isRedstoneConductor Dispenser `shouldBe` True
+
+-- Enchanting table block
+-- =========================================================================
+enchantingTableSpec :: Spec
+enchantingTableSpec = describe "Enchanting table block" $ do
+  -- Block properties
+  it "EnchantingTable is solid and opaque" $ do
+    isSolid EnchantingTable `shouldBe` True
+    isTransparent EnchantingTable `shouldBe` False
+
+  it "EnchantingTable has hardness 5.0" $ do
+    bpHardness (blockProperties EnchantingTable) `shouldBe` 5.0
+
+  it "EnchantingTable emits light level 7" $ do
+    bpLightEmit (blockProperties EnchantingTable) `shouldBe` 7
+
+  -- Enum roundtrip
+  it "EnchantingTable roundtrips through Enum" $ do
+    toEnum (fromEnum EnchantingTable) `shouldBe` (EnchantingTable :: BlockType)
+
+  -- Texture coords
+  it "EnchantingTable has valid texture coords" $ do
+    let V2 u v = blockFaceTexCoords EnchantingTable FaceTop
+    u `shouldSatisfy` (>= 0)
+    v `shouldSatisfy` (>= 0)
+
+  it "EnchantingTable has different top and side textures" $ do
+    blockFaceTexCoords EnchantingTable FaceTop `shouldNotBe` blockFaceTexCoords EnchantingTable FaceEast
+
+  -- Block drops
+  it "EnchantingTable drops itself" $ do
+    blockDrops EnchantingTable `shouldBe` [(BlockItem EnchantingTable, 1)]
+
+  -- Preferred tool
+  it "EnchantingTable prefers pickaxe" $ do
+    blockPreferredTool EnchantingTable `shouldBe` Just Pickaxe
+
+  -- Crafting recipe
+  it "enchanting table recipe produces EnchantingTable" $ do
+    let d = Just (MaterialItem DiamondGem)
+        p = Just (BlockItem OakPlanks)
+        o = Just (BlockItem Obsidian)
+        grid = setCraftingSlot (setCraftingSlot (setCraftingSlot
+              (setCraftingSlot (setCraftingSlot (setCraftingSlot
+              (setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3)
+                0 1 p) 1 0 d) 1 1 p) 1 2 d) 2 0 o) 2 1 o) 2 2 o)
+                0 0 Nothing
+    tryCraft grid `shouldBe` CraftSuccess (BlockItem EnchantingTable) 1
+
+  -- Binary roundtrip
+  it "EnchantingTable roundtrips through Binary" $ do
+    let item = BlockItem EnchantingTable
+    decode (encode item) `shouldBe` item
+
+-- =========================================================================
+-- Enchanting system
+-- =========================================================================
+enchantingSystemSpec :: Spec
+enchantingSystemSpec = describe "Game.Enchanting" $ do
+  -- Enchantment types
+  it "all EnchantmentType values are enumerable" $ do
+    let allTypes = [minBound .. maxBound] :: [EnchantmentType]
+    length allTypes `shouldBe` 6
+
+  -- Max levels
+  it "Sharpness has max level 5" $ do
+    enchantmentMaxLevel Sharpness `shouldBe` 5
+
+  it "Protection has max level 4" $ do
+    enchantmentMaxLevel Protection `shouldBe` 4
+
+  it "Efficiency has max level 5" $ do
+    enchantmentMaxLevel Efficiency `shouldBe` 5
+
+  it "Unbreaking has max level 3" $ do
+    enchantmentMaxLevel Unbreaking `shouldBe` 3
+
+  it "Power has max level 5" $ do
+    enchantmentMaxLevel Power `shouldBe` 5
+
+  it "Knockback has max level 2" $ do
+    enchantmentMaxLevel Knockback `shouldBe` 2
+
+  -- Enchantment names
+  it "enchantmentName returns correct names" $ do
+    enchantmentName Sharpness `shouldBe` "Sharpness"
+    enchantmentName Protection `shouldBe` "Protection"
+    enchantmentName Efficiency `shouldBe` "Efficiency"
+    enchantmentName Unbreaking `shouldBe` "Unbreaking"
+
+  -- Generate enchantments
+  it "generateEnchantments returns exactly 3 options" $ do
+    let options = generateEnchantments 10 42
+    length options `shouldBe` 3
+
+  it "generateEnchantments is deterministic (same seed = same result)" $ do
+    let opts1 = generateEnchantments 10 42
+        opts2 = generateEnchantments 10 42
+    opts1 `shouldBe` opts2
+
+  it "generateEnchantments with different seeds produces different results" $ do
+    let opts1 = generateEnchantments 10 42
+        opts2 = generateEnchantments 10 99
+    opts1 `shouldNotBe` opts2
+
+  it "generateEnchantments levels are within max bounds" $ do
+    let options = generateEnchantments 30 42
+    mapM_ (\(etype, lvl, _cost) -> do
+      lvl `shouldSatisfy` (> 0)
+      lvl `shouldSatisfy` (<= enchantmentMaxLevel etype)
+      ) options
+
+  it "generateEnchantments costs are positive" $ do
+    let options = generateEnchantments 10 42
+    mapM_ (\(_etype, _lvl, cost) ->
+      cost `shouldSatisfy` (> 0)
+      ) options
+
+  -- Enchantment map
+  it "new enchantment map is empty" $ do
+    em <- newEnchantmentMap
+    enchants <- getEnchantments em 0
+    enchants `shouldBe` []
+
+  it "setEnchantments and getEnchantments roundtrip" $ do
+    em <- newEnchantmentMap
+    let enchants = [Enchantment Sharpness 3, Enchantment Unbreaking 2]
+    setEnchantments em 0 enchants
+    result <- getEnchantments em 0
+    result `shouldBe` enchants
+
+  it "clearEnchantments removes enchantments" $ do
+    em <- newEnchantmentMap
+    setEnchantments em 0 [Enchantment Sharpness 1]
+    clearEnchantments em 0
+    result <- getEnchantments em 0
+    result `shouldBe` []
+
+  it "different slots are independent" $ do
+    em <- newEnchantmentMap
+    let e1 = [Enchantment Sharpness 3]
+        e2 = [Enchantment Protection 4]
+    setEnchantments em 0 e1
+    setEnchantments em 5 e2
+    r0 <- getEnchantments em 0
+    r5 <- getEnchantments em 5
+    r0 `shouldBe` e1
+    r5 `shouldBe` e2
+
+  -- Apply enchantment
+  it "applyEnchantment returns a description" $ do
+    let desc = applyEnchantment (Enchantment Sharpness 3)
+    desc `shouldSatisfy` (not . null)

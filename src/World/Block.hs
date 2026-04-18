@@ -73,6 +73,7 @@ data BlockType
   | PistonHead
   | Rail
   | Dispenser
+  | EnchantingTable
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -162,6 +163,7 @@ blockProperties = \case
   PistonHead   -> BlockProperties True  False 0  0.5
   Rail         -> BlockProperties False True  0  0.7
   Dispenser    -> BlockProperties True  False 0  3.5
+  EnchantingTable -> BlockProperties True  False 7  5.0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -273,3 +275,7 @@ blockFaceTexCoords blockType face = case blockType of
   Dispenser   -> case face of
     FaceSouth  -> V2 9 5  -- front face with opening
     _          -> V2 14 3 -- stone-like sides (reuse furnace top)
+  EnchantingTable -> case face of
+    FaceTop    -> V2 5 5   -- enchanting table top (diamond-studded)
+    FaceBottom -> V2 11 1  -- obsidian bottom
+    _          -> V2 6 5   -- enchanting table side

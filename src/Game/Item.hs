@@ -225,6 +225,7 @@ blockDrops = \case
   PistonHead  -> []
   Rail        -> [(BlockItem Rail, 1)]
   Dispenser   -> [(BlockItem Dispenser, 1)]
+  EnchantingTable -> [(BlockItem EnchantingTable, 1)]
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
@@ -283,6 +284,7 @@ blockPreferredTool = \case
   Piston      -> Just Pickaxe
   Rail        -> Just Pickaxe
   Dispenser   -> Just Pickaxe
+  EnchantingTable -> Just Pickaxe
   _           -> Nothing
 
 -- | How much hunger a food type restores
