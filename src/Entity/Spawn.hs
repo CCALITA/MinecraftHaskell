@@ -146,7 +146,7 @@ randomHostileMob rngRef = do
 randomPassiveMob :: IORef StdGen -> IO MobType
 randomPassiveMob rngRef = do
   gen <- readIORef rngRef
-  let passives = [Pig, Cow, Sheep, Chicken]
+  let passives = [Pig, Cow, Sheep, Chicken, Wolf]
       (idx, gen') = randomR (0, length passives - 1) gen
   writeIORef rngRef gen'
   pure $ passives !! idx
@@ -156,4 +156,4 @@ hostileTags :: [String]
 hostileTags = ["Zombie", "Skeleton", "Creeper", "Spider"]
 
 passiveTags :: [String]
-passiveTags = ["Pig", "Cow", "Sheep", "Chicken"]
+passiveTags = ["Pig", "Cow", "Sheep", "Chicken", "Wolf", "TamedWolf", "TamedWolfSitting"]
