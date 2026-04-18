@@ -82,6 +82,7 @@ library
     Game.DroppedItem
     Game.Particle
     Entity.ECS
+    Entity.Component
     Entity.Mob
     Entity.Pathfinding
     Entity.Spawn

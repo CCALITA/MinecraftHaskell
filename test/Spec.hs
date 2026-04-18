@@ -19,7 +19,8 @@ import Game.BlockEntity
 import Game.Furnace
 import World.Weather
 import Entity.ECS
-import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), mobInfo)
+import Entity.Component
+import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), AIState(..), mobInfo)
 import World.Redstone
 import World.BlockRegistry
 
@@ -81,6 +82,7 @@ main = hspec $ do
   blockRegistrySpec
   dimensionSpec
   screenRegistrySpec
+  componentSpec
 
 -- =========================================================================
 -- Block
@@ -2938,6 +2940,7 @@ dimensionSpec = describe "World.Dimension" $ do
       ]
     any (== Torch) results `shouldBe` True
 
+<<<<<<< HEAD
   describe "Game.Config" $ do
     it "defaultConfig has render distance 4" $ do
       cfgRenderDistance defaultConfig `shouldBe` 4
@@ -3050,3 +3053,86 @@ screenRegistrySpec = describe "UI.Screen" $ do
     case result of
       Just sd -> sdRender sd undefined `shouldBe` [1.0, 2.0, 3.0]
       Nothing -> expectationFailure "Expected test screen"
+
+-- =========================================================================
+-- Entity.Component
+-- =========================================================================
+componentSpec :: Spec
+componentSpec = describe "Entity.Component" $ do
+  it "newComponentMap starts empty" $ do
+    ref <- newComponentMap
+    comps <- getComponents ref 1
+    comps `shouldBe` []
+
+  it "addComponent stores a single component" $ do
+    ref <- newComponentMap
+    addComponent ref 1 (HealthComp 20 20)
+    comps <- getComponents ref 1
+    comps `shouldBe` [HealthComp 20 20]
+
+  it "addComponent appends multiple components to same entity" $ do
+    ref <- newComponentMap
+    addComponent ref 1 (HealthComp 10 20)
+    addComponent ref 1 (TamedComp False)
+    comps <- getComponents ref 1
+    comps `shouldBe` [HealthComp 10 20, TamedComp False]
+
+  it "addComponent keeps entities independent" $ do
+    ref <- newComponentMap
+    addComponent ref 1 (HealthComp 10 20)
+    addComponent ref 2 (PaintingComp 90)
+    c1 <- getComponents ref 1
+    c2 <- getComponents ref 2
+    c1 `shouldBe` [HealthComp 10 20]
+    c2 `shouldBe` [PaintingComp 90]
+
+  it "removeComponent drops matching component" $ do
+    ref <- newComponentMap
+    addComponent ref 1 (HealthComp 10 20)
+    addComponent ref 1 (TamedComp True)
+    removeComponent ref 1 (\case HealthComp {} -> True; _ -> False)
+    comps <- getComponents ref 1
+    comps `shouldBe` [TamedComp True]
+
+  it "removeComponent is no-op when no match" $ do
+    ref <- newComponentMap
+    addComponent ref 1 (TamedComp False)
+    removeComponent ref 1 (\case HealthComp {} -> True; _ -> False)
+    comps <- getComponents ref 1
+    comps `shouldBe` [TamedComp False]
+
+  it "removeEntity clears all components for an entity" $ do
+    ref <- newComponentMap
+    addComponent ref 1 (HealthComp 5 10)
+    addComponent ref 1 (AIComp (AIIdle 3.0))
+    removeEntity ref 1
+    comps <- getComponents ref 1
+    comps `shouldBe` []
+
+  it "getHealth returns Just for HealthComp" $ do
+    getHealth [TamedComp False, HealthComp 7 20] `shouldBe` Just (7, 20)
+
+  it "getHealth returns Nothing when absent" $ do
+    getHealth [TamedComp True, PaintingComp 45] `shouldBe` Nothing
+
+  it "isTamed returns True for TamedComp True" $ do
+    isTamed [HealthComp 10 10, TamedComp True] `shouldBe` True
+
+  it "isTamed returns False when absent" $ do
+    isTamed [HealthComp 10 10] `shouldBe` False
+
+  it "isMountOccupied detects occupied mount" $ do
+    isMountOccupied [MountableComp True] `shouldBe` True
+
+  it "isMountOccupied returns False when unoccupied" $ do
+    isMountOccupied [MountableComp False] `shouldBe` False
+
+  it "getProjectile extracts damage and age" $ do
+    getProjectile [ProjectileComp 5.0 1.2] `shouldBe` Just (5.0, 1.2)
+
+  it "getPaintingYaw extracts yaw" $ do
+    getPaintingYaw [PaintingComp 270] `shouldBe` Just 270
+
+  it "getAI extracts AIState" $ do
+    let st = AIIdle 2.5
+    getAI [HealthComp 10 10, AIComp st] `shouldBe` Just st
