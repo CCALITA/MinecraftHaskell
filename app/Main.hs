@@ -248,6 +248,9 @@ main = do
     -- Fishing rod state: Nothing = not fishing, Just (bobberPos, timer, ready)
     fishingStateRef <- newIORef (Nothing :: Maybe (V3 Float, Float, Bool))
 
+    -- Boat riding state (entity ID of boat currently ridden)
+    ridingEntityRef <- newIORef (Nothing :: Maybe Int)
+
     -- Give player some starting blocks (only when no saved inventory)
     case mSavedData of
       Just _  -> pure ()  -- inventory already restored from save
@@ -379,6 +382,7 @@ main = do
             writeIORef projectilesRef []
             writeIORef skeletonCooldownRef HM.empty
             writeIORef fishingStateRef Nothing
+            writeIORef ridingEntityRef Nothing
             writeIORef spawnCooldownRef 0.0
             writeIORef spawnPointRef spawnPos
             writeIORef sleepMessageRef Nothing
@@ -646,23 +650,31 @@ main = do
           -- Cancel eating on RMB release
           when (button == GLFW.MouseButton'2 && action == GLFW.MouseButtonState'Released)
             cancelEating
-          -- Melee attack: when LMB pressed and holding a sword, damage nearest entity
+          -- Melee attack / boat breaking: LMB pressed
           when (button == GLFW.MouseButton'1 && action == GLFW.MouseButtonState'Pressed) $ do
             inv <- readIORef inventoryRef
-            case selectedItem inv of
-              Just (ItemStack (ToolItem Sword material _) _) -> do
-                player <- readIORef playerRef
-                let attackDmg = tiAttackDamage (toolInfo material)
-                nearby <- entitiesInRange entityWorld (plPos player) 3.0
-                case nearby of
-                  [] -> pure ()
-                  _  -> do
-                    let closest = foldr1 (\a b -> if distance (entPosition a) (plPos player)
-                                                    < distance (entPosition b) (plPos player)
-                                                  then a else b) nearby
-                    updateEntity entityWorld (entId closest) (\e -> damageEntity e attackDmg)
-                    putStrLn $ "Attacked " ++ entTag closest ++ " for " ++ show attackDmg ++ " damage!"
-              _ -> pure ()
+            player <- readIORef playerRef
+            nearby <- entitiesInRange entityWorld (plPos player) 3.0
+            let boats = filter (\e -> entTag e == "Boat") nearby
+            case boats of
+              (_:_) -> do
+                let closestBoat = closestTo (plPos player) boats
+                riding <- readIORef ridingEntityRef
+                when (riding == Just (entId closestBoat)) $
+                  writeIORef ridingEntityRef Nothing
+                destroyEntity entityWorld (entId closestBoat)
+                spawnDrop droppedItems BoatItem 1 (entPosition closestBoat)
+                putStrLn $ "Broke boat at " ++ show (entPosition closestBoat)
+              [] -> case selectedItem inv of
+                Just (ItemStack (ToolItem Sword material _) _) -> do
+                  let attackDmg = tiAttackDamage (toolInfo material)
+                  case nearby of
+                    [] -> pure ()
+                    _  -> do
+                      let closest = closestTo (plPos player) nearby
+                      updateEntity entityWorld (entId closest) (\e -> damageEntity e attackDmg)
+                      putStrLn $ "Attacked " ++ entTag closest ++ " for " ++ show attackDmg ++ " damage!"
+                _ -> pure ()
 
           -- Stop mining on LMB release (Playing mode only)
           when (button == GLFW.MouseButton'1 && action == GLFW.MouseButtonState'Released) $
@@ -717,9 +729,7 @@ main = do
                   case sheep of
                     [] -> pure ()
                     _  -> do
-                      let closest = foldr1 (\a b -> if distance (entPosition a) (plPos player)
-                                                      < distance (entPosition b) (plPos player)
-                                                    then a else b) sheep
+                      let closest = closestTo (plPos player) sheep
                       -- Drop 1-3 wool blocks
                       woolCount <- randomRIO (1 :: Int, 3)
                       spawnDrop droppedItems (BlockItem Wool) woolCount (entPosition closest)
@@ -823,6 +833,21 @@ main = do
                           putStrLn $ "Cast fishing line! Wait time: " ++ show (round timer :: Int) ++ "s"
                         Nothing -> pure ()
                 _ -> pure ()
+
+            -- RMB: interact with boat entity (ride)
+            when (button == GLFW.MouseButton'2) $ do
+              riding <- readIORef ridingEntityRef
+              case riding of
+                Just _ -> pure ()
+                Nothing -> do
+                  nearbyBoats <- entitiesInRange entityWorld (plPos player) 3.0
+                  let boats = filter (\e -> entTag e == "Boat") nearbyBoats
+                  case boats of
+                    (_:_) -> do
+                      let closestBoat = closestTo (plPos player) boats
+                      writeIORef ridingEntityRef (Just (entId closestBoat))
+                      putStrLn $ "Mounted boat (entity " ++ show (entId closestBoat) ++ ")"
+                    [] -> pure ()
 
             mHit <- raycastBlock blockQueryCb eyePos dir maxReach
             case mHit of
@@ -956,6 +981,18 @@ main = do
                                       let V3 fpx _ fpz = firePos
                                       rebuildChunkWithNeighbors world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef fpx fpz
                                       putStrLn $ "Placed fire at " ++ show firePos
+                            Just (ItemStack BoatItem _) -> do
+                              when (hitBlock == Water) $ do
+                                let sel = invSelected inv
+                                    boatPos = V3 (fromIntegral bx + 0.5) (fromIntegral by + 1.0) (fromIntegral bz + 0.5) :: V3 Float
+                                case getSlot inv sel of
+                                  Just (ItemStack BoatItem cnt) ->
+                                    if cnt <= 1
+                                      then writeIORef inventoryRef (setSlot inv sel Nothing)
+                                      else writeIORef inventoryRef (setSlot inv sel (Just (ItemStack BoatItem (cnt - 1))))
+                                  _ -> pure ()
+                                _ <- spawnEntity entityWorld boatPos 1.0 "Boat"
+                                putStrLn $ "Placed boat at " ++ show boatPos
                             Just (ItemStack item _) -> case itemToBlock item of
                               Nothing -> pure ()
                               Just bt -> do
@@ -1183,6 +1220,53 @@ main = do
                             else input
               playerLoop input' blockQuery waterQuery ladderQuery accumRef accum' playerRef
             healthAfter <- plHealth <$> readIORef playerRef
+
+            -- Boat riding: move boat and snap player to boat position
+            when (gameMode == Playing) $ do
+              mRiding <- readIORef ridingEntityRef
+              case mRiding of
+                Nothing -> pure ()
+                Just boatEid -> do
+                  mBoat <- getEntity entityWorld boatEid
+                  case mBoat of
+                    Nothing -> writeIORef ridingEntityRef Nothing
+                    Just boat -> do
+                      if piSneak input
+                        then do
+                          let V3 bpx bpy bpz = entPosition boat
+                              dismountPos = V3 (bpx + 1.0) bpy bpz
+                          modifyIORef' playerRef (\p -> p { plPos = dismountPos, plVelocity = V3 0 0 0 })
+                          writeIORef ridingEntityRef Nothing
+                          putStrLn "Dismounted boat"
+                        else do
+                          player' <- readIORef playerRef
+                          let yawR   = plYaw player' * pi / 180
+                              front  = normalize $ V3 (sin yawR) 0 (cos yawR)
+                              right  = normalize $ front `cross` V3 0 1 0
+                              boatSpeed = 5.0 :: Float
+                              moveDir = V3 0 0 0
+                                + (if piForward  input then front  else V3 0 0 0)
+                                + (if piBackward input then -front else V3 0 0 0)
+                                + (if piLeft     input then -right else V3 0 0 0)
+                                + (if piRight    input then right  else V3 0 0 0)
+                              normalizedDir = if norm moveDir > 0.001 then normalize moveDir else V3 0 0 0
+                              hVel = normalizedDir ^* boatSpeed
+                              V3 hvx _ hvz = hVel
+                              V3 bpx bpy bpz = entPosition boat
+                              newBpx = bpx + hvx * dt
+                              newBpz = bpz + hvz * dt
+                          let blockX = floor newBpx :: Int
+                              blockY = floor bpy :: Int
+                              blockZ = floor newBpz :: Int
+                          blockBelow <- worldGetBlock world (V3 blockX (blockY - 1) blockZ)
+                          blockAt    <- worldGetBlock world (V3 blockX blockY blockZ)
+                          let newBpy
+                                | blockAt == Water    = fromIntegral blockY + 1.0
+                                | blockBelow == Water = bpy
+                                | otherwise           = bpy - 9.8 * dt
+                              newBoatPos = V3 newBpx newBpy newBpz
+                          updateEntity entityWorld boatEid (\e -> e { entPosition = newBoatPos })
+                          modifyIORef' playerRef (\p -> p { plPos = newBoatPos, plVelocity = V3 0 0 0, plFallDist = 0 })
 
             -- Flash screen on fall/drowning/starvation/void damage
             when (healthAfter < healthBefore && healthAfter > 0)
@@ -1970,6 +2054,10 @@ dirFromPlayer player =
   let yawR   = plYaw player * pi / 180
       pitchR = plPitch player * pi / 180
   in normalize $ V3 (sin yawR * cos pitchR) (sin pitchR) (cos yawR * cos pitchR)
+
+-- | Find the entity closest to a given position (partial: requires non-empty list)
+closestTo :: V3 Float -> [Entity] -> Entity
+closestTo pos = foldr1 (\a b -> if distance (entPosition a) pos < distance (entPosition b) pos then a else b)
 
 -- | Show a float with a given number of decimal places
 showFloatN :: Int -> Float -> String
@@ -3099,6 +3187,7 @@ itemColor ClockItem = (0.9, 0.8, 0.3, 1.0)
 itemColor (FishingRodItem _) = (0.55, 0.35, 0.15, 1.0)
 itemColor GlassBottleItem = (0.7, 0.85, 0.95, 0.6)
 itemColor (PotionItem pt) = potionColor pt
+itemColor BoatItem = (0.6, 0.4, 0.2, 1.0)
 
 -- | 3x3 mini-icon for item (row, col, color) — used in hotbar slot rendering
 itemMiniIcon :: Item -> [(Int, Int, (Float, Float, Float, Float))]
@@ -3192,6 +3281,9 @@ itemMiniIcon GlassBottleItem =
 itemMiniIcon (PotionItem pt) =
   [(0,0,gl),(0,2,gl), (1,0,gl),(1,1,c),(1,2,gl), (2,1,c)]
   where gl = itemColor GlassBottleItem; c = potionColor pt
+itemMiniIcon BoatItem =
+  [(1,0,w),(1,2,w), (2,0,w),(2,1,w),(2,2,w)]
+  where w = (0.6,0.4,0.2,1)
 itemMiniIcon (BlockItem bt) = blockMiniIcon bt
   where
     fill c = [(r,col,c) | r <- [0..2], col <- [0..2]]

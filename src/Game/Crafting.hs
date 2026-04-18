@@ -316,7 +316,7 @@ allRecipes =
       , rcResult  = GlassBottleItem
       , rcCount   = 3
       }
-  ] ++ toolRecipes ++ shearsRecipe ++ compassClockRecipes ++ fishingRodRecipe
+  ] ++ toolRecipes ++ shearsRecipe ++ compassClockRecipes ++ fishingRodRecipe ++ boatRecipe
 
 -- | Shears crafting recipe: 2 iron ingots diagonal
 shearsRecipe :: [Recipe]
@@ -347,6 +347,14 @@ fishingRodRecipe =
            ,[Nothing,       ji StickItem,  ji (MaterialItem StringMat)]
            ,[ji StickItem,  Nothing,       ji (MaterialItem StringMat)]]
            (FishingRodItem 64) 1
+  ]
+
+-- | Boat crafting recipe: 5 oak planks in U-shape
+boatRecipe :: [Recipe]
+boatRecipe =
+  [ Recipe [[bi OakPlanks, Nothing,      bi OakPlanks]
+           ,[bi OakPlanks, bi OakPlanks, bi OakPlanks]]
+           BoatItem 1
   ]
 
 -- | Helper to create a tool item with full durability

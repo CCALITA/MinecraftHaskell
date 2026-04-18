@@ -92,6 +92,7 @@ data Item
   | FishingRodItem !Int     -- remaining durability (max 64)
   | GlassBottleItem
   | PotionItem !PotionType
+  | BoatItem                -- placeable boat for water travel
   deriving stock (Show, Eq)
 
 -- | Tool properties
@@ -137,6 +138,7 @@ itemToBlock ClockItem = Nothing
 itemToBlock (FishingRodItem _) = Nothing
 itemToBlock GlassBottleItem  = Nothing
 itemToBlock (PotionItem _)   = Nothing
+itemToBlock BoatItem = Nothing
 
 -- | Is this a placeable block item?
 isBlockItem :: Item -> Bool
@@ -158,6 +160,7 @@ itemStackLimit ClockItem = 1
 itemStackLimit (FishingRodItem _) = 1
 itemStackLimit GlassBottleItem  = 16
 itemStackLimit (PotionItem _)   = 1
+itemStackLimit BoatItem = 1
 
 -- | What items a block drops when broken. Returns (item, count).
 --   Some blocks require a minimum harvest level to drop anything.
@@ -449,6 +452,7 @@ instance Binary Item where
   put (FishingRodItem dur) = put (10 :: Word8) >> put dur
   put GlassBottleItem = put (11 :: Word8)
   put (PotionItem pt) = put (12 :: Word8) >> put pt
+  put BoatItem = put (13 :: Word8)
   get = do
     tag <- get :: Get Word8
     case tag of
@@ -465,4 +469,5 @@ instance Binary Item where
       10 -> FishingRodItem <$> get
       11 -> pure GlassBottleItem
       12 -> PotionItem <$> get
+      13 -> pure BoatItem
       _ -> fail "Unknown Item tag"
