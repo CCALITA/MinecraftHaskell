@@ -69,6 +69,8 @@ data BlockType
   | SugarCane
   | StoneSlab
   | OakSlab
+  | Piston
+  | PistonHead
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -154,6 +156,8 @@ blockProperties = \case
   SugarCane    -> BlockProperties False True  0  0
   StoneSlab    -> BlockProperties True  True  0  1.5
   OakSlab      -> BlockProperties True  True  0  2.0
+  Piston       -> BlockProperties True  False 0  0.5
+  PistonHead   -> BlockProperties True  False 0  0.5
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -256,3 +260,8 @@ blockFaceTexCoords blockType face = case blockType of
   SugarCane   -> V2 4 5
   StoneSlab   -> V2 1 0
   OakSlab     -> V2 4 0
+  Piston      -> case face of
+    FaceTop    -> V2 5 5   -- stone face on top
+    FaceBottom -> V2 4 0   -- wooden base on bottom
+    _          -> V2 6 5   -- wooden side
+  PistonHead  -> V2 7 5    -- flat wooden panel
