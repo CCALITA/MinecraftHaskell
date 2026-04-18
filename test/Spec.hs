@@ -22,6 +22,7 @@ import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), mobInfo)
 import World.Redstone
 
 import Game.Enchanting
+import Game.Command
 import Game.Physics (BlockHeightQuery)
 
 import Data.Binary (encode, decode)
@@ -64,6 +65,7 @@ main = hspec $ do
   dispenserBlockSpec
   enchantingTableSpec
   enchantingSystemSpec
+  commandSpec
 
 -- =========================================================================
 -- Block
@@ -2050,3 +2052,150 @@ enchantingSystemSpec = describe "Game.Enchanting" $ do
   it "applyEnchantment returns a description" $ do
     let desc = applyEnchantment (Enchantment Sharpness 3)
     desc `shouldSatisfy` (not . null)
+
+-- =========================================================================
+-- Command parsing
+-- =========================================================================
+commandSpec :: Spec
+commandSpec = describe "Game.Command" $ do
+  -- /give
+  it "parses /give with item and count" $ do
+    parseCommand "/give stone 64" `shouldBe` Just (CmdGive "stone" 64)
+
+  it "parses /give with item only (defaults to 1)" $ do
+    parseCommand "/give diamond" `shouldBe` Just (CmdGive "diamond" 1)
+
+  it "give normalizes item name to lowercase" $ do
+    parseCommand "/give Stone 10" `shouldBe` Just (CmdGive "stone" 10)
+
+  it "give rejects zero count" $ do
+    parseCommand "/give stone 0" `shouldBe` Nothing
+
+  it "give rejects negative count" $ do
+    parseCommand "/give stone -5" `shouldBe` Nothing
+
+  it "give rejects missing item" $ do
+    parseCommand "/give" `shouldBe` Nothing
+
+  it "give rejects too many arguments" $ do
+    parseCommand "/give stone 64 extra" `shouldBe` Nothing
+
+  -- /tp
+  it "parses /tp with three coordinates" $ do
+    parseCommand "/tp 100 65 200" `shouldBe` Just (CmdTeleport 100 65 200)
+
+  it "parses /tp with floating point coordinates" $ do
+    parseCommand "/tp 1.5 64.0 -3.2" `shouldBe` Just (CmdTeleport 1.5 64.0 (-3.2))
+
+  it "parses /teleport as alias for /tp" $ do
+    parseCommand "/teleport 10 20 30" `shouldBe` Just (CmdTeleport 10 20 30)
+
+  it "tp rejects too few coordinates" $ do
+    parseCommand "/tp 100 65" `shouldBe` Nothing
+
+  it "tp rejects non-numeric coordinates" $ do
+    parseCommand "/tp abc 65 200" `shouldBe` Nothing
+
+  -- /time
+  it "parses /time set day" $ do
+    parseCommand "/time set day" `shouldBe` Just (CmdTime "day")
+
+  it "parses /time set night" $ do
+    parseCommand "/time set night" `shouldBe` Just (CmdTime "night")
+
+  it "parses /time with direct value" $ do
+    parseCommand "/time day" `shouldBe` Just (CmdTime "day")
+
+  it "time normalizes value to lowercase" $ do
+    parseCommand "/time set DAY" `shouldBe` Just (CmdTime "day")
+
+  it "time rejects no arguments" $ do
+    parseCommand "/time" `shouldBe` Nothing
+
+  -- /weather
+  it "parses /weather clear" $ do
+    parseCommand "/weather clear" `shouldBe` Just (CmdWeather "clear")
+
+  it "parses /weather rain" $ do
+    parseCommand "/weather rain" `shouldBe` Just (CmdWeather "rain")
+
+  it "weather normalizes to lowercase" $ do
+    parseCommand "/weather RAIN" `shouldBe` Just (CmdWeather "rain")
+
+  it "weather rejects no arguments" $ do
+    parseCommand "/weather" `shouldBe` Nothing
+
+  -- /gamemode
+  it "parses /gamemode creative" $ do
+    parseCommand "/gamemode creative" `shouldBe` Just (CmdGamemode "creative")
+
+  it "parses /gamemode survival" $ do
+    parseCommand "/gamemode survival" `shouldBe` Just (CmdGamemode "survival")
+
+  it "gamemode normalizes to lowercase" $ do
+    parseCommand "/gamemode Creative" `shouldBe` Just (CmdGamemode "creative")
+
+  it "gamemode rejects no arguments" $ do
+    parseCommand "/gamemode" `shouldBe` Nothing
+
+  -- /kill
+  it "parses /kill" $ do
+    parseCommand "/kill" `shouldBe` Just CmdKill
+
+  it "kill rejects extra arguments" $ do
+    parseCommand "/kill player" `shouldBe` Nothing
+
+  -- /seed
+  it "parses /seed" $ do
+    parseCommand "/seed" `shouldBe` Just CmdSeed
+
+  it "seed rejects extra arguments" $ do
+    parseCommand "/seed 42" `shouldBe` Nothing
+
+  -- /help
+  it "parses /help" $ do
+    parseCommand "/help" `shouldBe` Just CmdHelp
+
+  it "help rejects extra arguments" $ do
+    parseCommand "/help give" `shouldBe` Nothing
+
+  -- /summon
+  it "parses /summon zombie" $ do
+    parseCommand "/summon zombie" `shouldBe` Just (CmdSpawnMob "zombie")
+
+  it "summon normalizes to lowercase" $ do
+    parseCommand "/summon Zombie" `shouldBe` Just (CmdSpawnMob "zombie")
+
+  it "summon rejects no arguments" $ do
+    parseCommand "/summon" `shouldBe` Nothing
+
+  -- Edge cases
+  it "returns Nothing for empty string" $ do
+    parseCommand "" `shouldBe` Nothing
+
+  it "returns Nothing for non-command text" $ do
+    parseCommand "hello world" `shouldBe` Nothing
+
+  it "returns Nothing for unknown command" $ do
+    parseCommand "/unknown" `shouldBe` Nothing
+
+  it "handles leading whitespace" $ do
+    parseCommand "  /help" `shouldBe` Just CmdHelp
+
+  it "command names are case-insensitive" $ do
+    parseCommand "/GIVE stone 1" `shouldBe` Just (CmdGive "stone" 1)
+    parseCommand "/TP 0 64 0" `shouldBe` Just (CmdTeleport 0 64 0)
+    parseCommand "/Kill" `shouldBe` Just CmdKill
+
+  -- commandHelp and allCommands
+  it "commandHelp has entries for all command types" $ do
+    length commandHelp `shouldBe` 9
+
+  it "allCommands contains expected commands" $ do
+    "/give" `elem` allCommands `shouldBe` True
+    "/tp" `elem` allCommands `shouldBe` True
+    "/help" `elem` allCommands `shouldBe` True
+    "/summon" `elem` allCommands `shouldBe` True
+
+  it "allCommands includes teleport alias" $ do
+    "/teleport" `elem` allCommands `shouldBe` True
