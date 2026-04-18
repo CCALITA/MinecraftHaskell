@@ -301,7 +301,7 @@ allRecipes =
       , rcResult  = BlockItem OakSlab
       , rcCount   = 6
       }
-  ] ++ toolRecipes ++ shearsRecipe
+  ] ++ toolRecipes ++ shearsRecipe ++ compassClockRecipes
 
 -- | Shears crafting recipe: 2 iron ingots diagonal
 shearsRecipe :: [Recipe]
@@ -309,6 +309,20 @@ shearsRecipe =
   [ Recipe [[Nothing, ji (MaterialItem IronIngot)]
            ,[ji (MaterialItem IronIngot), Nothing]]
            (ShearsItem 238) 1
+  ]
+
+-- | Compass: 4 iron ingots (top/bottom/left/right) + 1 redstone dust (center)
+-- | Clock: 4 gold ingots (top/bottom/left/right) + 1 redstone dust (center)
+compassClockRecipes :: [Recipe]
+compassClockRecipes =
+  [ Recipe [[Nothing,               ji (MaterialItem IronIngot), Nothing]
+           ,[ji (MaterialItem IronIngot), bi RedstoneDust,            ji (MaterialItem IronIngot)]
+           ,[Nothing,               ji (MaterialItem IronIngot), Nothing]]
+           CompassItem 1
+  , Recipe [[Nothing,               ji (MaterialItem GoldIngot), Nothing]
+           ,[ji (MaterialItem GoldIngot), bi RedstoneDust,            ji (MaterialItem GoldIngot)]
+           ,[Nothing,               ji (MaterialItem GoldIngot), Nothing]]
+           ClockItem 1
   ]
 
 -- | Helper to create a tool item with full durability

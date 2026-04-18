@@ -1648,7 +1648,8 @@ main = do
             when (damageFlash > 0) $
               writeIORef damageFlashRef (max 0 (damageFlash - dt))
             let particleVerts = if mode == Playing then renderParticles particles vp else []
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg damageFlash mouseNdcX mouseNdcY
+            spawnPos <- readIORef spawnPointRef
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -2041,12 +2042,12 @@ checkLogNearby world (V3 wx wy wz) radius = go offsets
 -- debugInfo: Just DebugInfo when F3 overlay is active
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- showSleepMsg: True when "You can only sleep at night" should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Bool -> Float -> Float -> Float -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv furnaceState debugInfo targetInfo showSleepMsg damageFlash mouseX mouseY = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Bool -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv furnaceState debugInfo targetInfo showSleepMsg damageFlash mouseX mouseY playerPos spawnPos dayNight = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
-    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts
     ChestOpen     -> chestScreenVerts ++ cursorVerts
@@ -2286,6 +2287,29 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
     damageFlashVerts
       | damageFlash > 0 = quad (-1) (-1) 1 1 (0.8, 0.0, 0.0, damageFlash * 0.5)
       | otherwise = []
+
+    -- Compass/clock info text above hotbar when selected
+    compassClockVerts = case getSlot inv sel of
+      Just (ItemStack CompassItem _) ->
+        let V3 px _ pz = playerPos
+            V3 spx _ spz = spawnPos
+            dx = spx - px
+            dz = spz - pz
+            dir
+              | abs dx < 1 && abs dz < 1 = "AT SPAWN"
+              | abs dx >= abs dz && dx > 0 = "SPAWN: E"
+              | abs dx >= abs dz           = "SPAWN: W"
+              | dz > 0                     = "SPAWN: S"
+              | otherwise                  = "SPAWN: N"
+            infoY = hotbarY - 0.09
+        in renderTextCentered infoY 0.8 (0.9, 0.3, 0.3, 1) dir
+      Just (ItemStack ClockItem _) ->
+        let tod = getTimeOfDay dayNight
+            t = dncTime dayNight
+            todStr = show tod ++ " (" ++ showF2 t ++ ")"
+            infoY = hotbarY - 0.09
+        in renderTextCentered infoY 0.8 (0.9, 0.8, 0.3, 1) todStr
+      _ -> []
 
     -- Death screen: red overlay, "YOU DIED" text, score, and respawn button
     deathScreenVerts =
@@ -2763,6 +2787,8 @@ itemColor (ArmorItem _ mat _) = case mat of
   DiamondArmor -> (0.4, 0.9, 0.9, 1.0)
 itemColor (ShearsItem _) = (0.7, 0.7, 0.7, 1.0)
 itemColor (FlintAndSteelItem _) = (0.5, 0.5, 0.5, 1.0)
+itemColor CompassItem = (0.7, 0.3, 0.3, 1.0)
+itemColor ClockItem = (0.9, 0.8, 0.3, 1.0)
 
 -- | 3x3 mini-icon for item (row, col, color) — used in hotbar slot rendering
 itemMiniIcon :: Item -> [(Int, Int, (Float, Float, Float, Float))]
@@ -2836,6 +2862,12 @@ itemMiniIcon (ShearsItem _) =
 itemMiniIcon (FlintAndSteelItem _) =
   [(0,2,fl), (1,1,g),(1,2,fl), (2,0,g),(2,1,g)]
   where g = (0.5,0.5,0.5,1); fl = (1.0,0.6,0.0,1)
+itemMiniIcon CompassItem =
+  [(0,1,r), (1,0,g),(1,1,g),(1,2,g), (2,1,g)]
+  where r = (0.9,0.2,0.2,1); g = (0.7,0.7,0.7,1)
+itemMiniIcon ClockItem =
+  [(0,0,g),(0,1,g),(0,2,g), (1,0,g),(1,1,h),(1,2,g), (2,0,g),(2,1,g),(2,2,g)]
+  where g = (0.9,0.8,0.3,1); h = (0.3,0.3,0.3,1)
 itemMiniIcon (BlockItem bt) = blockMiniIcon bt
   where
     fill c = [(r,col,c) | r <- [0..2], col <- [0..2]]
