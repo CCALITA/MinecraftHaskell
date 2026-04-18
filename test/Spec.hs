@@ -56,6 +56,7 @@ main = hspec $ do
   compassClockSpec
   wolfMobSpec
   fishingRodSpec
+  potionItemSpec
 
 -- =========================================================================
 -- Block
@@ -1530,3 +1531,89 @@ fishingRodSpec = describe "Fishing rod" $ do
     foodName CookedFish `shouldBe` "Cooked Fish"
     foodName RawSalmon `shouldBe` "Raw Salmon"
     foodName CookedSalmon `shouldBe` "Cooked Salmon"
+
+-- =========================================================================
+-- Potion items
+-- =========================================================================
+potionItemSpec :: Spec
+potionItemSpec = describe "Potion items (GlassBottle & Potions)" $ do
+  -- GlassBottleItem properties
+  it "GlassBottleItem is not a block item" $ do
+    isBlockItem GlassBottleItem `shouldBe` False
+
+  it "GlassBottleItem does not convert to block" $ do
+    itemToBlock GlassBottleItem `shouldBe` Nothing
+
+  it "GlassBottleItem stacks to 16" $ do
+    itemStackLimit GlassBottleItem `shouldBe` 16
+
+  -- PotionItem properties
+  it "PotionItem is not a block item" $ do
+    isBlockItem (PotionItem WaterBottle) `shouldBe` False
+
+  it "PotionItem does not convert to block" $ do
+    itemToBlock (PotionItem HealingPotion) `shouldBe` Nothing
+
+  it "PotionItem stacks to 1" $ do
+    itemStackLimit (PotionItem PoisonPotion) `shouldBe` 1
+    itemStackLimit (PotionItem SpeedPotion) `shouldBe` 1
+
+  -- PotionType coverage
+  it "all PotionTypes have names" $ do
+    let allPotions = [minBound .. maxBound] :: [PotionType]
+    mapM_ (\pt -> length (potionName pt) `shouldSatisfy` (> 0)) allPotions
+
+  it "all PotionTypes have valid colors" $ do
+    let allPotions = [minBound .. maxBound] :: [PotionType]
+    mapM_ (\pt -> let (r, g, b, a) = potionColor pt
+                  in do r `shouldSatisfy` (>= 0); g `shouldSatisfy` (>= 0)
+                        b `shouldSatisfy` (>= 0); a `shouldSatisfy` (> 0)) allPotions
+
+  it "potionName returns expected names" $ do
+    potionName WaterBottle `shouldBe` "Water Bottle"
+    potionName HealingPotion `shouldBe` "Healing Potion"
+    potionName PoisonPotion `shouldBe` "Poison Potion"
+    potionName SpeedPotion `shouldBe` "Speed Potion"
+    potionName AwkwardPotion `shouldBe` "Awkward Potion"
+
+  -- Binary roundtrip
+  it "GlassBottleItem roundtrips through Binary" $ do
+    decode (encode GlassBottleItem) `shouldBe` GlassBottleItem
+
+  it "PotionItem WaterBottle roundtrips through Binary" $ do
+    let item = PotionItem WaterBottle
+    decode (encode item) `shouldBe` item
+
+  it "PotionItem HealingPotion roundtrips through Binary" $ do
+    let item = PotionItem HealingPotion
+    decode (encode item) `shouldBe` item
+
+  it "PotionItem SpeedPotion roundtrips through Binary" $ do
+    let item = PotionItem SpeedPotion
+    decode (encode item) `shouldBe` item
+
+  it "all PotionTypes roundtrip through Enum" $ do
+    let allPotions = [minBound .. maxBound] :: [PotionType]
+    mapM_ (\pt -> toEnum (fromEnum pt) `shouldBe` pt) allPotions
+
+  it "all PotionTypes roundtrip through Binary" $ do
+    let allPotions = [minBound .. maxBound] :: [PotionType]
+    mapM_ (\pt -> decode (encode (PotionItem pt)) `shouldBe` PotionItem pt) allPotions
+
+  -- Crafting recipe
+  it "3 glass in V-shape crafts 3 glass bottles" $ do
+    let g = Just (BlockItem Glass)
+        grid = setCraftingSlot (setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3)
+          0 0 g) 0 2 g) 1 1 g
+    tryCraft grid `shouldBe` CraftSuccess GlassBottleItem 3
+
+  -- Inventory operations
+  it "GlassBottleItem can be added to inventory" $ do
+    let (inv, leftover) = addItem emptyInventory GlassBottleItem 5
+    leftover `shouldBe` 0
+    selectedItem (selectHotbar inv 0) `shouldBe` Just (ItemStack GlassBottleItem 5)
+
+  it "PotionItem can be added to inventory" $ do
+    let (inv, leftover) = addItem emptyInventory (PotionItem HealingPotion) 1
+    leftover `shouldBe` 0
+    selectedItem (selectHotbar inv 0) `shouldBe` Just (ItemStack (PotionItem HealingPotion) 1)

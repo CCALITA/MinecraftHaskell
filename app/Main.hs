@@ -230,6 +230,10 @@ main = do
     -- Cactus contact damage timer (1 damage per second while touching)
     cactusDamageTimerRef <- newIORef (0.0 :: Float)
 
+    -- Potion effect timers
+    poisonTimerRef <- newIORef (0.0 :: Float)   -- remaining seconds of poison
+    speedBuffTimerRef <- newIORef (0.0 :: Float) -- remaining seconds of speed buff
+
     -- Entity system
     entityWorld <- newEntityWorld
     spawnRngRef <- newIORef =<< System.Random.newStdGen
@@ -383,6 +387,8 @@ main = do
             writeIORef particleSystemRef []
             writeIORef (fsFluids fluidState) Map.empty
             writeIORef (fsDirty fluidState) Seq.empty
+            writeIORef poisonTimerRef 0.0
+            writeIORef speedBuffTimerRef 0.0
             -- Settle gravity and rebuild chunk meshes
             settleAllLoadedChunks world
             rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
@@ -680,6 +686,27 @@ main = do
                       modifyIORef' playerRef (\p -> p { plEatingTimer = 1.6 })
                 _ -> pure ()
 
+            -- RMB: drink potion if holding potion item
+            when (button == GLFW.MouseButton'2) $ do
+              inv <- readIORef inventoryRef
+              case selectedItem inv of
+                Just (ItemStack (PotionItem pt) _) -> do
+                  let (inv', _) = removeItem inv (PotionItem pt) 1
+                      (inv'', _) = addItem inv' GlassBottleItem 1
+                  writeIORef inventoryRef inv''
+                  case pt of
+                    HealingPotion -> do
+                      modifyIORef' playerRef (\p -> p { plHealth = min maxHealth (plHealth p + 4) })
+                      putStrLn "Drank Healing Potion, restored 4 health"
+                    PoisonPotion -> do
+                      writeIORef poisonTimerRef 5.0
+                      putStrLn "Drank Poison Potion, poisoned for 5 seconds"
+                    SpeedPotion -> do
+                      writeIORef speedBuffTimerRef 30.0
+                      putStrLn "Drank Speed Potion, speed boost for 30 seconds"
+                    _ -> putStrLn $ "Drank " ++ potionName pt ++ " (no effect)"
+                _ -> pure ()
+
             -- RMB: shear sheep if holding shears
             when (button == GLFW.MouseButton'2) $ do
               inv <- readIORef inventoryRef
@@ -891,6 +918,18 @@ main = do
                               updateEntity entityWorld eid (\e -> e { entYaw = paintingYaw })
                               putStrLn $ "Placed painting at " ++ show paintingPos
                             Just (ItemStack (FoodItem _) _) -> pure ()
+                            Just (ItemStack GlassBottleItem _) -> do
+                              -- Fill glass bottle with water: check hit block or adjacent block
+                              let V3 nx ny nz = rhFaceNormal hit
+                                  adjPos = V3 (bx + nx) (by + ny) (bz + nz)
+                              adjBlock <- worldGetBlock world adjPos
+                              let isNearWater = hitBlock == Water || adjBlock == Water
+                              when isNearWater $ do
+                                let (inv', _) = removeItem inv GlassBottleItem 1
+                                    (inv'', _) = addItem inv' (PotionItem WaterBottle) 1
+                                writeIORef inventoryRef inv''
+                                putStrLn "Filled glass bottle with water"
+                            Just (ItemStack (PotionItem _) _) -> pure ()  -- handled in pre-raycast
                             Just (ItemStack (FlintAndSteelItem dur) _) -> do
                               let sel = invSelected inv
                                   consumeDurability =
@@ -1136,8 +1175,13 @@ main = do
             accum <- readIORef accumRef
             let accum' = accum + dt
             healthBefore <- plHealth <$> readIORef playerRef
-            when (gameMode == Playing) $
-              playerLoop input blockQuery waterQuery ladderQuery accumRef accum' playerRef
+            when (gameMode == Playing) $ do
+              -- Apply speed buff: force sprint when speed potion is active
+              speedBuff <- readIORef speedBuffTimerRef
+              let input' = if speedBuff > 0
+                            then input { piSprint = True }
+                            else input
+              playerLoop input' blockQuery waterQuery ladderQuery accumRef accum' playerRef
             healthAfter <- plHealth <$> readIORef playerRef
 
             -- Flash screen on fall/drowning/starvation/void damage
@@ -1333,6 +1377,28 @@ main = do
                       putStrLn "Fish is biting! Reel in with RMB!"
                     else writeIORef fishingStateRef (Just (pos, newTimer, False))
                 _ -> pure ()
+
+            -- Tick potion effects (poison and speed buff)
+            when (gameMode == Playing) $ do
+              -- Poison: 2 HP over 5 seconds = 1 HP per 2.5 seconds
+              -- Timer counts down from 5.0; deal 1 HP at 2.5s and 0.0s remaining
+              poisonTimer <- readIORef poisonTimerRef
+              when (poisonTimer > 0) $ do
+                let newTimer = max 0 (poisonTimer - dt)
+                    -- Damage at threshold crossings: 5.0->2.5 and 2.5->0.0
+                    crossedMid = poisonTimer > 2.5 && newTimer <= 2.5
+                    crossedEnd = newTimer <= 0
+                    dmg = (if crossedMid then 1 else 0) + (if crossedEnd then 1 else 0) :: Int
+                when (dmg > 0) $
+                  modifyIORef' playerRef (\p -> p { plHealth = max 1 (plHealth p - dmg) })
+                writeIORef poisonTimerRef newTimer
+                when (newTimer <= 0) $ putStrLn "Poison effect expired"
+              -- Speed buff: just decrement timer (actual speed change applied in physics)
+              speedTimer <- readIORef speedBuffTimerRef
+              when (speedTimer > 0) $ do
+                let newTimer = max 0 (speedTimer - dt)
+                writeIORef speedBuffTimerRef newTimer
+                when (newTimer <= 0) $ putStrLn "Speed boost expired"
 
             -- Update day/night cycle
             modifyIORef' dayNightRef (updateDayNight dt)
@@ -3031,6 +3097,8 @@ itemColor (FlintAndSteelItem _) = (0.5, 0.5, 0.5, 1.0)
 itemColor CompassItem = (0.7, 0.3, 0.3, 1.0)
 itemColor ClockItem = (0.9, 0.8, 0.3, 1.0)
 itemColor (FishingRodItem _) = (0.55, 0.35, 0.15, 1.0)
+itemColor GlassBottleItem = (0.7, 0.85, 0.95, 0.6)
+itemColor (PotionItem pt) = potionColor pt
 
 -- | 3x3 mini-icon for item (row, col, color) — used in hotbar slot rendering
 itemMiniIcon :: Item -> [(Int, Int, (Float, Float, Float, Float))]
@@ -3118,6 +3186,12 @@ itemMiniIcon ClockItem =
 itemMiniIcon (FishingRodItem _) =
   [(0,2,s), (1,1,s), (2,0,s),(2,2,st)]
   where s = (0.55,0.35,0.15,1); st = (0.9,0.9,0.9,1)
+itemMiniIcon GlassBottleItem =
+  [(0,0,gl),(0,2,gl), (1,0,gl),(1,1,gl),(1,2,gl), (2,1,gl)]
+  where gl = itemColor GlassBottleItem
+itemMiniIcon (PotionItem pt) =
+  [(0,0,gl),(0,2,gl), (1,0,gl),(1,1,c),(1,2,gl), (2,1,c)]
+  where gl = itemColor GlassBottleItem; c = potionColor pt
 itemMiniIcon (BlockItem bt) = blockMiniIcon bt
   where
     fill c = [(r,col,c) | r <- [0..2], col <- [0..2]]

@@ -10,7 +10,7 @@ module Game.Crafting
   ) where
 
 import World.Block (BlockType(..))
-import Game.Item (Item(..), ToolType(..), ToolMaterial(..), toolInfo, ToolInfo(..), MaterialType(..), FoodType(..))
+import Game.Item (Item(..), ToolType(..), ToolMaterial(..), toolInfo, ToolInfo(..), MaterialType(..), FoodType(..), PotionType(..))
 import qualified Data.Vector as V
 
 -- | Crafting grid (2x2 or 3x3)
@@ -308,6 +308,13 @@ allRecipes =
                     ,[bi Cobblestone, bi RedstoneDust,              bi Cobblestone]]
       , rcResult  = BlockItem Piston
       , rcCount   = 1
+      }
+  -- Glass bottle: 3 glass in V-shape
+  , Recipe
+      { rcPattern = [[bi Glass,  Nothing, bi Glass]
+                    ,[Nothing,   bi Glass, Nothing]]
+      , rcResult  = GlassBottleItem
+      , rcCount   = 3
       }
   ] ++ toolRecipes ++ shearsRecipe ++ compassClockRecipes ++ fishingRodRecipe
 

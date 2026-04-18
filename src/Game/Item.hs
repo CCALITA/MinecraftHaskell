@@ -7,6 +7,7 @@ module Game.Item
   , ToolInfo(..)
   , ArmorSlot(..)
   , ArmorMaterial(..)
+  , PotionType(..)
   , itemFromBlock
   , itemToBlock
   , isBlockItem
@@ -23,6 +24,8 @@ module Game.Item
   , materialName
   , armorDefensePoints
   , mobDrops
+  , potionName
+  , potionColor
   ) where
 
 import World.Block (BlockType(..))
@@ -70,6 +73,10 @@ data ArmorSlot = Helmet | Chestplate | Leggings | Boots
 data ArmorMaterial = LeatherArmor | IronArmor | GoldArmor | DiamondArmor
   deriving stock (Show, Eq, Ord, Enum, Bounded)
 
+-- | Potion types
+data PotionType = WaterBottle | AwkwardPotion | PoisonPotion | HealingPotion | SpeedPotion
+  deriving stock (Show, Eq, Ord, Enum, Bounded)
+
 -- | An item in the inventory — a placeable block, a tool, or a material
 data Item
   = BlockItem    !BlockType
@@ -83,6 +90,8 @@ data Item
   | CompassItem              -- shows direction to spawn point
   | ClockItem                -- shows time of day
   | FishingRodItem !Int     -- remaining durability (max 64)
+  | GlassBottleItem
+  | PotionItem !PotionType
   deriving stock (Show, Eq)
 
 -- | Tool properties
@@ -126,6 +135,8 @@ itemToBlock (FlintAndSteelItem _) = Nothing
 itemToBlock CompassItem = Nothing
 itemToBlock ClockItem = Nothing
 itemToBlock (FishingRodItem _) = Nothing
+itemToBlock GlassBottleItem  = Nothing
+itemToBlock (PotionItem _)   = Nothing
 
 -- | Is this a placeable block item?
 isBlockItem :: Item -> Bool
@@ -145,6 +156,8 @@ itemStackLimit (FlintAndSteelItem _) = 1
 itemStackLimit CompassItem = 1
 itemStackLimit ClockItem = 1
 itemStackLimit (FishingRodItem _) = 1
+itemStackLimit GlassBottleItem  = 16
+itemStackLimit (PotionItem _)   = 1
 
 -- | What items a block drops when broken. Returns (item, count).
 --   Some blocks require a minimum harvest level to drop anything.
@@ -368,6 +381,24 @@ mobDrops tag = case tag of
       pure (item, n)) entries
     pure $ filter (\(_, n) -> n > 0) results
 
+-- | Display name for a potion type
+potionName :: PotionType -> String
+potionName = \case
+  WaterBottle   -> "Water Bottle"
+  AwkwardPotion -> "Awkward Potion"
+  PoisonPotion  -> "Poison Potion"
+  HealingPotion -> "Healing Potion"
+  SpeedPotion   -> "Speed Potion"
+
+-- | Display color for a potion type (RGBA)
+potionColor :: PotionType -> (Float, Float, Float, Float)
+potionColor = \case
+  WaterBottle   -> (0.2,  0.4,  0.9, 0.8)   -- blue
+  AwkwardPotion -> (0.5,  0.3,  0.6, 0.8)   -- purple
+  PoisonPotion  -> (0.3,  0.7,  0.2, 0.8)   -- green
+  HealingPotion -> (0.9,  0.2,  0.2, 0.8)   -- red
+  SpeedPotion   -> (0.3,  0.8,  0.9, 0.8)   -- cyan
+
 -- ---------------------------------------------------------------------------
 -- Binary instances
 -- ---------------------------------------------------------------------------
@@ -400,6 +431,10 @@ instance Binary ArmorMaterial where
   put = put . fromEnum
   get = toEnum <$> get
 
+instance Binary PotionType where
+  put = put . fromEnum
+  get = toEnum <$> get
+
 instance Binary Item where
   put (BlockItem bt) = put (0 :: Word8) >> put bt
   put (ToolItem tt tm dur) = put (1 :: Word8) >> put tt >> put tm >> put dur
@@ -412,6 +447,8 @@ instance Binary Item where
   put CompassItem = put (8 :: Word8)
   put ClockItem = put (9 :: Word8)
   put (FishingRodItem dur) = put (10 :: Word8) >> put dur
+  put GlassBottleItem = put (11 :: Word8)
+  put (PotionItem pt) = put (12 :: Word8) >> put pt
   get = do
     tag <- get :: Get Word8
     case tag of
@@ -426,4 +463,6 @@ instance Binary Item where
       8 -> pure CompassItem
       9 -> pure ClockItem
       10 -> FishingRodItem <$> get
+      11 -> pure GlassBottleItem
+      12 -> PotionItem <$> get
       _ -> fail "Unknown Item tag"
