@@ -140,6 +140,7 @@ test-suite minecraft-test
   type:             exitcode-stdio-1.0
   hs-source-dirs:   test
   main-is:          Spec.hs
+  other-modules:    TestHelpers
   build-depends:
     , base
     , minecraft-haskell

@@ -6,9 +6,8 @@ import Test.QuickCheck
 import World.Block
 import World.Chunk
 import World.Noise
-import World.World (worldToChunkLocal, World(..), newWorld, worldGetBlock, worldSetBlock, triggerGravityAbove, settleGravityBlock, settleChunkGravity)
+import World.World (worldToChunkLocal, World(..), worldGetBlock, worldSetBlock, triggerGravityAbove, settleGravityBlock, settleChunkGravity)
 import World.Structure
-import World.Generation (defaultGenConfig)
 import Game.Inventory
 import Game.Item
 import Game.Crafting
@@ -35,9 +34,10 @@ import Game.Command
 import Game.Achievement
 import Game.Config
 import Game.Event
-import Game.Physics (BlockHeightQuery)
 import UI.Tooltip
 import UI.Screen
+
+import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
 
 import Data.Binary (encode, decode)
 import Data.IORef (newIORef, readIORef, modifyIORef')
@@ -45,7 +45,7 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..))
 import qualified Data.Vector as V
-import Control.Concurrent.STM (atomically, readTVar, writeTVar)
+import Control.Concurrent.STM (atomically, readTVar)
 import qualified Data.HashMap.Strict as HM
 
 main :: IO ()
@@ -379,10 +379,7 @@ worldCoordSpec = describe "World.World.worldToChunkLocal" $ do
 -- =========================================================================
 playerInputSpec :: Spec
 playerInputSpec = describe "Game.Player input queue" $ do
-  let airQuery _ _ _ = pure False
-      airHeightQuery :: BlockHeightQuery
-      airHeightQuery _ _ _ = pure 0.0
-      queuedToggle = noInput { piToggleFly = True, piMouseDX = 4, piMouseDY = -2 }
+  let queuedToggle = noInput { piToggleFly = True, piMouseDX = 4, piMouseDY = -2 }
 
   it "preserves fly toggle when no physics tick ran" $ do
     endFrameInput False queuedToggle `shouldBe` noInput { piToggleFly = True }
@@ -582,14 +579,6 @@ newItemSpec = describe "New item types (WU-00)" $ do
 -- Falling block gravity
 -- =========================================================================
 
--- | Create a test world with a single chunk at (0,0) for gravity tests
-makeTestWorld :: IO World
-makeTestWorld = do
-  world <- newWorld defaultGenConfig 4
-  chunk <- newChunk (V2 0 0)
-  atomically $ writeTVar (worldChunks world) (HM.singleton (V2 0 0) chunk)
-  pure world
-
 gravitySpec :: Spec
 gravitySpec = describe "Falling block gravity" $ do
   it "Sand is gravity-affected" $
@@ -604,8 +593,7 @@ gravitySpec = describe "Falling block gravity" $ do
   it "Air is not gravity-affected" $
     isGravityAffected Air `shouldBe` False
 
-  it "triggerGravityAbove drops sand into air below" $ do
-    world <- makeTestWorld
+  it "triggerGravityAbove drops sand into air below" $ withTestWorld $ \world -> do
     -- Place stone at y=5, sand at y=7, air at y=6
     worldSetBlock world (V3 1 5 1) Stone
     worldSetBlock world (V3 1 7 1) Sand
@@ -618,8 +606,7 @@ gravitySpec = describe "Falling block gravity" $ do
     btAt7 `shouldBe` Air
     moved `shouldBe` True
 
-  it "triggerGravityAbove cascades multiple sand blocks" $ do
-    world <- makeTestWorld
+  it "triggerGravityAbove cascades multiple sand blocks" $ withTestWorld $ \world -> do
     -- Stack: stone at y=3, air at y=4, sand at y=5, sand at y=6
     worldSetBlock world (V3 2 3 2) Stone
     worldSetBlock world (V3 2 5 2) Sand
@@ -634,8 +621,7 @@ gravitySpec = describe "Falling block gravity" $ do
     btAt5 `shouldBe` Sand
     btAt6 `shouldBe` Air
 
-  it "triggerGravityAbove does nothing when block above is not gravity-affected" $ do
-    world <- makeTestWorld
+  it "triggerGravityAbove does nothing when block above is not gravity-affected" $ withTestWorld $ \world -> do
     worldSetBlock world (V3 3 5 3) Stone
     moved <- triggerGravityAbove world (V3 3 4 3)
     btAt4 <- worldGetBlock world (V3 3 4 3)
@@ -644,8 +630,7 @@ gravitySpec = describe "Falling block gravity" $ do
     btAt5 `shouldBe` Stone
     moved `shouldBe` False
 
-  it "settleGravityBlock drops sand to lowest air" $ do
-    world <- makeTestWorld
+  it "settleGravityBlock drops sand to lowest air" $ withTestWorld $ \world -> do
     -- Stone floor at y=2, air at y=3 and y=4, sand at y=5
     worldSetBlock world (V3 4 2 4) Stone
     worldSetBlock world (V3 4 5 4) Sand
@@ -656,8 +641,7 @@ gravitySpec = describe "Falling block gravity" $ do
     btAt3 `shouldBe` Sand
     btAt5 `shouldBe` Air
 
-  it "settleGravityBlock does not move block on solid ground" $ do
-    world <- makeTestWorld
+  it "settleGravityBlock does not move block on solid ground" $ withTestWorld $ \world -> do
     worldSetBlock world (V3 5 3 5) Stone
     worldSetBlock world (V3 5 4 5) Sand
     moved <- settleGravityBlock world (V3 5 4 5)
@@ -665,8 +649,7 @@ gravitySpec = describe "Falling block gravity" $ do
     btAt4 <- worldGetBlock world (V3 5 4 5)
     btAt4 `shouldBe` Sand
 
-  it "settleChunkGravity settles floating sand in a chunk" $ do
-    world <- makeTestWorld
+  it "settleChunkGravity settles floating sand in a chunk" $ withTestWorld $ \world -> do
     -- Place stone floor and floating sand
     worldSetBlock world (V3 6 2 6) Stone
     worldSetBlock world (V3 6 8 6) Sand
@@ -1053,12 +1036,7 @@ weatherSpec = describe "World.Weather" $ do
 -- =========================================================================
 waterPhysicsSpec :: Spec
 waterPhysicsSpec = describe "Water physics and air supply" $ do
-  let airQuery _ _ _ = pure False
-      airHeightQuery :: BlockHeightQuery
-      airHeightQuery _ _ _ = pure 0.0
-      -- Water everywhere: all blocks return True for water query
-      waterQuery _ _ _ = pure True
-      -- Water only at head level (y=81, since head = feet_y + 1.62, so floor(80 + 1.62) = 81)
+  let -- Water only at head level (y=81, since head = feet_y + 1.62, so floor(80 + 1.62) = 81)
       headWaterQuery _ y _ = pure (y == 81)
 
   it "defaultPlayer has full air supply" $ do
@@ -2648,8 +2626,7 @@ structureSpec = describe "World.Structure" $ do
     length (stBlocks villageHouseStructure) `shouldSatisfy` (> 0)
 
   -- placeStructure integration test
-  it "placeStructure places blocks into the world" $ do
-    world <- makeTestWorld
+  it "placeStructure places blocks into the world" $ withTestWorld $ \world -> do
     placeStructure world (V3 0 64 0) wellStructure
     -- Check cobblestone floor at origin
     bt00 <- worldGetBlock world (V3 0 64 0)
@@ -2658,8 +2635,7 @@ structureSpec = describe "World.Structure" $ do
     btWater <- worldGetBlock world (V3 2 65 2)
     btWater `shouldBe` Water
 
-  it "placeStructure respects offset" $ do
-    world <- makeTestWorld
+  it "placeStructure respects offset" $ withTestWorld $ \world -> do
     placeStructure world (V3 5 70 5) dungeonStructure
     -- Floor corner at (5,70,5)
     bt <- worldGetBlock world (V3 5 70 5)
@@ -2668,8 +2644,7 @@ structureSpec = describe "World.Structure" $ do
     btChest <- worldGetBlock world (V3 8 71 8)
     btChest `shouldBe` Chest
 
-  it "placeStructure does not affect unrelated positions" $ do
-    world <- makeTestWorld
+  it "placeStructure does not affect unrelated positions" $ withTestWorld $ \world -> do
     placeStructure world (V3 0 64 0) wellStructure
     -- Position outside the structure should still be Air
     btFar <- worldGetBlock world (V3 10 64 10)
