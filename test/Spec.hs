@@ -52,6 +52,8 @@ main = hspec $ do
   redstoneBlockSpec
   cactusBlockSpec
   slabBlockSpec
+  railBlockSpec
+  minecartItemSpec
 
 -- =========================================================================
 -- Block
@@ -1322,3 +1324,104 @@ slabBlockSpec = describe "Slab blocks (StoneSlab & OakSlab)" $ do
   it "OakSlab roundtrips through Binary" $ do
     let item = BlockItem OakSlab
     decode (encode item) `shouldBe` item
+
+-- =========================================================================
+-- Rail block
+-- =========================================================================
+railBlockSpec :: Spec
+railBlockSpec = describe "Rail block" $ do
+  -- Block properties
+  it "Rail is not solid and is transparent" $ do
+    isSolid Rail `shouldBe` False
+    isTransparent Rail `shouldBe` True
+
+  it "Rail has hardness 0.7" $ do
+    bpHardness (blockProperties Rail) `shouldBe` 0.7
+
+  it "Rail emits no light" $ do
+    bpLightEmit (blockProperties Rail) `shouldBe` 0
+
+  -- Enum roundtrip
+  it "Rail roundtrips through Enum" $ do
+    toEnum (fromEnum Rail) `shouldBe` (Rail :: BlockType)
+
+  -- Texture coords
+  it "Rail has valid texture coords" $ do
+    let V2 u v = blockFaceTexCoords Rail FaceTop
+    u `shouldSatisfy` (>= 0)
+    v `shouldSatisfy` (>= 0)
+
+  -- Block drops
+  it "Rail drops itself" $ do
+    blockDrops Rail `shouldBe` [(BlockItem Rail, 1)]
+
+  -- Preferred tool
+  it "Rail prefers pickaxe" $ do
+    blockPreferredTool Rail `shouldBe` Just Pickaxe
+
+  -- Rail has no required harvest level
+  it "Rail requires no special harvest level" $ do
+    blockRequiredHarvestLevel Rail `shouldBe` 0
+
+  -- Rail is not gravity-affected
+  it "Rail is not gravity-affected" $ do
+    isGravityAffected Rail `shouldBe` False
+
+  -- Crafting recipe
+  it "6 iron ingots + 1 stick crafts 16 rails" $ do
+    let i = Just (MaterialItem IronIngot)
+        s = Just StickItem
+        grid = setCraftingSlot (setCraftingSlot (setCraftingSlot
+              (setCraftingSlot (setCraftingSlot (setCraftingSlot
+              (setCraftingSlot (emptyCraftingGrid 3)
+                0 0 i) 0 2 i) 1 0 i) 1 1 s) 1 2 i) 2 0 i) 2 2 i
+    tryCraft grid `shouldBe` CraftSuccess (BlockItem Rail) 16
+
+  -- Binary roundtrip
+  it "Rail roundtrips through Binary" $ do
+    let item = BlockItem Rail
+    decode (encode item) `shouldBe` item
+
+-- =========================================================================
+-- Minecart item
+-- =========================================================================
+minecartItemSpec :: Spec
+minecartItemSpec = describe "Minecart item" $ do
+  it "MinecartItem stacks to 1" $ do
+    itemStackLimit MinecartItem `shouldBe` 1
+
+  it "MinecartItem is not a block item" $ do
+    isBlockItem MinecartItem `shouldBe` False
+
+  it "MinecartItem does not convert to block type" $ do
+    itemToBlock MinecartItem `shouldBe` Nothing
+
+  it "MinecartItem roundtrips through Binary" $ do
+    decode (encode MinecartItem) `shouldBe` MinecartItem
+
+  -- Crafting recipe
+  it "5 iron ingots in U-shape crafts a minecart" $ do
+    let i = Just (MaterialItem IronIngot)
+        grid = setCraftingSlot (setCraftingSlot (setCraftingSlot
+              (setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3)
+                0 0 i) 0 2 i) 1 0 i) 1 1 i) 1 2 i
+    tryCraft grid `shouldBe` CraftSuccess MinecartItem 1
+
+  -- Minecart entity
+  it "can spawn a minecart entity" $ do
+    ew <- newEntityWorld
+    eid <- spawnEntity ew (V3 5.5 65.25 5.5) 1.0 "Minecart"
+    eid `shouldSatisfy` (> 0)
+    mEnt <- getEntity ew eid
+    case mEnt of
+      Just ent -> do
+        entTag ent `shouldBe` "Minecart"
+        entAlive ent `shouldBe` True
+      Nothing -> expectationFailure "Expected minecart entity"
+
+  it "minecart entity can be destroyed" $ do
+    ew <- newEntityWorld
+    eid <- spawnEntity ew (V3 5.5 65.25 5.5) 1.0 "Minecart"
+    destroyEntity ew eid
+    mEnt <- getEntity ew eid
+    mEnt `shouldBe` Nothing

@@ -130,6 +130,7 @@ tileFull tileIdx lx ly = case tileIdx of
   47 -> trapdoorOpenPattern lx ly    -- trapdoor open (V2 15 2)
   43 -> firePattern lx ly              -- fire (V2 11 2)
   84 -> sugarCanePattern lx ly       -- sugar cane (V2 4 5)
+  85 -> railPattern lx ly              -- rail (V2 5 5)
   -- Fallback: checkerboard pattern so missing tiles are visible
   _  -> let checker = (lx + ly) `mod` 2 == 0
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
@@ -503,6 +504,17 @@ tileFull tileIdx lx ly = case tileIdx of
           (gr, gg, gb) = if isNode then (60, 130 + fromIntegral n, 40)
                          else (70 + fromIntegral (n `div` 2), 150 + fromIntegral n, 50)
       in if isReed then (gr, gg, gb, 255)
+         else (0, 0, 0, 0)
+
+    -- Rail: gray parallel rails on brown wooden ties
+    railPattern x y =
+      let isLeftRail  = x >= 2 && x <= 4
+          isRightRail = x >= 11 && x <= 13
+          isRail      = isLeftRail || isRightRail
+          isTie       = y `mod` 4 >= 1 && y `mod` 4 <= 2 && x >= 1 && x <= 14
+          n = pixHash x y 2700 `mod` 20
+      in if isRail then (140 + fromIntegral n, 140 + fromIntegral n, 145 + fromIntegral n, 255)
+         else if isTie then (90 + fromIntegral (n `div` 2), 60 + fromIntegral (n `div` 3), 30, 255)
          else (0, 0, 0, 0)
 
 -- | Create a texture from raw RGBA pixel data
