@@ -22,6 +22,7 @@ import Entity.ECS
 import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), mobInfo)
 import World.Redstone
 import World.BlockRegistry
+import Game.RecipeRegistry
 
 import Entity.Villager
 import qualified World.Dimension as Dim
@@ -78,6 +79,7 @@ main = hspec $ do
   structureSpec
   blockRegistrySpec
   dimensionSpec
+  recipeRegistrySpec
 
 -- =========================================================================
 -- Block
@@ -2934,3 +2936,76 @@ dimensionSpec = describe "World.Dimension" $ do
       | y <- [120..126], lx <- [0..15], lz <- [0,4,8,12]
       ]
     any (== Torch) results `shouldBe` True
+
+-- =========================================================================
+-- RecipeRegistry
+-- =========================================================================
+recipeRegistrySpec :: Spec
+recipeRegistrySpec = describe "Game.RecipeRegistry" $ do
+  it "new registry starts empty" $ do
+    reg <- newRecipeRegistry
+    recipes <- allRegisteredRecipes reg
+    recipes `shouldBe` []
+
+  it "registerRecipe adds a single recipe" $ do
+    reg <- newRecipeRegistry
+    let recipe = Recipe [[Just (BlockItem OakLog)]] (BlockItem OakPlanks) 4
+    registerRecipe reg recipe
+    recipes <- allRegisteredRecipes reg
+    length recipes `shouldBe` 1
+
+  it "registerRecipes adds multiple recipes" $ do
+    reg <- newRecipeRegistry
+    let r1 = Recipe [[Just (BlockItem OakLog)]] (BlockItem OakPlanks) 4
+        r2 = Recipe [[Just (BlockItem Sand)]] (BlockItem Glass) 1
+    registerRecipes reg [r1, r2]
+    recipes <- allRegisteredRecipes reg
+    length recipes `shouldBe` 2
+
+  it "defaultRecipeRegistry contains all recipes from allRecipes" $ do
+    reg <- defaultRecipeRegistry
+    recipes <- allRegisteredRecipes reg
+    length recipes `shouldBe` length allRecipes
+
+  it "findMatchingRecipe succeeds for OakLog -> OakPlanks" $ do
+    reg <- defaultRecipeRegistry
+    let grid = setCraftingSlot (emptyCraftingGrid 3) 0 0 (Just (BlockItem OakLog))
+    result <- findMatchingRecipe reg grid
+    result `shouldBe` CraftSuccess (BlockItem OakPlanks) 4
+
+  it "findMatchingRecipe returns CraftFailure for empty grid" $ do
+    reg <- defaultRecipeRegistry
+    result <- findMatchingRecipe reg (emptyCraftingGrid 3)
+    result `shouldBe` CraftFailure
+
+  it "findMatchingRecipe returns CraftFailure for unregistered pattern" $ do
+    reg <- newRecipeRegistry
+    let grid = setCraftingSlot (emptyCraftingGrid 3) 0 0 (Just (BlockItem OakLog))
+    result <- findMatchingRecipe reg grid
+    result `shouldBe` CraftFailure
+
+  it "findMatchingRecipe matches regardless of grid position" $ do
+    reg <- defaultRecipeRegistry
+    let grid = setCraftingSlot (emptyCraftingGrid 3) 2 2 (Just (BlockItem OakLog))
+    result <- findMatchingRecipe reg grid
+    result `shouldBe` CraftSuccess (BlockItem OakPlanks) 4
+
+  it "registerRecipe accumulates with prior recipes" $ do
+    reg <- newRecipeRegistry
+    let r1 = Recipe [[Just (BlockItem OakLog)]] (BlockItem OakPlanks) 4
+        r2 = Recipe [[Just (BlockItem Sand)]] (BlockItem Glass) 1
+    registerRecipe reg r1
+    registerRecipe reg r2
+    recipes <- allRegisteredRecipes reg
+    length recipes `shouldBe` 2
+
+  it "findMatchingRecipe works for 2x2 crafting table recipe" $ do
+    reg <- defaultRecipeRegistry
+    let p = Just (BlockItem OakPlanks)
+        grid = setCraftingSlot
+              (setCraftingSlot
+              (setCraftingSlot
+              (setCraftingSlot (emptyCraftingGrid 3)
+                0 0 p) 0 1 p) 1 0 p) 1 1 p
+    result <- findMatchingRecipe reg grid
+    result `shouldBe` CraftSuccess (BlockItem CraftingTable) 1

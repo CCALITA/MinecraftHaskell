@@ -73,6 +73,7 @@ library
     Game.Command
     Game.Achievement
     Game.Crafting
+    Game.RecipeRegistry
     Game.Enchanting
     Game.DayNight
     Game.Save
