@@ -24,7 +24,7 @@ import World.Redstone
 import World.BlockRegistry
 
 import Entity.Villager
-import World.Dimension
+import qualified World.Dimension as Dim
 import Game.Enchanting
 import Game.Command
 import Game.Achievement
@@ -2802,97 +2802,97 @@ dimensionSpec :: Spec
 dimensionSpec = describe "World.Dimension" $ do
   -- DimensionType enum
   it "DimensionType has 3 values" $ do
-    let allDims = [minBound .. maxBound] :: [DimensionType]
+    let allDims = [minBound .. maxBound] :: [Dim.DimensionType]
     length allDims `shouldBe` 3
 
   it "DimensionType roundtrips through Enum" $ do
-    let allDims = [minBound .. maxBound] :: [DimensionType]
+    let allDims = [minBound .. maxBound] :: [Dim.DimensionType]
     mapM_ (\d -> toEnum (fromEnum d) `shouldBe` d) allDims
 
   it "DimensionType Enum order is Overworld, Nether, TheEnd" $ do
-    fromEnum Overworld `shouldBe` 0
-    fromEnum Nether `shouldBe` 1
-    fromEnum TheEnd `shouldBe` 2
+    fromEnum Dim.Overworld `shouldBe` 0
+    fromEnum Dim.Nether `shouldBe` 1
+    fromEnum Dim.TheEnd `shouldBe` 2
 
   -- Overworld config
   it "overworldConfig has correct name" $ do
-    dcName overworldConfig `shouldBe` "Overworld"
+    Dim.dcName Dim.overworldConfig `shouldBe` "Overworld"
 
   it "overworldConfig has sea level 63" $ do
-    dcSeaLevel overworldConfig `shouldBe` 63
+    Dim.dcSeaLevel Dim.overworldConfig `shouldBe` 63
 
   it "overworldConfig has weather" $ do
-    dcHasWeather overworldConfig `shouldBe` True
+    Dim.dcHasWeather Dim.overworldConfig `shouldBe` True
 
   it "overworldConfig has day/night" $ do
-    dcHasDayNight overworldConfig `shouldBe` True
+    Dim.dcHasDayNight Dim.overworldConfig `shouldBe` True
 
   it "overworldConfig has no ceiling" $ do
-    dcCeilingY overworldConfig `shouldBe` Nothing
+    Dim.dcCeilingY Dim.overworldConfig `shouldBe` Nothing
 
   it "overworldConfig gravity is 1.0" $ do
-    dcGravity overworldConfig `shouldBe` 1.0
+    Dim.dcGravity Dim.overworldConfig `shouldBe` 1.0
 
   -- Nether config
   it "netherConfig has correct name" $ do
-    dcName netherConfig `shouldBe` "Nether"
+    Dim.dcName Dim.netherConfig `shouldBe` "Nether"
 
   it "netherConfig has sea level (lava level) 32" $ do
-    dcSeaLevel netherConfig `shouldBe` 32
+    Dim.dcSeaLevel Dim.netherConfig `shouldBe` 32
 
   it "netherConfig has no weather" $ do
-    dcHasWeather netherConfig `shouldBe` False
+    Dim.dcHasWeather Dim.netherConfig `shouldBe` False
 
   it "netherConfig has no day/night" $ do
-    dcHasDayNight netherConfig `shouldBe` False
+    Dim.dcHasDayNight Dim.netherConfig `shouldBe` False
 
   it "netherConfig has ceiling at 128" $ do
-    dcCeilingY netherConfig `shouldBe` Just 128
+    Dim.dcCeilingY Dim.netherConfig `shouldBe` Just 128
 
   it "netherConfig gravity is 1.0" $ do
-    dcGravity netherConfig `shouldBe` 1.0
+    Dim.dcGravity Dim.netherConfig `shouldBe` 1.0
 
   -- End config
   it "endConfig has correct name" $ do
-    dcName endConfig `shouldBe` "The End"
+    Dim.dcName Dim.endConfig `shouldBe` "The End"
 
   it "endConfig has sea level 0" $ do
-    dcSeaLevel endConfig `shouldBe` 0
+    Dim.dcSeaLevel Dim.endConfig `shouldBe` 0
 
   it "endConfig has no weather" $ do
-    dcHasWeather endConfig `shouldBe` False
+    Dim.dcHasWeather Dim.endConfig `shouldBe` False
 
   it "endConfig has no day/night" $ do
-    dcHasDayNight endConfig `shouldBe` False
+    Dim.dcHasDayNight Dim.endConfig `shouldBe` False
 
   it "endConfig has no ceiling" $ do
-    dcCeilingY endConfig `shouldBe` Nothing
+    Dim.dcCeilingY Dim.endConfig `shouldBe` Nothing
 
   -- Config distinguishability
   it "all three configs are distinct" $ do
-    overworldConfig `shouldNotBe` netherConfig
-    netherConfig `shouldNotBe` endConfig
-    overworldConfig `shouldNotBe` endConfig
+    Dim.overworldConfig `shouldNotBe` Dim.netherConfig
+    Dim.netherConfig `shouldNotBe` Dim.endConfig
+    Dim.overworldConfig `shouldNotBe` Dim.endConfig
 
   -- Nether chunk generation
   it "generateNetherChunk produces a non-empty chunk" $ do
-    chunk <- generateNetherChunk 42 (V2 0 0)
+    chunk <- Dim.generateNetherChunk 42 (V2 0 0)
     -- Floor should be bedrock
     bt <- getBlock chunk 8 0 8
     bt `shouldBe` Bedrock
 
   it "generateNetherChunk has bedrock ceiling at y=127" $ do
-    chunk <- generateNetherChunk 42 (V2 0 0)
+    chunk <- Dim.generateNetherChunk 42 (V2 0 0)
     bt <- getBlock chunk 8 127 8
     bt `shouldBe` Bedrock
 
   it "generateNetherChunk above ceiling is air (y=128+)" $ do
-    chunk <- generateNetherChunk 42 (V2 0 0)
+    chunk <- Dim.generateNetherChunk 42 (V2 0 0)
     bt <- getBlock chunk 8 200 8
     bt `shouldBe` Air
 
   it "generateNetherChunk has lava at or below level 32 in carved areas" $ do
-    chunk <- generateNetherChunk 42 (V2 0 0)
+    chunk <- Dim.generateNetherChunk 42 (V2 0 0)
     -- Scan a column; any air at y<=32 should have been replaced with lava
     -- Not every block is carved, so we check a structural invariant:
     -- at y<=32, blocks are Bedrock, Stone, or Lava (never Air)
@@ -2901,15 +2901,15 @@ dimensionSpec = describe "World.Dimension" $ do
     hasAir `shouldBe` False
 
   it "generateNetherChunk is deterministic (same seed = same chunk)" $ do
-    chunk1 <- generateNetherChunk 42 (V2 0 0)
-    chunk2 <- generateNetherChunk 42 (V2 0 0)
+    chunk1 <- Dim.generateNetherChunk 42 (V2 0 0)
+    chunk2 <- Dim.generateNetherChunk 42 (V2 0 0)
     bt1 <- getBlock chunk1 4 64 4
     bt2 <- getBlock chunk2 4 64 4
     bt1 `shouldBe` bt2
 
   it "generateNetherChunk differs for different seeds" $ do
-    chunk1 <- generateNetherChunk 42 (V2 0 0)
-    chunk2 <- generateNetherChunk 99 (V2 0 0)
+    chunk1 <- Dim.generateNetherChunk 42 (V2 0 0)
+    chunk2 <- Dim.generateNetherChunk 99 (V2 0 0)
     -- Sample many positions across the chunk; at least one should differ
     results <- sequence
       [ do b1 <- getBlock chunk1 lx y lz
@@ -2920,14 +2920,14 @@ dimensionSpec = describe "World.Dimension" $ do
     or results `shouldBe` True
 
   it "generateNetherChunk contains some Lava blocks" $ do
-    chunk <- generateNetherChunk 42 (V2 0 0)
+    chunk <- Dim.generateNetherChunk 42 (V2 0 0)
     -- Check a sweep at lava level
     results <- mapM (\lx -> mapM (\lz -> getBlock chunk lx 20 lz) [0..15]) [0..15]
     let hasLava = any (any (== Lava)) results
     hasLava `shouldBe` True
 
   it "generateNetherChunk contains some light-emitting blocks (glowstone proxy)" $ do
-    chunk <- generateNetherChunk 42 (V2 0 0)
+    chunk <- Dim.generateNetherChunk 42 (V2 0 0)
     -- Torch is used as glowstone proxy; scan near ceiling across y=120..126
     results <- sequence
       [ getBlock chunk lx y lz
