@@ -83,6 +83,7 @@ library
     Game.SaveV3
     Game.State
     Game.ItemDisplay
+    Game.ItemRegistry
     Game.DroppedItem
     Game.Particle
     Entity.ECS

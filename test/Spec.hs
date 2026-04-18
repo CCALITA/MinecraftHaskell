@@ -26,6 +26,7 @@ import World.BlockRegistry
 import Game.RecipeRegistry
 import World.BiomeFeatures
 import World.Biome (BiomeType(..))
+import Game.ItemRegistry
 
 import Entity.Villager
 import qualified World.Dimension as Dim
@@ -89,6 +90,7 @@ main = hspec $ do
   structureSpec
   blockRegistrySpec
   biomeFeaturesSpec
+  itemRegistrySpec
   dimensionSpec
   screenRegistrySpec
   componentSpec
@@ -3464,3 +3466,107 @@ biomeFeaturesSpec = describe "World.BiomeFeatures" $ do
   it "OakTree uses OakLog and OakLeaves" $ do
     treeLogBlock OakTree `shouldBe` OakLog
     treeLeafBlock OakTree `shouldBe` OakLeaves
+
+-- =========================================================================
+-- Item Registry
+-- =========================================================================
+itemRegistrySpec :: Spec
+itemRegistrySpec = describe "Game.ItemRegistry" $ do
+  -- Creation
+  it "newItemRegistry creates an empty registry" $ do
+    reg <- newItemRegistry
+    entries <- registeredItems reg
+    length entries `shouldBe` 0
+
+  -- Register and lookup
+  it "registerItem then lookupItem roundtrips" $ do
+    reg <- newItemRegistry
+    let def = mkItemDef 2 StickItem
+    registerItem reg 20 def
+    result <- lookupItem reg 20
+    case result of
+      Just d  -> idStackLimit d `shouldBe` 64
+      Nothing -> expectationFailure "Expected StickItem def"
+
+  it "lookupItem returns Nothing for unregistered key" $ do
+    reg <- newItemRegistry
+    result <- lookupItem reg 255
+    result `shouldBe` Nothing
+
+  -- Overwrite
+  it "registerItem overwrites previous definition" $ do
+    reg <- newItemRegistry
+    let def1 = mkItemDef 2 StickItem
+        def2 = def1 { idStackLimit = 16 }
+    registerItem reg 20 def1
+    registerItem reg 20 def2
+    result <- lookupItem reg 20
+    case result of
+      Just d  -> idStackLimit d `shouldBe` 16
+      Nothing -> expectationFailure "Expected updated StickItem def"
+
+  -- registeredItems count
+  it "registeredItems returns all registered entries" $ do
+    reg <- newItemRegistry
+    registerItem reg 0 (mkItemDef 0 (BlockItem Stone))
+    registerItem reg 1 (mkItemDef 2 StickItem)
+    registerItem reg 2 (mkItemDef 8 CompassItem)
+    entries <- registeredItems reg
+    length entries `shouldBe` 3
+
+  -- Default registry
+  it "defaultItemRegistry is non-empty" $ do
+    reg <- defaultItemRegistry
+    entries <- registeredItems reg
+    length entries `shouldSatisfy` (> 0)
+
+  it "defaultItemRegistry contains StickItem (key 20)" $ do
+    reg <- defaultItemRegistry
+    result <- lookupItem reg 20
+    case result of
+      Just d  -> do
+        idStackLimit d `shouldBe` 64
+        idBinaryTag d `shouldBe` 2
+      Nothing -> expectationFailure "Expected StickItem in default registry"
+
+  it "defaultItemRegistry CompassItem has stack limit 1" $ do
+    reg <- defaultItemRegistry
+    result <- lookupItem reg 82
+    case result of
+      Just d  -> idStackLimit d `shouldBe` 1
+      Nothing -> expectationFailure "Expected CompassItem in default registry"
+
+  it "defaultItemRegistry BoatItem has no block mapping" $ do
+    reg <- defaultItemRegistry
+    result <- lookupItem reg 100
+    case result of
+      Just d  -> idToBlock d `shouldBe` Nothing
+      Nothing -> expectationFailure "Expected BoatItem in default registry"
+
+  it "defaultItemRegistry BlockItem Stone maps to Stone block" $ do
+    reg <- defaultItemRegistry
+    result <- lookupItem reg (fromIntegral (fromEnum Stone))
+    case result of
+      Just d  -> idToBlock d `shouldBe` Just Stone
+      Nothing -> expectationFailure "Expected BlockItem Stone in default registry"
+
+  -- mkItemDef preserves properties
+  it "mkItemDef preserves stack limit for BlockItem" $ do
+    let def = mkItemDef 0 (BlockItem Dirt)
+    idStackLimit def `shouldBe` 64
+
+  it "mkItemDef preserves stack limit for ToolItem" $ do
+    let def = mkItemDef 1 (ToolItem Pickaxe Diamond 1561)
+    idStackLimit def `shouldBe` 1
+
+  it "mkItemDef color is non-trivial for Coal" $ do
+    let def = mkItemDef 4 (MaterialItem Coal)
+        (r, g, b, a) = idColor def
+    a `shouldBe` 1.0
+    r `shouldSatisfy` (< 0.5)
+    g `shouldSatisfy` (< 0.5)
+    b `shouldSatisfy` (< 0.5)
+
+  it "mkItemDef mini-icon is non-empty for Sword" $ do
+    let def = mkItemDef 1 (ToolItem Sword Iron 250)
+    length (idMiniIcon def) `shouldSatisfy` (> 0)
