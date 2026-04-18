@@ -52,6 +52,7 @@ main = hspec $ do
   redstoneBlockSpec
   cactusBlockSpec
   slabBlockSpec
+  boatSpec
 
 -- =========================================================================
 -- Block
@@ -1322,3 +1323,66 @@ slabBlockSpec = describe "Slab blocks (StoneSlab & OakSlab)" $ do
   it "OakSlab roundtrips through Binary" $ do
     let item = BlockItem OakSlab
     decode (encode item) `shouldBe` item
+
+-- =========================================================================
+-- Boat entity
+-- =========================================================================
+boatSpec :: Spec
+boatSpec = describe "Boat entity and BoatItem" $ do
+  -- Item properties
+  it "BoatItem is not a block item" $ do
+    isBlockItem BoatItem `shouldBe` False
+
+  it "BoatItem does not convert to block type" $ do
+    itemToBlock BoatItem `shouldBe` Nothing
+
+  it "BoatItem stacks to 1" $ do
+    itemStackLimit BoatItem `shouldBe` 1
+
+  it "BoatItem roundtrips through Binary" $ do
+    decode (encode BoatItem) `shouldBe` BoatItem
+
+  -- Crafting recipe
+  it "5 oak planks in U-shape crafts a boat" $ do
+    let p = Just (BlockItem OakPlanks)
+        grid = setCraftingSlot (setCraftingSlot (setCraftingSlot
+              (setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3)
+                0 0 p) 0 2 p) 1 0 p) 1 1 p) 1 2 p
+    tryCraft grid `shouldBe` CraftSuccess BoatItem 1
+
+  -- Entity system integration
+  it "can spawn a Boat entity" $ do
+    ew <- newEntityWorld
+    eid <- spawnEntity ew (V3 10.5 65.0 10.5) 1.0 "Boat"
+    eid `shouldSatisfy` (> 0)
+    mEnt <- getEntity ew eid
+    case mEnt of
+      Just ent -> do
+        entTag ent `shouldBe` "Boat"
+        entPosition ent `shouldBe` V3 10.5 65.0 10.5
+        entHealth ent `shouldBe` 1.0
+        entAlive ent `shouldBe` True
+      Nothing -> expectationFailure "Expected boat entity"
+
+  it "Boat entity can be destroyed" $ do
+    ew <- newEntityWorld
+    eid <- spawnEntity ew (V3 5.0 64.0 5.0) 1.0 "Boat"
+    destroyEntity ew eid
+    mEnt <- getEntity ew eid
+    mEnt `shouldBe` Nothing
+
+  it "Boat entity position can be updated" $ do
+    ew <- newEntityWorld
+    eid <- spawnEntity ew (V3 5.0 64.0 5.0) 1.0 "Boat"
+    updateEntity ew eid (\e -> e { entPosition = V3 6.0 64.0 6.0 })
+    mEnt <- getEntity ew eid
+    case mEnt of
+      Just ent -> entPosition ent `shouldBe` V3 6.0 64.0 6.0
+      Nothing -> expectationFailure "Expected boat entity"
+
+  it "Boat entity found by entitiesInRange" $ do
+    ew <- newEntityWorld
+    _ <- spawnEntity ew (V3 10.0 65.0 10.0) 1.0 "Boat"
+    nearby <- entitiesInRange ew (V3 10.0 65.0 10.0) 5.0
+    let boats = filter (\e -> entTag e == "Boat") nearby
+    length boats `shouldBe` 1

@@ -301,7 +301,7 @@ allRecipes =
       , rcResult  = BlockItem OakSlab
       , rcCount   = 6
       }
-  ] ++ toolRecipes ++ shearsRecipe
+  ] ++ toolRecipes ++ shearsRecipe ++ boatRecipe
 
 -- | Shears crafting recipe: 2 iron ingots diagonal
 shearsRecipe :: [Recipe]
@@ -309,6 +309,14 @@ shearsRecipe =
   [ Recipe [[Nothing, ji (MaterialItem IronIngot)]
            ,[ji (MaterialItem IronIngot), Nothing]]
            (ShearsItem 238) 1
+  ]
+
+-- | Boat crafting recipe: 5 oak planks in U-shape
+boatRecipe :: [Recipe]
+boatRecipe =
+  [ Recipe [[bi OakPlanks, Nothing,      bi OakPlanks]
+           ,[bi OakPlanks, bi OakPlanks, bi OakPlanks]]
+           BoatItem 1
   ]
 
 -- | Helper to create a tool item with full durability
