@@ -355,6 +355,8 @@ boatRecipe =
   [ Recipe [[bi OakPlanks, Nothing,      bi OakPlanks]
            ,[bi OakPlanks, bi OakPlanks, bi OakPlanks]]
            BoatItem 1
+  ]
+
 -- | Dispenser crafting recipe: 7 cobblestone surrounding, redstone dust center
 dispenserRecipe :: [Recipe]
 dispenserRecipe =
