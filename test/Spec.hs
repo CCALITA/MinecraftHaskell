@@ -31,6 +31,7 @@ import Game.Achievement
 import Game.Config
 import Game.Physics (BlockHeightQuery)
 import UI.Tooltip
+import UI.Screen
 
 import Data.Binary (encode, decode)
 import Linear (V2(..), V3(..))
@@ -79,6 +80,7 @@ main = hspec $ do
   structureSpec
   blockRegistrySpec
   dimensionSpec
+  screenRegistrySpec
 
 -- =========================================================================
 -- Block
@@ -2977,3 +2979,74 @@ dimensionSpec = describe "World.Dimension" $ do
       let custom = defaultConfig { cfgRenderDistance = 8 }
       cfgRenderDistance custom `shouldBe` 8
       cfgRenderDistance defaultConfig `shouldBe` 4
+
+-- =========================================================================
+-- UI.Screen registry
+-- =========================================================================
+screenRegistrySpec :: Spec
+screenRegistrySpec = describe "UI.Screen" $ do
+  let dummyScreen :: String -> ScreenDef
+      dummyScreen name = ScreenDef
+        { sdName        = name
+        , sdRender      = \_ -> [1.0, 2.0, 3.0]
+        , sdHandleClick = \_ _ _ -> pure ()
+        , sdHandleKey   = \_ _ -> pure ()
+        , sdOnOpen      = \_ -> pure ()
+        , sdOnClose     = \_ -> pure ()
+        }
+
+  it "newScreenRegistry starts empty" $ do
+    reg <- newScreenRegistry
+    screens <- allScreens reg
+    length screens `shouldBe` 0
+
+  it "registerScreen then lookupScreen roundtrips" $ do
+    reg <- newScreenRegistry
+    registerScreen reg (dummyScreen "inventory")
+    result <- lookupScreen reg "inventory"
+    case result of
+      Just sd -> sdName sd `shouldBe` "inventory"
+      Nothing -> expectationFailure "Expected inventory screen"
+
+  it "lookupScreen returns Nothing for unregistered name" $ do
+    reg <- newScreenRegistry
+    result <- lookupScreen reg "nonexistent"
+    case result of
+      Nothing -> pure ()
+      Just _  -> expectationFailure "Expected Nothing for unregistered screen"
+
+  it "registerScreen overwrites existing screen with same name" $ do
+    reg <- newScreenRegistry
+    let sd1 = (dummyScreen "pause") { sdRender = \_ -> [1.0] }
+        sd2 = (dummyScreen "pause") { sdRender = \_ -> [9.0, 8.0] }
+    registerScreen reg sd1
+    registerScreen reg sd2
+    result <- lookupScreen reg "pause"
+    case result of
+      Just sd -> sdRender sd undefined `shouldBe` [9.0, 8.0]
+      Nothing -> expectationFailure "Expected overwritten pause screen"
+
+  it "allScreens returns all registered screens" $ do
+    reg <- newScreenRegistry
+    registerScreen reg (dummyScreen "inventory")
+    registerScreen reg (dummyScreen "crafting")
+    registerScreen reg (dummyScreen "pause")
+    screens <- allScreens reg
+    length screens `shouldBe` 3
+
+  it "allScreens contains expected names" $ do
+    reg <- newScreenRegistry
+    registerScreen reg (dummyScreen "inventory")
+    registerScreen reg (dummyScreen "crafting")
+    screens <- allScreens reg
+    let names = map sdName screens
+    "inventory" `elem` names `shouldBe` True
+    "crafting" `elem` names `shouldBe` True
+
+  it "sdRender callback returns expected vertex data" $ do
+    reg <- newScreenRegistry
+    registerScreen reg (dummyScreen "test")
+    result <- lookupScreen reg "test"
+    case result of
+      Just sd -> sdRender sd undefined `shouldBe` [1.0, 2.0, 3.0]
+      Nothing -> expectationFailure "Expected test screen"
