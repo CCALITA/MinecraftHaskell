@@ -55,6 +55,7 @@ library
     World.Chunk
     World.Noise
     World.Biome
+    World.Dimension
     World.Generation
     World.World
     World.Light
