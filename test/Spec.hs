@@ -21,6 +21,7 @@ import Entity.ECS
 import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), mobInfo)
 import World.Redstone
 
+import Entity.Villager
 import Game.Enchanting
 import Game.Command
 import Game.Achievement
@@ -68,6 +69,7 @@ main = hspec $ do
   enchantingSystemSpec
   commandSpec
   achievementSpec
+  villagerTradingSpec
 
 -- =========================================================================
 -- Block
@@ -2307,3 +2309,90 @@ achievementSpec = describe "Game.Achievement" $ do
   -- Enum roundtrip
   it "AchievementType roundtrips through Enum" $ do
     mapM_ (\ach -> toEnum (fromEnum ach) `shouldBe` ach) allAchievements
+
+-- =========================================================================
+-- Villager trading
+-- =========================================================================
+villagerTradingSpec :: Spec
+villagerTradingSpec = describe "Entity.Villager trading framework" $ do
+  -- Profession enumeration
+  it "allProfessions contains 6 professions" $ do
+    length allProfessions `shouldBe` 6
+
+  it "allProfessions matches Enum range" $ do
+    allProfessions `shouldBe` [Farmer, Librarian, Blacksmith, Butcher, Cleric, Shepherd]
+
+  it "VillagerProfession roundtrips through Enum" $ do
+    mapM_ (\p -> toEnum (fromEnum p) `shouldBe` p) allProfessions
+
+  -- Profession names
+  it "professionName returns non-empty strings" $ do
+    mapM_ (\p -> length (professionName p) `shouldSatisfy` (> 0)) allProfessions
+
+  it "professionName returns expected names" $ do
+    professionName Farmer `shouldBe` "Farmer"
+    professionName Librarian `shouldBe` "Librarian"
+    professionName Blacksmith `shouldBe` "Blacksmith"
+    professionName Butcher `shouldBe` "Butcher"
+    professionName Cleric `shouldBe` "Cleric"
+    professionName Shepherd `shouldBe` "Shepherd"
+
+  -- Trade generation for every profession
+  it "every profession generates at least one trade" $ do
+    mapM_ (\p -> length (generateTrades p) `shouldSatisfy` (> 0)) allProfessions
+
+  -- Trade invariants
+  it "all trades have positive input and output counts" $ do
+    let allTrades = concatMap generateTrades allProfessions
+    mapM_ (\t -> do
+      toInputCount t `shouldSatisfy` (> 0)
+      toOutputCount t `shouldSatisfy` (> 0)) allTrades
+
+  it "all trades have positive max uses" $ do
+    let allTrades = concatMap generateTrades allProfessions
+    mapM_ (\t -> toMaxUses t `shouldSatisfy` (> 0)) allTrades
+
+  it "all trades start with usesLeft equal to maxUses" $ do
+    let allTrades = concatMap generateTrades allProfessions
+    mapM_ (\t -> toUsesLeft t `shouldBe` toMaxUses t) allTrades
+
+  -- Farmer trades
+  it "Farmer offers wheat-for-currency trade" $ do
+    let trades = generateTrades Farmer
+        hasWheatTrade = any (\t -> toInputItem t == MaterialItem Wheat) trades
+    hasWheatTrade `shouldBe` True
+
+  it "Farmer offers currency-for-bread trade" $ do
+    let trades = generateTrades Farmer
+        hasBreadTrade = any (\t -> toOutputItem t == FoodItem Bread) trades
+    hasBreadTrade `shouldBe` True
+
+  -- Librarian trades
+  it "Librarian offers paper-for-currency trade" $ do
+    let trades = generateTrades Librarian
+        hasPaperTrade = any (\t -> toInputItem t == MaterialItem Paper) trades
+    hasPaperTrade `shouldBe` True
+
+  -- Blacksmith trades
+  it "Blacksmith offers iron tool trades" $ do
+    let trades = generateTrades Blacksmith
+        hasToolTrade = any (\t -> case toOutputItem t of
+          ToolItem _ Iron _ -> True
+          _                 -> False) trades
+    hasToolTrade `shouldBe` True
+
+  it "Blacksmith has 3 trades" $ do
+    length (generateTrades Blacksmith) `shouldBe` 3
+
+  -- Butcher trades
+  it "Butcher accepts raw meat" $ do
+    let trades = generateTrades Butcher
+        hasMeatInput = any (\t -> toInputItem t == FoodItem RawPorkchop
+                               || toInputItem t == FoodItem RawChicken) trades
+    hasMeatInput `shouldBe` True
+
+  -- Shepherd trades
+  it "Shepherd accepts wool" $ do
+    let trades = generateTrades Shepherd
+        hasWoolTrade = any (\t -> toInputItem t == BlockItem Wool) trades
+    hasWoolTrade `shouldBe` True
