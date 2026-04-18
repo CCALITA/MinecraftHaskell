@@ -30,11 +30,13 @@ import Game.Enchanting
 import Game.Command
 import Game.Achievement
 import Game.Config
+import Game.Event
 import Game.Physics (BlockHeightQuery)
 import UI.Tooltip
 import UI.Screen
 
 import Data.Binary (encode, decode)
+import Data.IORef (newIORef, readIORef, modifyIORef')
 import Linear (V2(..), V3(..))
 import qualified Data.Vector as V
 import Control.Concurrent.STM (atomically, readTVar, writeTVar)
@@ -83,6 +85,7 @@ main = hspec $ do
   dimensionSpec
   screenRegistrySpec
   componentSpec
+  eventBusSpec
 
 -- =========================================================================
 -- Block
@@ -2940,7 +2943,6 @@ dimensionSpec = describe "World.Dimension" $ do
       ]
     any (== Torch) results `shouldBe` True
 
-<<<<<<< HEAD
   describe "Game.Config" $ do
     it "defaultConfig has render distance 4" $ do
       cfgRenderDistance defaultConfig `shouldBe` 4
@@ -3136,3 +3138,85 @@ componentSpec = describe "Entity.Component" $ do
   it "getAI extracts AIState" $ do
     let st = AIIdle 2.5
     getAI [HealthComp 10 10, AIComp st] `shouldBe` Just st
+
+-- =========================================================================
+-- Event Bus
+-- =========================================================================
+eventBusSpec :: Spec
+eventBusSpec = describe "Game.Event" $ do
+  it "newEventBus starts with no handlers (emit does nothing)" $ do
+    bus <- newEventBus
+    -- emitting to an empty bus should not crash
+    emit bus (EvPlayerDied)
+
+  it "subscribe registers a handler that receives events" $ do
+    ref <- newIORef ([] :: [GameEvent])
+    bus <- newEventBus
+    subscribe bus (\ev -> modifyIORef' ref (++ [ev]))
+    emit bus (EvPlayerDamaged 5)
+    got <- readIORef ref
+    got `shouldBe` [EvPlayerDamaged 5]
+
+  it "emit dispatches to multiple handlers in subscription order" $ do
+    ref <- newIORef ([] :: [Int])
+    bus <- newEventBus
+    subscribe bus (\_ -> modifyIORef' ref (++ [1]))
+    subscribe bus (\_ -> modifyIORef' ref (++ [2]))
+    subscribe bus (\_ -> modifyIORef' ref (++ [3]))
+    emit bus EvPlayerDied
+    got <- readIORef ref
+    got `shouldBe` [1, 2, 3]
+
+  it "handler receives the exact event that was emitted" $ do
+    ref <- newIORef Nothing
+    bus <- newEventBus
+    subscribe bus (\ev -> modifyIORef' ref (const (Just ev)))
+    let ev = EvBlockBroken (V3 1 2 3) Stone
+    emit bus ev
+    got <- readIORef ref
+    got `shouldBe` Just ev
+
+  it "each emit invokes all handlers independently" $ do
+    counter <- newIORef (0 :: Int)
+    bus <- newEventBus
+    subscribe bus (\_ -> modifyIORef' counter (+ 1))
+    subscribe bus (\_ -> modifyIORef' counter (+ 1))
+    emit bus EvPlayerDied
+    emit bus EvPlayerDied
+    got <- readIORef counter
+    got `shouldBe` 4
+
+  it "handlers subscribed after an emit do not see past events" $ do
+    ref <- newIORef ([] :: [GameEvent])
+    bus <- newEventBus
+    emit bus EvPlayerDied
+    subscribe bus (\ev -> modifyIORef' ref (++ [ev]))
+    got <- readIORef ref
+    got `shouldBe` []
+
+  it "EvBlockPlaced carries the correct block type" $ do
+    ref <- newIORef Nothing
+    bus <- newEventBus
+    subscribe bus (\ev -> modifyIORef' ref (const (Just ev)))
+    let ev = EvBlockPlaced (V3 10 64 10) Cobblestone
+    emit bus ev
+    got <- readIORef ref
+    got `shouldBe` Just ev
+
+  it "EvMobKilled carries tag and entity id" $ do
+    ref <- newIORef Nothing
+    bus <- newEventBus
+    subscribe bus (\ev -> modifyIORef' ref (const (Just ev)))
+    let ev = EvMobKilled "Zombie" 42
+    emit bus ev
+    got <- readIORef ref
+    got `shouldBe` Just ev
+
+  it "EvAchievementUnlocked carries the achievement name" $ do
+    ref <- newIORef Nothing
+    bus <- newEventBus
+    subscribe bus (\ev -> modifyIORef' ref (const (Just ev)))
+    let ev = EvAchievementUnlocked "first_diamond"
+    emit bus ev
+    got <- readIORef ref
+    got `shouldBe` Just ev
