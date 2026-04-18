@@ -7,6 +7,7 @@ import World.Block
 import World.Chunk
 import World.Noise
 import World.World (worldToChunkLocal, World(..), newWorld, worldGetBlock, worldSetBlock, triggerGravityAbove, settleGravityBlock, settleChunkGravity)
+import World.Structure
 import World.Generation (defaultGenConfig)
 import Game.Inventory
 import Game.Item
@@ -64,6 +65,7 @@ main = hspec $ do
   dispenserBlockSpec
   enchantingTableSpec
   enchantingSystemSpec
+  structureSpec
 
 -- =========================================================================
 -- Block
@@ -2050,3 +2052,165 @@ enchantingSystemSpec = describe "Game.Enchanting" $ do
   it "applyEnchantment returns a description" $ do
     let desc = applyEnchantment (Enchantment Sharpness 3)
     desc `shouldSatisfy` (not . null)
+
+-- =========================================================================
+-- World structures
+-- =========================================================================
+structureSpec :: Spec
+structureSpec = describe "World.Structure" $ do
+  -- Well structure
+  it "wellStructure has correct name" $ do
+    stName wellStructure `shouldBe` "Well"
+
+  it "wellStructure has correct size" $ do
+    stSize wellStructure `shouldBe` V3 5 4 5
+
+  it "wellStructure has non-empty block list" $ do
+    length (stBlocks wellStructure) `shouldSatisfy` (> 0)
+
+  it "wellStructure contains water blocks" $ do
+    let hasWater = any (\sb -> sbBlock sb == Water) (stBlocks wellStructure)
+    hasWater `shouldBe` True
+
+  it "wellStructure contains cobblestone blocks" $ do
+    let hasCobble = any (\sb -> sbBlock sb == Cobblestone) (stBlocks wellStructure)
+    hasCobble `shouldBe` True
+
+  it "wellStructure floor has 25 cobblestone blocks" $ do
+    let floorBlocks = filter (\sb -> let V3 _ y _ = sbOffset sb in y == 0 && sbBlock sb == Cobblestone) (stBlocks wellStructure)
+    length floorBlocks `shouldBe` 25
+
+  it "wellStructure has 9 water blocks in interior" $ do
+    let waterBlocks = filter (\sb -> sbBlock sb == Water) (stBlocks wellStructure)
+    length waterBlocks `shouldBe` 9
+
+  -- Desert temple structure
+  it "desertTempleStructure has correct name" $ do
+    stName desertTempleStructure `shouldBe` "Desert Temple"
+
+  it "desertTempleStructure has correct size" $ do
+    stSize desertTempleStructure `shouldBe` V3 9 8 9
+
+  it "desertTempleStructure contains sand blocks" $ do
+    let hasSand = any (\sb -> sbBlock sb == Sand) (stBlocks desertTempleStructure)
+    hasSand `shouldBe` True
+
+  it "desertTempleStructure contains a hidden chest" $ do
+    let hasChest = any (\sb -> sbBlock sb == Chest) (stBlocks desertTempleStructure)
+    hasChest `shouldBe` True
+
+  it "desertTempleStructure has stone brick chamber" $ do
+    let hasStoneBrick = any (\sb -> sbBlock sb == StoneBrick) (stBlocks desertTempleStructure)
+    hasStoneBrick `shouldBe` True
+
+  it "desertTempleStructure has non-empty block list" $ do
+    length (stBlocks desertTempleStructure) `shouldSatisfy` (> 0)
+
+  -- Dungeon structure
+  it "dungeonStructure has correct name" $ do
+    stName dungeonStructure `shouldBe` "Dungeon"
+
+  it "dungeonStructure has correct size" $ do
+    stSize dungeonStructure `shouldBe` V3 7 5 7
+
+  it "dungeonStructure contains cobblestone walls" $ do
+    let hasCobble = any (\sb -> sbBlock sb == Cobblestone) (stBlocks dungeonStructure)
+    hasCobble `shouldBe` True
+
+  it "dungeonStructure contains a chest" $ do
+    let hasChest = any (\sb -> sbBlock sb == Chest) (stBlocks dungeonStructure)
+    hasChest `shouldBe` True
+
+  it "dungeonStructure contains a torch" $ do
+    let hasTorch = any (\sb -> sbBlock sb == Torch) (stBlocks dungeonStructure)
+    hasTorch `shouldBe` True
+
+  it "dungeonStructure has non-empty block list" $ do
+    length (stBlocks dungeonStructure) `shouldSatisfy` (> 0)
+
+  -- Village house structure
+  it "villageHouseStructure has correct name" $ do
+    stName villageHouseStructure `shouldBe` "Village House"
+
+  it "villageHouseStructure has correct size" $ do
+    stSize villageHouseStructure `shouldBe` V3 5 5 5
+
+  it "villageHouseStructure contains oak planks" $ do
+    let hasPlanks = any (\sb -> sbBlock sb == OakPlanks) (stBlocks villageHouseStructure)
+    hasPlanks `shouldBe` True
+
+  it "villageHouseStructure contains a door" $ do
+    let hasDoor = any (\sb -> sbBlock sb == OakDoorClosed) (stBlocks villageHouseStructure)
+    hasDoor `shouldBe` True
+
+  it "villageHouseStructure contains a bed" $ do
+    let hasBed = any (\sb -> sbBlock sb == Bed) (stBlocks villageHouseStructure)
+    hasBed `shouldBe` True
+
+  it "villageHouseStructure contains a torch" $ do
+    let hasTorch = any (\sb -> sbBlock sb == Torch) (stBlocks villageHouseStructure)
+    hasTorch `shouldBe` True
+
+  it "villageHouseStructure has non-empty block list" $ do
+    length (stBlocks villageHouseStructure) `shouldSatisfy` (> 0)
+
+  -- placeStructure integration test
+  it "placeStructure places blocks into the world" $ do
+    world <- makeTestWorld
+    placeStructure world (V3 0 64 0) wellStructure
+    -- Check cobblestone floor at origin
+    bt00 <- worldGetBlock world (V3 0 64 0)
+    bt00 `shouldBe` Cobblestone
+    -- Check water in center
+    btWater <- worldGetBlock world (V3 2 65 2)
+    btWater `shouldBe` Water
+
+  it "placeStructure respects offset" $ do
+    world <- makeTestWorld
+    placeStructure world (V3 5 70 5) dungeonStructure
+    -- Floor corner at (5,70,5)
+    bt <- worldGetBlock world (V3 5 70 5)
+    bt `shouldBe` Cobblestone
+    -- Chest at center (5+3, 70+1, 5+3) = (8, 71, 8)
+    btChest <- worldGetBlock world (V3 8 71 8)
+    btChest `shouldBe` Chest
+
+  it "placeStructure does not affect unrelated positions" $ do
+    world <- makeTestWorld
+    placeStructure world (V3 0 64 0) wellStructure
+    -- Position outside the structure should still be Air
+    btFar <- worldGetBlock world (V3 10 64 10)
+    btFar `shouldBe` Air
+
+  -- Block offsets stay within bounding box
+  it "all wellStructure offsets are within bounding box" $ do
+    let V3 sx sy sz = stSize wellStructure
+    mapM_ (\(StructureBlock (V3 x y z) _) -> do
+      x `shouldSatisfy` (\v -> v >= 0 && v < sx)
+      y `shouldSatisfy` (\v -> v >= 0 && v < sy)
+      z `shouldSatisfy` (\v -> v >= 0 && v < sz)
+      ) (stBlocks wellStructure)
+
+  it "all desertTempleStructure offsets are within bounding box" $ do
+    let V3 sx sy sz = stSize desertTempleStructure
+    mapM_ (\(StructureBlock (V3 x y z) _) -> do
+      x `shouldSatisfy` (\v -> v >= 0 && v < sx)
+      y `shouldSatisfy` (\v -> v >= 0 && v < sy)
+      z `shouldSatisfy` (\v -> v >= 0 && v < sz)
+      ) (stBlocks desertTempleStructure)
+
+  it "all dungeonStructure offsets are within bounding box" $ do
+    let V3 sx sy sz = stSize dungeonStructure
+    mapM_ (\(StructureBlock (V3 x y z) _) -> do
+      x `shouldSatisfy` (\v -> v >= 0 && v < sx)
+      y `shouldSatisfy` (\v -> v >= 0 && v < sy)
+      z `shouldSatisfy` (\v -> v >= 0 && v < sz)
+      ) (stBlocks dungeonStructure)
+
+  it "all villageHouseStructure offsets are within bounding box" $ do
+    let V3 sx sy sz = stSize villageHouseStructure
+    mapM_ (\(StructureBlock (V3 x y z) _) -> do
+      x `shouldSatisfy` (\v -> v >= 0 && v < sx)
+      y `shouldSatisfy` (\v -> v >= 0 && v < sy)
+      z `shouldSatisfy` (\v -> v >= 0 && v < sz)
+      ) (stBlocks villageHouseStructure)
