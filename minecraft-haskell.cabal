@@ -67,6 +67,7 @@ library
     Game.Inventory
     Game.Item
     Game.Furnace
+    Game.Achievement
     Game.Crafting
     Game.Enchanting
     Game.DayNight
