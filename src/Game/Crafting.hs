@@ -301,7 +301,7 @@ allRecipes =
       , rcResult  = BlockItem OakSlab
       , rcCount   = 6
       }
-  ] ++ toolRecipes ++ shearsRecipe
+  ] ++ toolRecipes ++ shearsRecipe ++ dispenserRecipe
 
 -- | Shears crafting recipe: 2 iron ingots diagonal
 shearsRecipe :: [Recipe]
@@ -309,6 +309,15 @@ shearsRecipe =
   [ Recipe [[Nothing, ji (MaterialItem IronIngot)]
            ,[ji (MaterialItem IronIngot), Nothing]]
            (ShearsItem 238) 1
+  ]
+
+-- | Dispenser crafting recipe: 7 cobblestone surrounding, redstone dust center
+dispenserRecipe :: [Recipe]
+dispenserRecipe =
+  [ Recipe [[bi Cobblestone, bi Cobblestone, bi Cobblestone]
+           ,[bi Cobblestone, bi RedstoneDust, bi Cobblestone]
+           ,[bi Cobblestone, bi Cobblestone, bi Cobblestone]]
+           (BlockItem Dispenser) 1
   ]
 
 -- | Helper to create a tool item with full durability

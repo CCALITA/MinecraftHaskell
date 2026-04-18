@@ -69,6 +69,7 @@ data BlockType
   | SugarCane
   | StoneSlab
   | OakSlab
+  | Dispenser
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -154,6 +155,7 @@ blockProperties = \case
   SugarCane    -> BlockProperties False True  0  0
   StoneSlab    -> BlockProperties True  True  0  1.5
   OakSlab      -> BlockProperties True  True  0  2.0
+  Dispenser    -> BlockProperties True  False 0  3.5
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -256,3 +258,6 @@ blockFaceTexCoords blockType face = case blockType of
   SugarCane   -> V2 4 5
   StoneSlab   -> V2 1 0
   OakSlab     -> V2 4 0
+  Dispenser   -> case face of
+    FaceSouth  -> V2 5 5  -- front face with opening
+    _          -> V2 14 3 -- stone-like sides (reuse furnace top)

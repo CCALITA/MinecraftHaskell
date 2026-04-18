@@ -66,7 +66,7 @@ import System.Environment (getArgs)
 import Data.Char (isDigit)
 
 -- | Game UI mode
-data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen | FurnaceOpen | DeathScreen
+data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen | FurnaceOpen | DispenserOpen | DeathScreen
   deriving stock (Show, Eq)
 
 -- | Debug overlay information shown when F3 is active
@@ -217,6 +217,7 @@ main = do
     -- Block entity storage (chests)
     blockEntityMapRef <- newBlockEntityMap
     chestPosRef <- newIORef (Nothing :: Maybe (V3 Int))
+    dispenserPosRef <- newIORef (Nothing :: Maybe (V3 Int))
 
     -- Redstone state
     redstoneStateRef <- newIORef =<< newRedstoneState
@@ -363,6 +364,7 @@ main = do
             writeIORef furnaceStateRef newFurnaceState
             writeIORef furnacePosRef Nothing
             writeIORef chestPosRef Nothing
+            writeIORef dispenserPosRef Nothing
             writeIORef blockEntityMapRef HM.empty
             writeIORef droppedItems []
             writeIORef (ewEntities entityWorld) IM.empty
@@ -615,6 +617,37 @@ main = do
           -- Sync furnace IORef back to block entity after any UI interaction
           syncFurnaceToMap
 
+        DispenserOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
+          (mx, my) <- readIORef mousePosRef
+          (winW, winH) <- getWindowSize wh
+          let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+              ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
+              mSlot = hitDispenserSlot ndcX ndcY
+          case mSlot of
+            Just (DispenserSlot idx) -> do
+              -- Click on dispenser slot (0-8): swap with cursor
+              mDispPos <- readIORef dispenserPosRef
+              case mDispPos of
+                Nothing -> pure ()
+                Just dPos -> do
+                  mDispInv <- getDispenserInventory blockEntityMapRef dPos
+                  case mDispInv of
+                    Nothing -> pure ()
+                    Just dispInv -> do
+                      cursor <- readIORef cursorItemRef
+                      let slotContent = getDispenserSlot dispInv idx
+                          newDispInv = setDispenserSlot dispInv idx cursor
+                      setDispenserInventory blockEntityMapRef dPos newDispInv
+                      writeIORef cursorItemRef slotContent
+            Just (DispenserInvSlot idx) -> do
+              -- Click on player inventory slot: swap with cursor
+              curInv <- readIORef inventoryRef
+              cursor <- readIORef cursorItemRef
+              let slotContent = getSlot curInv idx
+              modifyIORef' inventoryRef (\i -> setSlot i idx cursor)
+              writeIORef cursorItemRef slotContent
+            Nothing -> pure ()
+
         DeathScreen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
           (winW, winH) <- getWindowSize wh
@@ -744,6 +777,16 @@ main = do
                           writeIORef gameModeRef ChestOpen
                           GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
                           writeIORef lastCursorRef Nothing
+                        Dispenser -> do
+                          let dPos = V3 bx by bz
+                          mExisting <- getDispenserInventory blockEntityMapRef dPos
+                          case mExisting of
+                            Nothing -> setDispenserInventory blockEntityMapRef dPos emptyDispenserInventory
+                            Just _  -> pure ()
+                          writeIORef dispenserPosRef (Just dPos)
+                          writeIORef gameModeRef DispenserOpen
+                          GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+                          writeIORef lastCursorRef Nothing
                         CraftingTable -> do
                           writeIORef gameModeRef CraftingOpen
                           writeIORef craftingGridRef (emptyCraftingGrid 3)
@@ -772,6 +815,9 @@ main = do
                           propagateRedstone rsState [(pos, newPower)]
                           -- Update iron doors adjacent to redstone-powered positions
                           updateIronDoors world rsState pos physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
+                          -- Dispense items from adjacent dispensers when powered
+                          when (newPower > 0) $
+                            dispenseFromDispensers world rsState blockEntityMapRef droppedItems pos
                           rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
                         _ -> do
                           -- Place painting on wall face when hand is empty
@@ -953,6 +999,9 @@ main = do
                 when (curMode == FurnaceOpen) $ do
                   syncFurnaceToMap
                   writeIORef furnacePosRef Nothing
+                -- Clear dispenser reference when closing dispenser
+                when (curMode == DispenserOpen) $
+                  writeIORef dispenserPosRef Nothing
                 -- Switch back to playing
                 writeIORef gameModeRef Playing
                 GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
@@ -1154,6 +1203,17 @@ main = do
                                 dropStack (getFurnaceInput fs)
                                 dropStack (getFurnaceFuel fs)
                                 dropStack (getFurnaceOutput fs)
+                              _ -> pure ()
+                          -- If it's a dispenser, drop all stored items and remove block entity
+                          when (bt == Dispenser) $ do
+                            mBE <- removeBlockEntity blockEntityMapRef blockPos
+                            case mBE of
+                              Just (DispenserData dispInv) ->
+                                forM_ [0 .. dispenserSlots - 1] $ \si ->
+                                  case getDispenserSlot dispInv si of
+                                    Just (ItemStack item cnt) ->
+                                      spawnDrop droppedItems item cnt (V3 bxf byf bzf)
+                                    Nothing -> pure ()
                               _ -> pure ()
                           -- Consume tool durability (regular tools and shears)
                           inv' <- readIORef inventoryRef
@@ -1637,6 +1697,14 @@ main = do
                   Just cPos -> getChestInventory blockEntityMapRef cPos
                   Nothing   -> pure Nothing
               _ -> pure Nothing
+            -- Get dispenser inventory if a dispenser is open
+            mDispInv <- case mode of
+              DispenserOpen -> do
+                mPos <- readIORef dispenserPosRef
+                case mPos of
+                  Just dPos -> getDispenserInventory blockEntityMapRef dPos
+                  Nothing   -> pure Nothing
+              _ -> pure Nothing
             (mx, my) <- readIORef mousePosRef
             (winW, winH) <- getWindowSize wh
             let mouseNdcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
@@ -1648,7 +1716,7 @@ main = do
             when (damageFlash > 0) $
               writeIORef damageFlashRef (max 0 (damageFlash - dt))
             let particleVerts = if mode == Playing then renderParticles particles vp else []
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg damageFlash mouseNdcX mouseNdcY
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg damageFlash mouseNdcX mouseNdcY
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -1986,6 +2054,38 @@ hitChestSlot nx ny
   where
     chestY0  = -0.35 :: Float
     playerY0 = 0.1 :: Float
+
+-- | Dispenser slot types
+data DispenserSlotType = DispenserSlot !Int | DispenserInvSlot !Int
+  deriving stock (Show, Eq)
+
+-- | Check if NDC coordinates hit a dispenser UI slot
+-- Dispenser grid: 3 rows of 3 slots starting at dispGridY0 = -0.35, centered at dispGridX0 = -0.2
+-- Player inventory: 4 rows of 9 starting at dispInvY0 = 0.1
+hitDispenserSlot :: Float -> Float -> Maybe DispenserSlotType
+hitDispenserSlot nx ny
+  -- Dispenser slots (3 rows of 3)
+  | ny >= dispY0 && ny < dispY0 + 3 * invSlotH
+  , nx >= dispX0 && nx < dispX0 + 3 * invSlotW =
+      let col = floor ((nx - dispX0) / invSlotW) :: Int
+          row = floor ((ny - dispY0) / invSlotH) :: Int
+      in if col >= 0 && col < 3 && row >= 0 && row < 3
+         then Just (DispenserSlot (row * 3 + col))
+         else Nothing
+  -- Player inventory slots (4 rows of 9)
+  | ny >= dispPlayerY0 && ny < dispPlayerY0 + 4 * invSlotH
+  , nx >= invGridX0 && nx < invGridX0 + 9 * invSlotW =
+      let col = floor ((nx - invGridX0) / invSlotW) :: Int
+          row = floor ((ny - dispPlayerY0) / invSlotH) :: Int
+      in if col >= 0 && col < 9 && row >= 0 && row < 4
+         then Just (DispenserInvSlot (if row == 0 then col else 9 + (row - 1) * 9 + col))
+         else Nothing
+  | otherwise = Nothing
+  where
+    dispX0 = -0.2 :: Float
+    dispY0 = -0.35 :: Float
+    dispPlayerY0 = 0.1 :: Float
+
 -- | Furnace slot targets
 data FurnaceSlot = FurnaceInputSlot | FurnaceFuelSlot | FurnaceOutputSlot | FurnaceInvSlot !Int
   deriving stock (Show, Eq)
@@ -2041,8 +2141,8 @@ checkLogNearby world (V3 wx wy wz) radius = go offsets
 -- debugInfo: Just DebugInfo when F3 overlay is active
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- showSleepMsg: True when "You can only sleep at night" should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Bool -> Float -> Float -> Float -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv furnaceState debugInfo targetInfo showSleepMsg damageFlash mouseX mouseY = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Bool -> Float -> Float -> Float -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo showSleepMsg damageFlash mouseX mouseY = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
@@ -2051,6 +2151,7 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
     CraftingOpen  -> craftScreenVerts ++ cursorVerts
     ChestOpen     -> chestScreenVerts ++ cursorVerts
     FurnaceOpen   -> furnaceScreenVerts ++ cursorVerts
+    DispenserOpen -> dispenserScreenVerts ++ cursorVerts
     DeathScreen   -> deathScreenVerts
   where
     -- Crosshair: white + at center
@@ -2606,6 +2707,62 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
 
+    -- Dispenser screen: 3x3 grid of 9 slots + player inventory below
+    dispenserScreenVerts =
+      quad (-1) (-1) 1 1 (0, 0, 0, 0.5)
+      -- Title label area
+      ++ renderTextCentered (-0.45) 1.0 (1, 1, 1, 1) "DISPENSER"
+      -- Dispenser slots: 3 rows of 3 at top
+      ++ quad (dispGridX0 - 0.02) (dispGridY0 - 0.02)
+              (dispGridX0 + 3 * invSlotW + 0.02) (dispGridY0 + 3 * invSlotH + 0.02)
+              (0.35, 0.3, 0.3, 0.9)
+      ++ concatMap renderDispSlot [0..8]
+      -- Player inventory grid below
+      ++ quad (invGridX0 - 0.02) (dispInvY0 - 0.02)
+              (invGridX0 + 9 * invSlotW + 0.02) (dispInvY0 + 4 * invSlotH + 0.02)
+              (0.3, 0.3, 0.3, 0.9)
+      ++ concatMap renderDispInvSlot [0..35]
+      where
+        dispGridX0 = -0.2 :: Float   -- centered 3-wide grid
+        dispGridY0 = -0.35 :: Float  -- top edge of dispenser grid
+        dispInvY0  = 0.1 :: Float    -- top edge of player inventory
+
+        renderDispSlot idx =
+          let row = idx `div` 3
+              col = idx `mod` 3
+              x = dispGridX0 + fromIntegral col * invSlotW + invSlotPad
+              y = dispGridY0 + fromIntegral row * invSlotH + invSlotPad
+              sw = invSlotW - 2 * invSlotPad
+              sh = invSlotH - 2 * invSlotPad
+              slotBg = quad x y (x + sw) (y + sh) (0.2, 0.18, 0.15, 0.8)
+          in case mDispInv of
+            Nothing -> slotBg
+            Just dispInv -> case getDispenserSlot dispInv idx of
+              Nothing -> slotBg
+              Just (ItemStack item _) ->
+                let colors = itemMiniIcon item
+                    pixW = sw / 3; pixH = sh / 3
+                in slotBg ++ concatMap (\(r, c, clr) ->
+                     quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                          (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
+        renderDispInvSlot idx =
+          let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
+              col = if idx < 9 then idx else (idx - 9) `mod` 9
+              x = invGridX0 + fromIntegral col * invSlotW + invSlotPad
+              y = dispInvY0 + fromIntegral row * invSlotH + invSlotPad
+              sw = invSlotW - 2 * invSlotPad
+              sh = invSlotH - 2 * invSlotPad
+              slotBg = quad x y (x + sw) (y + sh) (0.2, 0.18, 0.12, 0.8)
+          in case getSlot inv idx of
+            Nothing -> slotBg
+            Just (ItemStack item _) ->
+              let colors = itemMiniIcon item
+                  pixW = sw / 3; pixH = sh / 3
+              in slotBg ++ concatMap (\(r, c, clr) ->
+                   quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                        (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
     -- Cursor item (follows mouse position — simplified to center for now)
     cursorVerts = case cursorItem of
       Nothing -> []
@@ -2679,6 +2836,41 @@ updateIronDoors world rsState sourcePos physDevice device cmdPool queue meshCach
         rebuildChunkAt world physDevice device cmdPool queue meshCacheRef nx nz
       _ -> pure ()
 
+-- | Dispense items from dispensers adjacent to a redstone source.
+--   When a neighbor is a Dispenser block, pick a random non-empty slot and
+--   spawn the item as a dropped entity in front of the dispenser.
+dispenseFromDispensers
+  :: World -> RedstoneState -> BlockEntityMap -> DroppedItems -> V3 Int
+  -> IO ()
+dispenseFromDispensers world _rsState blockEntityMapRef droppedItemsRef sourcePos = do
+  let neighbors = [ sourcePos + d | d <- [ V3 1 0 0, V3 (-1) 0 0
+                                          , V3 0 1 0, V3 0 (-1) 0
+                                          , V3 0 0 1, V3 0 0 (-1) ] ]
+  forM_ neighbors $ \nPos -> do
+    blk <- worldGetBlock world nPos
+    when (blk == Dispenser) $ do
+      mDispInv <- getDispenserInventory blockEntityMapRef nPos
+      case mDispInv of
+        Nothing -> pure ()
+        Just dispInv -> do
+          -- Find all non-empty slots
+          let nonEmpty = [ (i, s) | i <- [0..dispenserSlots - 1]
+                                  , Just s <- [getDispenserSlot dispInv i] ]
+          case nonEmpty of
+            [] -> pure ()
+            slots -> do
+              -- Pick a random non-empty slot
+              idx <- randomRIO (0, length slots - 1)
+              let (slotIdx, ItemStack item cnt) = slots !! idx
+                  -- Dispense one item: decrement or clear slot
+                  newStack = if cnt <= 1 then Nothing else Just (ItemStack item (cnt - 1))
+                  newInv = setDispenserSlot dispInv slotIdx newStack
+                  -- Spawn in front of the dispenser (away from source)
+                  V3 dx dy dz = nPos - sourcePos
+                  dropPos = fmap fromIntegral nPos + V3 (fromIntegral dx + 0.5) (fromIntegral dy + 0.5) (fromIntegral dz + 0.5)
+              setDispenserInventory blockEntityMapRef nPos newInv
+              spawnDrop droppedItemsRef item 1 dropPos
+
 -- | Get a display color for an item (used for hotbar slot rendering)
 itemColor :: Item -> (Float, Float, Float, Float)
 itemColor (BlockItem bt) = case bt of
@@ -2724,6 +2916,7 @@ itemColor (BlockItem bt) = case bt of
   SugarCane   -> (0.4, 0.7, 0.3, 1.0)
   StoneSlab   -> (0.5, 0.5, 0.5, 1.0)
   OakSlab     -> (0.78, 0.65, 0.43, 1.0)
+  Dispenser   -> (0.5, 0.5, 0.5, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)

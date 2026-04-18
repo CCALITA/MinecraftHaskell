@@ -72,6 +72,7 @@ isRedstoneConductor = \case
   OakPlanks   -> True
   StoneBrick  -> True
   Brick       -> True
+  Dispenser   -> True
   _           -> False
 
 -- | Full redstone update: propagate from all sources.
