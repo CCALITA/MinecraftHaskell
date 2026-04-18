@@ -57,6 +57,7 @@ library
     World.Biome
     World.Generation
     World.World
+    World.Structure
     World.Light
     World.Redstone
     World.Fluid
