@@ -7,6 +7,8 @@ module Game.Crafting
   , getCraftingSlot
   , tryCraft
   , allRecipes
+  , extractPattern
+  , matchesPattern
   ) where
 
 import World.Block (BlockType(..))

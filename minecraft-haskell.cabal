@@ -74,6 +74,7 @@ library
     Game.Achievement
     Game.Config
     Game.Crafting
+    Game.RecipeRegistry
     Game.Enchanting
     Game.Event
     Game.DayNight
