@@ -78,6 +78,7 @@ library
     Game.Event
     Game.DayNight
     Game.Save
+    Game.SaveV3
     Game.State
     Game.ItemDisplay
     Game.DroppedItem
@@ -147,3 +148,4 @@ test-suite minecraft-test
     , stm
     , unordered-containers
     , binary
+    , bytestring

@@ -15,6 +15,7 @@ import Game.Crafting
 import Game.Player
 import Game.DroppedItem
 import Game.Save (SaveData(..), inventoryToSlotList, slotListToInventory)
+import Game.SaveV3 (SaveDataV3(..), ChunkMeta(..), savev3Version, encodeSaveV3, decodeSaveV3, migrateV2toV3)
 import Game.BlockEntity
 import Game.Furnace
 import World.Weather
@@ -37,6 +38,8 @@ import UI.Screen
 
 import Data.Binary (encode, decode)
 import Data.IORef (newIORef, readIORef, modifyIORef')
+import qualified Data.ByteString.Lazy as BL
+import Data.Word (Word8)
 import Linear (V2(..), V3(..))
 import qualified Data.Vector as V
 import Control.Concurrent.STM (atomically, readTVar, writeTVar)
@@ -86,6 +89,7 @@ main = hspec $ do
   screenRegistrySpec
   componentSpec
   eventBusSpec
+  saveV3Spec
 
 -- =========================================================================
 -- Block
@@ -3220,3 +3224,108 @@ eventBusSpec = describe "Game.Event" $ do
     emit bus ev
     got <- readIORef ref
     got `shouldBe` Just ev
+
+-- =========================================================================
+-- SaveV3
+-- =========================================================================
+saveV3Spec :: Spec
+saveV3Spec = describe "Game.SaveV3" $ do
+
+  it "savev3Version is 3" $ do
+    savev3Version `shouldBe` (3 :: Word8)
+
+  it "SaveDataV3 roundtrips through Binary encode/decode" $ do
+    let sd = sampleV3
+    decode (encode sd) `shouldBe` sd
+
+  it "encodeSaveV3/decodeSaveV3 roundtrip" $ do
+    let sd = sampleV3
+    decodeSaveV3 (encodeSaveV3 sd) `shouldBe` Just sd
+
+  it "decodeSaveV3 rejects wrong version prefix" $ do
+    -- Write version 2 prefix followed by valid V3 payload
+    let badBytes = encode (2 :: Word8) <> encode sampleV3
+    decodeSaveV3 badBytes `shouldBe` Nothing
+
+  it "decodeSaveV3 rejects truncated input" $ do
+    decodeSaveV3 BL.empty `shouldBe` Nothing
+
+  it "ChunkMeta roundtrips through Binary" $ do
+    let cm = ChunkMeta (V2 3 (-5)) True False
+    decode (encode cm) `shouldBe` cm
+
+  it "migrateV2toV3 preserves player position" $ do
+    let v2 = sampleV2
+        v3 = migrateV2toV3 v2
+    sv3PlayerPos v3 `shouldBe` sdPlayerPos v2
+
+  it "migrateV2toV3 preserves inventory" $ do
+    let v2 = sampleV2
+        v3 = migrateV2toV3 v2
+    sv3Inventory v3 `shouldBe` sdInventory v2
+
+  it "migrateV2toV3 converts Int health to Float" $ do
+    let v2 = sampleV2 { sdHealth = 15 }
+        v3 = migrateV2toV3 v2
+    sv3Health v3 `shouldBe` 15.0
+
+  it "migrateV2toV3 sets version to 3" $ do
+    let v3 = migrateV2toV3 sampleV2
+    sv3Version v3 `shouldBe` savev3Version
+
+  it "migrateV2toV3 defaults: XP=0, airSupply=15, weather=Clear" $ do
+    let v3 = migrateV2toV3 sampleV2
+    sv3XP v3 `shouldBe` 0
+    sv3XPLevel v3 `shouldBe` 0
+    sv3AirSupply v3 `shouldBe` 15.0
+    sv3WeatherType v3 `shouldBe` 0
+
+  it "SaveDataV3 with non-empty armor and chunk metas roundtrips" $ do
+    let sd = sampleV3
+              { sv3ArmorSlots = [Just (ToolItem Pickaxe Diamond 100, 1), Nothing, Nothing, Nothing]
+              , sv3ChunkMetas = [ChunkMeta (V2 0 0) True True, ChunkMeta (V2 1 (-1)) False False]
+              }
+    decode (encode sd) `shouldBe` sd
+
+-- | Sample V2 save data for migration tests
+sampleV2 :: SaveData
+sampleV2 = SaveData
+  { sdPlayerPos    = (10.5, 65.0, -3.2)
+  , sdPlayerYaw    = 90.0
+  , sdPlayerPitch  = -15.0
+  , sdPlayerFlying = False
+  , sdWorldSeed    = 42
+  , sdDayTime      = 0.5
+  , sdDayCount     = 7
+  , sdHealth       = 18
+  , sdHunger       = 16
+  , sdFallDist     = 1.2
+  , sdInventory    = [(0, BlockItem Stone, 32), (1, ToolItem Sword Iron 200, 1)]
+  , sdSelectedSlot = 0
+  }
+
+-- | Sample V3 save data for roundtrip tests
+sampleV3 :: SaveDataV3
+sampleV3 = SaveDataV3
+  { sv3Version      = savev3Version
+  , sv3PlayerPos    = (1.5, 65.0, -3.2)
+  , sv3PlayerYaw    = 45.0
+  , sv3PlayerPitch  = -10.0
+  , sv3Flying       = True
+  , sv3Health       = 18.5
+  , sv3Hunger       = 12
+  , sv3Saturation   = 8.0
+  , sv3XP           = 150
+  , sv3XPLevel      = 5
+  , sv3FallDist     = 0.0
+  , sv3AirSupply    = 15.0
+  , sv3DayTime      = 0.75
+  , sv3DayCount     = 3
+  , sv3WeatherType  = 1
+  , sv3WeatherTimer = 300.0
+  , sv3Inventory    = [(0, BlockItem Stone, 64), (1, ToolItem Pickaxe Diamond 1500, 1)]
+  , sv3ArmorSlots   = []
+  , sv3SpawnPoint   = (0, 80, 0)
+  , sv3WorldSeed    = 12345
+  , sv3ChunkMetas   = []
+  }
