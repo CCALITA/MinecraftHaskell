@@ -23,6 +23,7 @@ import World.Redstone
 
 import Game.Enchanting
 import Game.Physics (BlockHeightQuery)
+import UI.Tooltip
 
 import Data.Binary (encode, decode)
 import Linear (V2(..), V3(..))
@@ -64,6 +65,7 @@ main = hspec $ do
   dispenserBlockSpec
   enchantingTableSpec
   enchantingSystemSpec
+  tooltipSpec
 
 -- =========================================================================
 -- Block
@@ -2050,3 +2052,127 @@ enchantingSystemSpec = describe "Game.Enchanting" $ do
   it "applyEnchantment returns a description" $ do
     let desc = applyEnchantment (Enchantment Sharpness 3)
     desc `shouldSatisfy` (not . null)
+
+-- =========================================================================
+-- Tooltip
+-- =========================================================================
+tooltipSpec :: Spec
+tooltipSpec = describe "UI.Tooltip" $ do
+  -- buildTooltip: BlockItem
+  it "BlockItem Stone tooltip has name Stone" $ do
+    let tt = buildTooltip (BlockItem Stone) []
+    ttName tt `shouldBe` "Stone"
+
+  it "BlockItem has no lore, no enchantments, no durability" $ do
+    let tt = buildTooltip (BlockItem Dirt) []
+    ttLoreLines tt `shouldBe` []
+    ttEnchantments tt `shouldBe` []
+    ttDurability tt `shouldBe` Nothing
+
+  -- buildTooltip: ToolItem
+  it "Diamond Pickaxe tooltip has correct name" $ do
+    let tt = buildTooltip (ToolItem Pickaxe Diamond 1200) []
+    ttName tt `shouldBe` "Diamond Pickaxe"
+
+  it "ToolItem tooltip has durability" $ do
+    let tt = buildTooltip (ToolItem Pickaxe Diamond 1200) []
+    ttDurability tt `shouldBe` Just (1200, 1561)
+
+  it "Wooden Sword tooltip has correct name and durability" $ do
+    let tt = buildTooltip (ToolItem Sword Wood 59) []
+    ttName tt `shouldBe` "Wooden Sword"
+    ttDurability tt `shouldBe` Just (59, 59)
+
+  -- buildTooltip: FoodItem
+  it "Steak tooltip has hunger lore" $ do
+    let tt = buildTooltip (FoodItem Steak) []
+    ttName tt `shouldBe` "Steak"
+    ttLoreLines tt `shouldBe` ["Restores 8 hunger"]
+    ttDurability tt `shouldBe` Nothing
+
+  it "Apple tooltip has hunger lore" $ do
+    let tt = buildTooltip (FoodItem Apple) []
+    ttLoreLines tt `shouldBe` ["Restores 4 hunger"]
+
+  -- buildTooltip: ArmorItem
+  it "Diamond Chestplate tooltip has defense lore and durability" $ do
+    let tt = buildTooltip (ArmorItem Chestplate DiamondArmor 500) []
+    ttName tt `shouldBe` "Diamond Chestplate"
+    ttLoreLines tt `shouldBe` ["Defense: 8"]
+    ttDurability tt `shouldBe` Just (500, 528)
+
+  it "Iron Helmet tooltip has correct defense" $ do
+    let tt = buildTooltip (ArmorItem Helmet IronArmor 200) []
+    ttLoreLines tt `shouldBe` ["Defense: 2"]
+    ttDurability tt `shouldBe` Just (200, 240)
+
+  -- buildTooltip: enchantments
+  it "enchantments appear in tooltip" $ do
+    let enchants = [Enchantment Efficiency 5, Enchantment Unbreaking 3]
+        tt = buildTooltip (ToolItem Pickaxe Diamond 1561) enchants
+    ttEnchantments tt `shouldBe` ["Efficiency V", "Unbreaking III"]
+
+  it "level 1 enchantment omits numeral" $ do
+    let tt = buildTooltip (ToolItem Sword Iron 250) [Enchantment Sharpness 1]
+    ttEnchantments tt `shouldBe` ["Sharpness"]
+
+  -- buildTooltip: misc items
+  it "Shears tooltip has durability" $ do
+    let tt = buildTooltip (ShearsItem 200) []
+    ttName tt `shouldBe` "Shears"
+    ttDurability tt `shouldBe` Just (200, 238)
+
+  it "Flint and Steel tooltip has durability" $ do
+    let tt = buildTooltip (FlintAndSteelItem 50) []
+    ttName tt `shouldBe` "Flint and Steel"
+    ttDurability tt `shouldBe` Just (50, 64)
+
+  it "FishingRod tooltip has durability" $ do
+    let tt = buildTooltip (FishingRodItem 64) []
+    ttName tt `shouldBe` "Fishing Rod"
+    ttDurability tt `shouldBe` Just (64, 64)
+
+  it "Compass tooltip has no lore or durability" $ do
+    let tt = buildTooltip CompassItem []
+    ttName tt `shouldBe` "Compass"
+    ttLoreLines tt `shouldBe` []
+    ttDurability tt `shouldBe` Nothing
+
+  it "StickItem tooltip has name Stick" $ do
+    let tt = buildTooltip StickItem []
+    ttName tt `shouldBe` "Stick"
+
+  it "MaterialItem Coal tooltip has name Coal" $ do
+    let tt = buildTooltip (MaterialItem Coal) []
+    ttName tt `shouldBe` "Coal"
+
+  it "PotionItem has lore line" $ do
+    let tt = buildTooltip (PotionItem HealingPotion) []
+    ttName tt `shouldBe` "Healing Potion"
+    ttLoreLines tt `shouldBe` ["Restores health"]
+
+  it "BoatItem tooltip has name Boat" $ do
+    let tt = buildTooltip BoatItem []
+    ttName tt `shouldBe` "Boat"
+
+  it "MinecartItem tooltip has name Minecart" $ do
+    let tt = buildTooltip MinecartItem []
+    ttName tt `shouldBe` "Minecart"
+
+  -- renderTooltipVertices
+  it "renderTooltipVertices produces non-empty vertex list" $ do
+    let tt = buildTooltip (BlockItem Stone) []
+        verts = renderTooltipVertices tt 0.0 0.0
+    length verts `shouldSatisfy` (> 0)
+
+  it "renderTooltipVertices vertex count is multiple of 6" $ do
+    let tt = buildTooltip (ToolItem Pickaxe Diamond 1200) [Enchantment Efficiency 5]
+        verts = renderTooltipVertices tt (-0.5) (-0.3)
+    (length verts `mod` 6) `shouldBe` 0
+
+  it "renderTooltipVertices with durability has more verts than without" $ do
+    let ttNoDur = buildTooltip (BlockItem Stone) []
+        ttDur   = buildTooltip (ToolItem Pickaxe Diamond 1200) []
+        vertsNoDur = renderTooltipVertices ttNoDur 0.0 0.0
+        vertsDur   = renderTooltipVertices ttDur   0.0 0.0
+    length vertsDur `shouldSatisfy` (> length vertsNoDur)
