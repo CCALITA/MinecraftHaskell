@@ -23,6 +23,7 @@ import World.Redstone
 
 import Game.Enchanting
 import Game.Command
+import Game.Achievement
 import Game.Physics (BlockHeightQuery)
 
 import Data.Binary (encode, decode)
@@ -66,6 +67,7 @@ main = hspec $ do
   enchantingTableSpec
   enchantingSystemSpec
   commandSpec
+  achievementSpec
 
 -- =========================================================================
 -- Block
@@ -2199,3 +2201,109 @@ commandSpec = describe "Game.Command" $ do
 
   it "allCommands includes teleport alias" $ do
     "/teleport" `elem` allCommands `shouldBe` True
+
+-- =========================================================================
+-- Achievement system
+-- =========================================================================
+achievementSpec :: Spec
+achievementSpec = describe "Game.Achievement" $ do
+  -- New state
+  it "newAchievementState has nothing unlocked" $ do
+    let state = newAchievementState
+    isUnlocked state AchOpenInventory `shouldBe` False
+    isUnlocked state AchDefeatDragon `shouldBe` False
+
+  -- Unlock and query
+  it "unlockAchievement marks achievement as unlocked" $ do
+    let state0 = newAchievementState
+        state1 = unlockAchievement state0 AchMineWood
+    isUnlocked state1 AchMineWood `shouldBe` True
+    isUnlocked state1 AchOpenInventory `shouldBe` False
+
+  it "unlockAchievement is idempotent" $ do
+    let state0 = newAchievementState
+        state1 = unlockAchievement state0 AchCraftPlanks
+        state2 = unlockAchievement state1 AchCraftPlanks
+    state1 `shouldBe` state2
+
+  it "multiple achievements can be unlocked independently" $ do
+    let state = unlockAchievement (unlockAchievement newAchievementState AchMineWood) AchKillMob
+    isUnlocked state AchMineWood `shouldBe` True
+    isUnlocked state AchKillMob `shouldBe` True
+    isUnlocked state AchCraftTable `shouldBe` False
+
+  -- Check triggers
+  it "checkAchievement returns Just for matching locked achievement" $ do
+    let state = newAchievementState
+    checkAchievement state TrigOpenInventory `shouldBe` Just AchOpenInventory
+
+  it "checkAchievement returns Nothing for already unlocked achievement" $ do
+    let state = unlockAchievement newAchievementState AchOpenInventory
+    checkAchievement state TrigOpenInventory `shouldBe` Nothing
+
+  it "checkAchievement recognizes mining oak log" $ do
+    checkAchievement newAchievementState (TrigMineBlock OakLog) `shouldBe` Just AchMineWood
+
+  it "checkAchievement recognizes mining diamond ore" $ do
+    checkAchievement newAchievementState (TrigMineBlock DiamondOre) `shouldBe` Just AchMineDiamond
+
+  it "checkAchievement returns Nothing for irrelevant block mine" $ do
+    checkAchievement newAchievementState (TrigMineBlock Stone) `shouldBe` Nothing
+
+  it "checkAchievement recognizes crafting planks" $ do
+    checkAchievement newAchievementState (TrigCraftItem (BlockItem OakPlanks)) `shouldBe` Just AchCraftPlanks
+
+  it "checkAchievement recognizes crafting table" $ do
+    checkAchievement newAchievementState (TrigCraftItem (BlockItem CraftingTable)) `shouldBe` Just AchCraftTable
+
+  it "checkAchievement recognizes crafting pickaxe" $ do
+    checkAchievement newAchievementState (TrigCraftItem (ToolItem Pickaxe Wood 59)) `shouldBe` Just AchCraftPickaxe
+
+  it "checkAchievement recognizes crafting sword" $ do
+    checkAchievement newAchievementState (TrigCraftItem (ToolItem Sword Diamond 1561)) `shouldBe` Just AchMakeSword
+
+  it "checkAchievement recognizes baking bread" $ do
+    checkAchievement newAchievementState (TrigCraftItem (FoodItem Bread)) `shouldBe` Just AchBakeBread
+
+  it "checkAchievement recognizes smelting iron" $ do
+    checkAchievement newAchievementState (TrigSmeltItem (MaterialItem IronIngot)) `shouldBe` Just AchSmeltIron
+
+  it "checkAchievement returns Nothing for smelting non-iron" $ do
+    checkAchievement newAchievementState (TrigSmeltItem (MaterialItem GoldIngot)) `shouldBe` Nothing
+
+  it "checkAchievement recognizes killing a zombie" $ do
+    checkAchievement newAchievementState (TrigKillEntity "Zombie") `shouldBe` Just AchKillMob
+
+  it "checkAchievement recognizes killing a skeleton" $ do
+    checkAchievement newAchievementState (TrigKillEntity "Skeleton") `shouldBe` Just AchKillMob
+
+  it "checkAchievement returns Nothing for killing passive mob" $ do
+    checkAchievement newAchievementState (TrigKillEntity "Pig") `shouldBe` Nothing
+
+  it "checkAchievement recognizes entering Nether" $ do
+    checkAchievement newAchievementState (TrigEnterDimension Nether) `shouldBe` Just AchEnterNether
+
+  it "checkAchievement returns Nothing for entering Overworld" $ do
+    checkAchievement newAchievementState (TrigEnterDimension Overworld) `shouldBe` Nothing
+
+  -- Names and descriptions
+  it "achievementName returns non-empty string for all achievements" $ do
+    mapM_ (\ach -> length (achievementName ach) `shouldSatisfy` (> 0)) allAchievements
+
+  it "achievementDescription returns non-empty string for all achievements" $ do
+    mapM_ (\ach -> length (achievementDescription ach) `shouldSatisfy` (> 0)) allAchievements
+
+  it "achievementName returns expected name" $ do
+    achievementName AchOpenInventory `shouldBe` "Taking Inventory"
+    achievementName AchDefeatDragon `shouldBe` "The End."
+
+  -- allAchievements
+  it "allAchievements contains 14 achievements" $ do
+    length allAchievements `shouldBe` 14
+
+  it "allAchievements matches Enum bounds" $ do
+    allAchievements `shouldBe` [minBound .. maxBound]
+
+  -- Enum roundtrip
+  it "AchievementType roundtrips through Enum" $ do
+    mapM_ (\ach -> toEnum (fromEnum ach) `shouldBe` ach) allAchievements
