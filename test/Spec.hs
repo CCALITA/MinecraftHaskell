@@ -52,6 +52,7 @@ main = hspec $ do
   redstoneBlockSpec
   cactusBlockSpec
   slabBlockSpec
+  compassClockSpec
 
 -- =========================================================================
 -- Block
@@ -1322,3 +1323,47 @@ slabBlockSpec = describe "Slab blocks (StoneSlab & OakSlab)" $ do
   it "OakSlab roundtrips through Binary" $ do
     let item = BlockItem OakSlab
     decode (encode item) `shouldBe` item
+
+-- =========================================================================
+-- Compass & Clock items
+-- =========================================================================
+compassClockSpec :: Spec
+compassClockSpec = describe "Compass and Clock items" $ do
+  -- Item properties
+  it "CompassItem stacks to 1" $ do
+    itemStackLimit CompassItem `shouldBe` 1
+
+  it "ClockItem stacks to 1" $ do
+    itemStackLimit ClockItem `shouldBe` 1
+
+  it "CompassItem is not a block item" $ do
+    isBlockItem CompassItem `shouldBe` False
+    itemToBlock CompassItem `shouldBe` Nothing
+
+  it "ClockItem is not a block item" $ do
+    isBlockItem ClockItem `shouldBe` False
+    itemToBlock ClockItem `shouldBe` Nothing
+
+  -- Crafting recipes
+  it "4 iron ingots + redstone dust crafts compass" $ do
+    let iron = Just (MaterialItem IronIngot)
+        rd = Just (BlockItem RedstoneDust)
+        grid = setCraftingSlot (setCraftingSlot (setCraftingSlot
+              (setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3)
+                0 1 iron) 1 0 iron) 1 1 rd) 1 2 iron) 2 1 iron
+    tryCraft grid `shouldBe` CraftSuccess CompassItem 1
+
+  it "4 gold ingots + redstone dust crafts clock" $ do
+    let gold = Just (MaterialItem GoldIngot)
+        rd = Just (BlockItem RedstoneDust)
+        grid = setCraftingSlot (setCraftingSlot (setCraftingSlot
+              (setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3)
+                0 1 gold) 1 0 gold) 1 1 rd) 1 2 gold) 2 1 gold
+    tryCraft grid `shouldBe` CraftSuccess ClockItem 1
+
+  -- Binary roundtrip
+  it "CompassItem roundtrips through Binary" $ do
+    decode (encode CompassItem) `shouldBe` CompassItem
+
+  it "ClockItem roundtrips through Binary" $ do
+    decode (encode ClockItem) `shouldBe` ClockItem

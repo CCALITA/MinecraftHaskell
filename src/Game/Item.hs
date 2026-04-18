@@ -79,6 +79,8 @@ data Item
   | ArmorItem    !ArmorSlot !ArmorMaterial !Int  -- slot, material, remaining durability
   | ShearsItem   !Int                           -- remaining durability (max 238)
   | FlintAndSteelItem !Int  -- remaining durability (max 64)
+  | CompassItem              -- shows direction to spawn point
+  | ClockItem                -- shows time of day
   deriving stock (Show, Eq)
 
 -- | Tool properties
@@ -119,6 +121,8 @@ itemToBlock (MaterialItem _)  = Nothing
 itemToBlock (ArmorItem {})    = Nothing
 itemToBlock (ShearsItem _)   = Nothing
 itemToBlock (FlintAndSteelItem _) = Nothing
+itemToBlock CompassItem = Nothing
+itemToBlock ClockItem = Nothing
 
 -- | Is this a placeable block item?
 isBlockItem :: Item -> Bool
@@ -135,6 +139,8 @@ itemStackLimit (MaterialItem _) = 64
 itemStackLimit (ArmorItem {})   = 1
 itemStackLimit (ShearsItem _)   = 1
 itemStackLimit (FlintAndSteelItem _) = 1
+itemStackLimit CompassItem = 1
+itemStackLimit ClockItem = 1
 
 -- | What items a block drops when broken. Returns (item, count).
 --   Some blocks require a minimum harvest level to drop anything.
@@ -385,6 +391,8 @@ instance Binary Item where
   put (ArmorItem slot mat dur) = put (5 :: Word8) >> put slot >> put mat >> put dur
   put (ShearsItem dur) = put (6 :: Word8) >> put dur
   put (FlintAndSteelItem dur) = put (7 :: Word8) >> put dur
+  put CompassItem = put (8 :: Word8)
+  put ClockItem = put (9 :: Word8)
   get = do
     tag <- get :: Get Word8
     case tag of
@@ -396,4 +404,6 @@ instance Binary Item where
       5 -> ArmorItem <$> get <*> get <*> get
       6 -> ShearsItem <$> get
       7 -> FlintAndSteelItem <$> get
+      8 -> pure CompassItem
+      9 -> pure ClockItem
       _ -> fail "Unknown Item tag"
