@@ -51,6 +51,7 @@ data ToolMaterial
 data FoodType
   = RawPorkchop | CookedPorkchop | RawBeef | Steak
   | RawChicken | CookedChicken | Bread | Apple | RottenFlesh
+  | RawFish | CookedFish | RawSalmon | CookedSalmon
   deriving stock (Show, Eq, Ord, Enum, Bounded)
 
 -- | Material / resource types
@@ -81,6 +82,7 @@ data Item
   | FlintAndSteelItem !Int  -- remaining durability (max 64)
   | CompassItem              -- shows direction to spawn point
   | ClockItem                -- shows time of day
+  | FishingRodItem !Int     -- remaining durability (max 64)
   deriving stock (Show, Eq)
 
 -- | Tool properties
@@ -123,6 +125,7 @@ itemToBlock (ShearsItem _)   = Nothing
 itemToBlock (FlintAndSteelItem _) = Nothing
 itemToBlock CompassItem = Nothing
 itemToBlock ClockItem = Nothing
+itemToBlock (FishingRodItem _) = Nothing
 
 -- | Is this a placeable block item?
 isBlockItem :: Item -> Bool
@@ -141,6 +144,7 @@ itemStackLimit (ShearsItem _)   = 1
 itemStackLimit (FlintAndSteelItem _) = 1
 itemStackLimit CompassItem = 1
 itemStackLimit ClockItem = 1
+itemStackLimit (FishingRodItem _) = 1
 
 -- | What items a block drops when broken. Returns (item, count).
 --   Some blocks require a minimum harvest level to drop anything.
@@ -270,6 +274,10 @@ foodHungerRestore = \case
   Bread          -> 5
   Apple          -> 4
   RottenFlesh    -> 4
+  RawFish        -> 2
+  CookedFish     -> 5
+  RawSalmon      -> 2
+  CookedSalmon   -> 5
 
 -- | How much saturation a food type restores
 foodSaturation :: FoodType -> Float
@@ -283,6 +291,10 @@ foodSaturation = \case
   Bread          -> 6.0
   Apple          -> 2.4
   RottenFlesh    -> 0.8
+  RawFish        -> 0.4
+  CookedFish     -> 6.0
+  RawSalmon      -> 0.4
+  CookedSalmon   -> 9.6
 
 -- | Display name for a food type
 foodName :: FoodType -> String
@@ -296,6 +308,10 @@ foodName = \case
   Bread          -> "Bread"
   Apple          -> "Apple"
   RottenFlesh    -> "Rotten Flesh"
+  RawFish        -> "Raw Fish"
+  CookedFish     -> "Cooked Fish"
+  RawSalmon      -> "Raw Salmon"
+  CookedSalmon   -> "Cooked Salmon"
 
 -- | Display name for a material type
 materialName :: MaterialType -> String
@@ -395,6 +411,7 @@ instance Binary Item where
   put (FlintAndSteelItem dur) = put (7 :: Word8) >> put dur
   put CompassItem = put (8 :: Word8)
   put ClockItem = put (9 :: Word8)
+  put (FishingRodItem dur) = put (10 :: Word8) >> put dur
   get = do
     tag <- get :: Get Word8
     case tag of
@@ -408,4 +425,5 @@ instance Binary Item where
       7 -> FlintAndSteelItem <$> get
       8 -> pure CompassItem
       9 -> pure ClockItem
+      10 -> FishingRodItem <$> get
       _ -> fail "Unknown Item tag"

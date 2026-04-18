@@ -241,6 +241,9 @@ main = do
     projectilesRef <- newIORef ([] :: [Projectile])
     skeletonCooldownRef <- newIORef (HM.empty :: HM.HashMap Int Float)
 
+    -- Fishing rod state: Nothing = not fishing, Just (bobberPos, timer, ready)
+    fishingStateRef <- newIORef (Nothing :: Maybe (V3 Float, Float, Bool))
+
     -- Give player some starting blocks (only when no saved inventory)
     case mSavedData of
       Just _  -> pure ()  -- inventory already restored from save
@@ -371,6 +374,7 @@ main = do
             writeIORef creeperFuseRef IM.empty
             writeIORef projectilesRef []
             writeIORef skeletonCooldownRef HM.empty
+            writeIORef fishingStateRef Nothing
             writeIORef spawnCooldownRef 0.0
             writeIORef spawnPointRef spawnPos
             writeIORef sleepMessageRef Nothing
@@ -749,6 +753,49 @@ main = do
                           modifyIORef' aiStatesRef (HM.insert eid (AIIdle 1.0))
                           putStrLn "Wolf is now following."
                       | otherwise -> pure ()
+
+            -- RMB: fishing rod cast/reel
+            when (button == GLFW.MouseButton'2) $ do
+              inv <- readIORef inventoryRef
+              case selectedItem inv of
+                Just (ItemStack (FishingRodItem _) _) -> do
+                  mFishing <- readIORef fishingStateRef
+                  case mFishing of
+                    Just (_, _, ready) -> do
+                      -- Reel in
+                      when ready $ do
+                        -- Catch a random item
+                        roll <- randomRIO (1 :: Int, 100)
+                        let catchItem
+                              | roll <= 80 = FoodItem RawFish
+                              | roll <= 95 = FoodItem RawSalmon
+                              | otherwise  = MaterialItem Bone
+                        modifyIORef' inventoryRef (\i -> fst $ addItem i catchItem 1)
+                        putStrLn $ "Caught: " ++ show catchItem
+                      -- Re-read inventory after potential modification, then consume durability
+                      inv' <- readIORef inventoryRef
+                      let sel = invSelected inv'
+                      case getSlot inv' sel of
+                        Just (ItemStack (FishingRodItem dur) 1)
+                          | dur <= 1  -> writeIORef inventoryRef (setSlot inv' sel Nothing)
+                          | otherwise -> writeIORef inventoryRef (setSlot inv' sel (Just (ItemStack (FishingRodItem (dur - 1)) 1)))
+                        _ -> pure ()
+                      writeIORef fishingStateRef Nothing
+                    Nothing -> do
+                      -- Cast: raycast to find water surface
+                      let waterQueryCb bx' by' bz' = do
+                            bt' <- worldGetBlock world (V3 bx' by' bz')
+                            pure (bt' == Water)
+                      mWaterHit <- raycastBlock waterQueryCb eyePos dir maxReach
+                      case mWaterHit of
+                        Just waterHit -> do
+                          let V3 wx wy wz = rhBlockPos waterHit
+                              bobberPos = V3 (fromIntegral wx + 0.5) (fromIntegral wy + 1.0) (fromIntegral wz + 0.5)
+                          timer <- randomRIO (5.0, 30.0 :: Float)
+                          writeIORef fishingStateRef (Just (bobberPos, timer, False))
+                          putStrLn $ "Cast fishing line! Wait time: " ++ show (round timer :: Int) ++ "s"
+                        Nothing -> pure ()
+                _ -> pure ()
 
             mHit <- raycastBlock blockQueryCb eyePos dir maxReach
             case mHit of
@@ -1273,6 +1320,19 @@ main = do
                             playSound soundSystem SndEat
                           _ -> cancelEating
                       else modifyIORef' playerRef (\p -> p { plEatingTimer = newTimer })
+
+            -- Fishing tick: decrement timer, set ready when expired
+            when (gameMode == Playing) $ do
+              mFishing <- readIORef fishingStateRef
+              case mFishing of
+                Just (pos, timer, False) -> do
+                  let newTimer = timer - dt
+                  if newTimer <= 0
+                    then do
+                      writeIORef fishingStateRef (Just (pos, 0, True))
+                      putStrLn "Fish is biting! Reel in with RMB!"
+                    else writeIORef fishingStateRef (Just (pos, newTimer, False))
+                _ -> pure ()
 
             -- Update day/night cycle
             modifyIORef' dayNightRef (updateDayNight dt)
@@ -2942,6 +3002,10 @@ itemColor (FoodItem ft) = case ft of
   Bread          -> (0.8, 0.7, 0.4, 1.0)
   Apple          -> (0.9, 0.2, 0.2, 1.0)
   RottenFlesh    -> (0.5, 0.6, 0.3, 1.0)
+  RawFish        -> (0.7, 0.6, 0.65, 1.0)
+  CookedFish     -> (0.8, 0.65, 0.35, 1.0)
+  RawSalmon      -> (0.9, 0.5, 0.4, 1.0)
+  CookedSalmon   -> (0.8, 0.55, 0.3, 1.0)
 itemColor (MaterialItem mt) = case mt of
   Coal       -> (0.2, 0.2, 0.2, 1.0)
   DiamondGem -> (0.4, 0.9, 0.9, 1.0)
@@ -2966,6 +3030,7 @@ itemColor (ShearsItem _) = (0.7, 0.7, 0.7, 1.0)
 itemColor (FlintAndSteelItem _) = (0.5, 0.5, 0.5, 1.0)
 itemColor CompassItem = (0.7, 0.3, 0.3, 1.0)
 itemColor ClockItem = (0.9, 0.8, 0.3, 1.0)
+itemColor (FishingRodItem _) = (0.55, 0.35, 0.15, 1.0)
 
 -- | 3x3 mini-icon for item (row, col, color) — used in hotbar slot rendering
 itemMiniIcon :: Item -> [(Int, Int, (Float, Float, Float, Float))]
@@ -2999,6 +3064,10 @@ itemMiniIcon (FoodItem ft) = case ft of
   Apple          -> [(0,1,g), (1,0,c),(1,1,c),(1,2,c), (2,1,c)]
     where c = (0.9,0.2,0.2,1); g = (0.3,0.6,0.2,1)
   RottenFlesh    -> fill (0.5,0.6,0.3,1)
+  RawFish        -> fill (0.7,0.6,0.65,1)
+  CookedFish     -> fill (0.8,0.65,0.35,1)
+  RawSalmon      -> fill (0.9,0.5,0.4,1)
+  CookedSalmon   -> fill (0.8,0.55,0.3,1)
   where fill c = [(r,col,c) | r <- [0..2], col <- [0..2]]
 itemMiniIcon (MaterialItem mt) = case mt of
   Coal       -> [(0,1,c), (1,0,c),(1,1,c),(1,2,c), (2,1,c)]
@@ -3026,6 +3095,7 @@ itemMiniIcon (MaterialItem mt) = case mt of
     where c = (0.9,0.8,0.3,1)
   Flint      -> [(0,1,c), (1,0,c),(1,1,c), (2,1,c),(2,2,c)]
     where c = (0.4,0.4,0.4,1)
+  Paper      -> fill (0.95,0.95,0.9,1)
   where fill c = [(r,col,c) | r <- [0..2], col <- [0..2]]
 itemMiniIcon (ArmorItem slot mat dur) = case slot of
   Helmet     -> [(0,0,c),(0,1,c),(0,2,c), (1,0,c),(1,2,c)]
@@ -3045,6 +3115,9 @@ itemMiniIcon CompassItem =
 itemMiniIcon ClockItem =
   [(0,0,g),(0,1,g),(0,2,g), (1,0,g),(1,1,h),(1,2,g), (2,0,g),(2,1,g),(2,2,g)]
   where g = (0.9,0.8,0.3,1); h = (0.3,0.3,0.3,1)
+itemMiniIcon (FishingRodItem _) =
+  [(0,2,s), (1,1,s), (2,0,s),(2,2,st)]
+  where s = (0.55,0.35,0.15,1); st = (0.9,0.9,0.9,1)
 itemMiniIcon (BlockItem bt) = blockMiniIcon bt
   where
     fill c = [(r,col,c) | r <- [0..2], col <- [0..2]]

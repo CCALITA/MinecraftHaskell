@@ -309,7 +309,7 @@ allRecipes =
       , rcResult  = BlockItem Piston
       , rcCount   = 1
       }
-  ] ++ toolRecipes ++ shearsRecipe ++ compassClockRecipes
+  ] ++ toolRecipes ++ shearsRecipe ++ compassClockRecipes ++ fishingRodRecipe
 
 -- | Shears crafting recipe: 2 iron ingots diagonal
 shearsRecipe :: [Recipe]
@@ -331,6 +331,15 @@ compassClockRecipes =
            ,[ji (MaterialItem GoldIngot), bi RedstoneDust,            ji (MaterialItem GoldIngot)]
            ,[Nothing,               ji (MaterialItem GoldIngot), Nothing]]
            ClockItem 1
+  ]
+
+-- | Fishing rod recipe: 3 sticks diagonal + 2 string
+fishingRodRecipe :: [Recipe]
+fishingRodRecipe =
+  [ Recipe [[Nothing,       Nothing,       ji StickItem]
+           ,[Nothing,       ji StickItem,  ji (MaterialItem StringMat)]
+           ,[ji StickItem,  Nothing,       ji (MaterialItem StringMat)]]
+           (FishingRodItem 64) 1
   ]
 
 -- | Helper to create a tool item with full durability
