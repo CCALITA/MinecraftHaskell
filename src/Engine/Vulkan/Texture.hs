@@ -134,6 +134,7 @@ tileFull tileIdx lx ly = case tileIdx of
   86 -> pistonSidePattern lx ly      -- piston side (V2 6 5)
   87 -> pistonHeadPattern lx ly      -- piston head (V2 7 5)
   88 -> railPattern lx ly              -- rail (V2 8 5)
+  89 -> dispenserFrontPattern lx ly  -- dispenser front (V2 9 5)
   -- Fallback: checkerboard pattern so missing tiles are visible
   _  -> let checker = (lx + ly) `mod` 2 == 0
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
@@ -553,6 +554,15 @@ tileFull tileIdx lx ly = case tileIdx of
       in if isRail then (140 + fromIntegral n, 140 + fromIntegral n, 145 + fromIntegral n, 255)
          else if isTie then (90 + fromIntegral (n `div` 2), 60 + fromIntegral (n `div` 3), 30, 255)
          else (0, 0, 0, 0)
+    -- Dispenser front: stone-like body with dark opening hole in the center
+    dispenserFrontPattern x y =
+      let isOpening = x >= 5 && x <= 10 && y >= 5 && y <= 10
+          border = x == 0 || x == 15 || y == 0 || y == 15
+          n = pixHash x y 2700 `mod` 20
+          baseV = fromIntegral (120 + n) :: Word8
+      in if isOpening then (30, 30, 35, 255)
+         else if border then (90, 90, 95, 255)
+         else (baseV, baseV, fromIntegral (baseV + 3), 255)
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels

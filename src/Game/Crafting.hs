@@ -316,7 +316,7 @@ allRecipes =
       , rcResult  = GlassBottleItem
       , rcCount   = 3
       }
-  ] ++ toolRecipes ++ shearsRecipe ++ compassClockRecipes ++ fishingRodRecipe ++ boatRecipe ++ railRecipes
+  ] ++ toolRecipes ++ shearsRecipe ++ compassClockRecipes ++ fishingRodRecipe ++ boatRecipe ++ railRecipes ++ dispenserRecipe
 
 -- | Shears crafting recipe: 2 iron ingots diagonal
 shearsRecipe :: [Recipe]
@@ -355,6 +355,13 @@ boatRecipe =
   [ Recipe [[bi OakPlanks, Nothing,      bi OakPlanks]
            ,[bi OakPlanks, bi OakPlanks, bi OakPlanks]]
            BoatItem 1
+-- | Dispenser crafting recipe: 7 cobblestone surrounding, redstone dust center
+dispenserRecipe :: [Recipe]
+dispenserRecipe =
+  [ Recipe [[bi Cobblestone, bi Cobblestone, bi Cobblestone]
+           ,[bi Cobblestone, bi RedstoneDust, bi Cobblestone]
+           ,[bi Cobblestone, bi Cobblestone, bi Cobblestone]]
+           (BlockItem Dispenser) 1
   ]
 
 -- | Helper to create a tool item with full durability

@@ -13,6 +13,12 @@ module Game.BlockEntity
   , emptyChestInventory
   , getChestSlot
   , setChestSlot
+  , dispenserSlots
+  , emptyDispenserInventory
+  , getDispenserInventory
+  , setDispenserInventory
+  , getDispenserSlot
+  , setDispenserSlot
   ) where
 
 import Data.IORef
@@ -27,6 +33,10 @@ import Game.Furnace (FurnaceState)
 chestSlots :: Int
 chestSlots = 27
 
+-- | Number of slots in a dispenser (3x3 grid)
+dispenserSlots :: Int
+dispenserSlots = 9
+
 -- | An empty chest inventory (27 slots, selected = 0)
 emptyChestInventory :: Inventory
 emptyChestInventory = Inventory
@@ -34,10 +44,18 @@ emptyChestInventory = Inventory
   , invSelected = 0
   }
 
+-- | An empty dispenser inventory (9 slots, selected = 0)
+emptyDispenserInventory :: Inventory
+emptyDispenserInventory = Inventory
+  { invSlots    = V.replicate dispenserSlots Nothing
+  , invSelected = 0
+  }
+
 -- | Data stored in a block entity
 data BlockEntityData
   = ChestData !Inventory
   | FurnaceData !FurnaceState
+  | DispenserData !Inventory
   deriving stock (Show)
 
 -- | Map from world position to block entity data
@@ -99,4 +117,28 @@ getChestSlot inv idx
 setChestSlot :: Inventory -> Int -> Maybe ItemStack -> Inventory
 setChestSlot inv idx stack
   | idx >= 0 && idx < chestSlots = inv { invSlots = invSlots inv V.// [(idx, stack)] }
+  | otherwise = inv
+
+-- | Get the dispenser inventory at a position, if it exists
+getDispenserInventory :: BlockEntityMap -> V3 Int -> IO (Maybe Inventory)
+getDispenserInventory ref pos = do
+  m <- readIORef ref
+  pure $ case HM.lookup pos m of
+    Just (DispenserData inv) -> Just inv
+    _                        -> Nothing
+
+-- | Set or update the dispenser inventory at a position
+setDispenserInventory :: BlockEntityMap -> V3 Int -> Inventory -> IO ()
+setDispenserInventory ref pos inv = modifyIORef' ref (HM.insert pos (DispenserData inv))
+
+-- | Get item in a dispenser slot (0-8)
+getDispenserSlot :: Inventory -> Int -> Maybe ItemStack
+getDispenserSlot inv idx
+  | idx >= 0 && idx < dispenserSlots = invSlots inv V.! idx
+  | otherwise = Nothing
+
+-- | Set item in a dispenser slot (0-8), returning a new Inventory
+setDispenserSlot :: Inventory -> Int -> Maybe ItemStack -> Inventory
+setDispenserSlot inv idx stack
+  | idx >= 0 && idx < dispenserSlots = inv { invSlots = invSlots inv V.// [(idx, stack)] }
   | otherwise = inv

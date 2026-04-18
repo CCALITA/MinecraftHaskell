@@ -60,6 +60,7 @@ main = hspec $ do
   boatSpec
   railBlockSpec
   minecartItemSpec
+  dispenserBlockSpec
 
 -- =========================================================================
 -- Block
@@ -1782,3 +1783,114 @@ minecartItemSpec = describe "Minecart item" $ do
     destroyEntity ew eid
     mEnt <- getEntity ew eid
     mEnt `shouldBe` Nothing
+-- Dispenser block
+-- =========================================================================
+dispenserBlockSpec :: Spec
+dispenserBlockSpec = describe "Dispenser block" $ do
+  -- Block properties
+  it "Dispenser is solid and opaque" $ do
+    isSolid Dispenser `shouldBe` True
+    isTransparent Dispenser `shouldBe` False
+
+  it "Dispenser has hardness 3.5" $ do
+    bpHardness (blockProperties Dispenser) `shouldBe` 3.5
+
+  it "Dispenser emits no light" $ do
+    bpLightEmit (blockProperties Dispenser) `shouldBe` 0
+
+  it "Dispenser has full collision height" $ do
+    blockCollisionHeight Dispenser `shouldBe` 1.0
+
+  -- Enum roundtrip
+  it "Dispenser roundtrips through Enum" $ do
+    toEnum (fromEnum Dispenser) `shouldBe` (Dispenser :: BlockType)
+
+  -- Texture coords
+  it "Dispenser has valid texture coords" $ do
+    let V2 u v = blockFaceTexCoords Dispenser FaceTop
+    u `shouldSatisfy` (>= 0)
+    v `shouldSatisfy` (>= 0)
+
+  it "Dispenser has different front face texture" $ do
+    blockFaceTexCoords Dispenser FaceSouth `shouldNotBe` blockFaceTexCoords Dispenser FaceTop
+
+  -- Block drops
+  it "Dispenser drops itself" $ do
+    blockDrops Dispenser `shouldBe` [(BlockItem Dispenser, 1)]
+
+  -- Preferred tool
+  it "Dispenser prefers pickaxe" $ do
+    blockPreferredTool Dispenser `shouldBe` Just Pickaxe
+
+  -- Crafting recipe
+  it "7 cobblestone + redstone dust center crafts a dispenser" $ do
+    let c = Just (BlockItem Cobblestone)
+        r = Just (BlockItem RedstoneDust)
+        grid = setCraftingSlot (setCraftingSlot (setCraftingSlot
+              (setCraftingSlot (setCraftingSlot (setCraftingSlot
+              (setCraftingSlot (setCraftingSlot (setCraftingSlot (emptyCraftingGrid 3)
+                0 0 c) 0 1 c) 0 2 c) 1 0 c) 1 1 r) 1 2 c) 2 0 c) 2 1 c) 2 2 c
+    tryCraft grid `shouldBe` CraftSuccess (BlockItem Dispenser) 1
+
+  -- Binary roundtrip
+  it "Dispenser roundtrips through Binary" $ do
+    let item = BlockItem Dispenser
+    decode (encode item) `shouldBe` item
+
+  -- Block entity (dispenser inventory)
+  it "dispenser has 9 slots" $ do
+    dispenserSlots `shouldBe` 9
+    V.length (invSlots emptyDispenserInventory) `shouldBe` 9
+
+  it "setting a dispenser inventory makes it retrievable" $ do
+    bem <- newBlockEntityMap
+    let pos = V3 10 64 10
+    setDispenserInventory bem pos emptyDispenserInventory
+    mInv <- getDispenserInventory bem pos
+    case mInv of
+      Just inv' -> V.length (invSlots inv') `shouldBe` dispenserSlots
+      Nothing  -> expectationFailure "Expected dispenser inventory"
+
+  it "getDispenserInventory returns Nothing for missing position" $ do
+    bem <- newBlockEntityMap
+    mInv <- getDispenserInventory bem (V3 99 99 99)
+    mInv `shouldBe` Nothing
+
+  it "dispenser slot get/set roundtrips" $ do
+    let item = ItemStack (BlockItem Stone) 32
+        inv' = setDispenserSlot emptyDispenserInventory 4 (Just item)
+    getDispenserSlot inv' 4 `shouldBe` Just item
+    getDispenserSlot inv' 0 `shouldBe` Nothing
+
+  it "removeBlockEntity returns DispenserData and clears it" $ do
+    bem <- newBlockEntityMap
+    let pos = V3 1 2 3
+    setDispenserInventory bem pos emptyDispenserInventory
+    mBe <- removeBlockEntity bem pos
+    case mBe of
+      Just (DispenserData _) -> pure ()
+      _ -> expectationFailure "Expected DispenserData"
+    exists <- hasBlockEntity bem pos
+    exists `shouldBe` False
+
+  it "dispenser and chest at different positions are independent" $ do
+    bem <- newBlockEntityMap
+    let chestPos = V3 0 64 0
+        dispPos = V3 10 64 10
+        item1 = ItemStack (BlockItem Stone) 16
+        item2 = ItemStack (BlockItem Dirt) 8
+        inv1 = setChestSlot emptyChestInventory 0 (Just item1)
+        inv2 = setDispenserSlot emptyDispenserInventory 0 (Just item2)
+    setChestInventory bem chestPos inv1
+    setDispenserInventory bem dispPos inv2
+    mChest <- getChestInventory bem chestPos
+    mDisp <- getDispenserInventory bem dispPos
+    case (mChest, mDisp) of
+      (Just r1, Just r2) -> do
+        getChestSlot r1 0 `shouldBe` Just item1
+        getDispenserSlot r2 0 `shouldBe` Just item2
+      _ -> expectationFailure "Expected both inventories"
+
+  -- Redstone conductor
+  it "Dispenser is a redstone conductor" $ do
+    isRedstoneConductor Dispenser `shouldBe` True
