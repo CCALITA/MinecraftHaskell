@@ -772,6 +772,8 @@ main = do
                           propagateRedstone rsState [(pos, newPower)]
                           -- Update iron doors adjacent to redstone-powered positions
                           updateIronDoors world rsState pos physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
+                          -- Update pistons adjacent to redstone-powered positions
+                          updatePistons world rsState pos physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
                           rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
                         _ -> do
                           -- Place painting on wall face when hand is empty
@@ -2655,19 +2657,21 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
       ++ quad (-0.28) 0.32 0.28 0.48 (0.45, 0.15, 0.15, 1.0)
       ++ renderTextCentered 0.37 1.0 (1, 1, 1, 1) "QUIT GAME"
 
+-- | 6-connected neighbor offsets (shared by redstone-driven updates)
+neighborDirs :: [V3 Int]
+neighborDirs = [ V3 1 0 0, V3 (-1) 0 0
+               , V3 0 1 0, V3 0 (-1) 0
+               , V3 0 0 1, V3 0 0 (-1) ]
+
 -- | Update iron doors adjacent to a redstone source position.
---   Checks 6-connected neighbors: if powered > 0, open the door;
---   if power drops to 0, close it.
+--   If powered > 0, open the door; if power drops to 0, close it.
 updateIronDoors
   :: World -> RedstoneState -> V3 Int
   -> Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue
   -> IORef (HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
   -> IO ()
 updateIronDoors world rsState sourcePos physDevice device cmdPool queue meshCacheRef = do
-  let neighbors = [ sourcePos + d | d <- [ V3 1 0 0, V3 (-1) 0 0
-                                          , V3 0 1 0, V3 0 (-1) 0
-                                          , V3 0 0 1, V3 0 0 (-1) ] ]
-  forM_ neighbors $ \nPos@(V3 nx _ny nz) -> do
+  forM_ [ sourcePos + d | d <- neighborDirs ] $ \nPos@(V3 nx _ny nz) -> do
     blk <- worldGetBlock world nPos
     power <- getPower rsState nPos
     case blk of
@@ -2678,6 +2682,76 @@ updateIronDoors world rsState sourcePos physDevice device cmdPool queue meshCach
         worldSetBlock world nPos IronDoorClosed
         rebuildChunkAt world physDevice device cmdPool queue meshCacheRef nx nz
       _ -> pure ()
+
+-- | Update pistons adjacent to a redstone source position.
+--   Pistons face +Y (push upward). Cannot push Bedrock or Obsidian. Max 12 blocks.
+updatePistons
+  :: World -> RedstoneState -> V3 Int
+  -> Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue
+  -> IORef (HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
+  -> IO ()
+updatePistons world rsState sourcePos physDevice device cmdPool queue meshCacheRef = do
+  forM_ [ sourcePos + d | d <- neighborDirs ] $ \nPos@(V3 nx _ny nz) -> do
+    blk <- worldGetBlock world nPos
+    case blk of
+      Piston -> do
+        power <- getPower rsState nPos
+        let above = nPos + V3 0 1 0
+        aboveBlk <- worldGetBlock world above
+        if power > 0 && aboveBlk /= PistonHead
+          then do
+            chainLen <- tryPistonPush world nPos (V3 0 1 0) 12
+            when (chainLen >= 0) $ do
+              worldSetBlock world above PistonHead
+              rebuildChunkAt world physDevice device cmdPool queue meshCacheRef nx nz
+              -- Only rebuild chunks that actually had blocks displaced
+              forM_ [1..chainLen + 1] $ \dy -> do
+                let V3 rx _ rz = nPos + V3 0 (dy + 1) 0
+                rebuildChunkAt world physDevice device cmdPool queue meshCacheRef rx rz
+          else when (power == 0 && aboveBlk == PistonHead) $ do
+            let aboveHead = above + V3 0 1 0
+            headAboveBlk <- worldGetBlock world aboveHead
+            worldSetBlock world above Air
+            when (headAboveBlk /= Air && not (isImmovable headAboveBlk)) $ do
+              worldSetBlock world above headAboveBlk
+              worldSetBlock world aboveHead Air
+            rebuildChunkAt world physDevice device cmdPool queue meshCacheRef nx nz
+            let V3 rx _ rz = aboveHead
+            rebuildChunkAt world physDevice device cmdPool queue meshCacheRef rx rz
+      _ -> pure ()
+
+-- | Check if a block cannot be pushed by a piston
+isImmovable :: BlockType -> Bool
+isImmovable Bedrock    = True
+isImmovable Obsidian   = True
+isImmovable PistonHead = True
+isImmovable _          = False
+
+-- | Push a chain of blocks above the piston in the given direction.
+--   Returns the number of blocks moved (>= 0), or -1 on failure.
+tryPistonPush :: World -> V3 Int -> V3 Int -> Int -> IO Int
+tryPistonPush world pistonPos direction maxBlocks = do
+  let startPos = pistonPos + direction
+  chain <- collectChain startPos 0
+  case chain of
+    Nothing -> pure (-1)
+    Just blocks -> do
+      forM_ (reverse blocks) $ \(pos, bt) -> do
+        worldSetBlock world (pos + direction) bt
+        worldSetBlock world pos Air
+      pure (length blocks)
+  where
+    collectChain pos count
+      | count >= maxBlocks = pure Nothing
+      | otherwise = do
+          bt <- worldGetBlock world pos
+          if bt == Air
+            then pure (Just [])
+            else if isImmovable bt
+              then pure Nothing
+              else do
+                rest <- collectChain (pos + direction) (count + 1)
+                pure $ fmap ((pos, bt) :) rest
 
 -- | Get a display color for an item (used for hotbar slot rendering)
 itemColor :: Item -> (Float, Float, Float, Float)
@@ -2724,6 +2798,8 @@ itemColor (BlockItem bt) = case bt of
   SugarCane   -> (0.4, 0.7, 0.3, 1.0)
   StoneSlab   -> (0.5, 0.5, 0.5, 1.0)
   OakSlab     -> (0.78, 0.65, 0.43, 1.0)
+  Piston      -> (0.5, 0.4, 0.3, 1.0)
+  PistonHead  -> (0.55, 0.45, 0.3, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)

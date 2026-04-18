@@ -301,6 +301,14 @@ allRecipes =
       , rcResult  = BlockItem OakSlab
       , rcCount   = 6
       }
+  -- Piston: planks on top, cobblestone + iron + cobblestone in middle, cobblestone + redstone + cobblestone on bottom
+  , Recipe
+      { rcPattern = [[bi OakPlanks,   bi OakPlanks,                 bi OakPlanks]
+                    ,[bi Cobblestone, ji (MaterialItem IronIngot),  bi Cobblestone]
+                    ,[bi Cobblestone, bi RedstoneDust,              bi Cobblestone]]
+      , rcResult  = BlockItem Piston
+      , rcCount   = 1
+      }
   ] ++ toolRecipes ++ shearsRecipe
 
 -- | Shears crafting recipe: 2 iron ingots diagonal

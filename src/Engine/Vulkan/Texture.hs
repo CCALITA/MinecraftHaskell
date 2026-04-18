@@ -130,6 +130,9 @@ tileFull tileIdx lx ly = case tileIdx of
   47 -> trapdoorOpenPattern lx ly    -- trapdoor open (V2 15 2)
   43 -> firePattern lx ly              -- fire (V2 11 2)
   84 -> sugarCanePattern lx ly       -- sugar cane (V2 4 5)
+  85 -> pistonTopPattern lx ly       -- piston top/face (V2 5 5)
+  86 -> pistonSidePattern lx ly      -- piston side (V2 6 5)
+  87 -> pistonHeadPattern lx ly      -- piston head (V2 7 5)
   -- Fallback: checkerboard pattern so missing tiles are visible
   _  -> let checker = (lx + ly) `mod` 2 == 0
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
@@ -504,6 +507,40 @@ tileFull tileIdx lx ly = case tileIdx of
                          else (70 + fromIntegral (n `div` 2), 150 + fromIntegral n, 50)
       in if isReed then (gr, gg, gb, 255)
          else (0, 0, 0, 0)
+
+    -- Piston top: stone face with a slight cross pattern
+    pistonTopPattern x y =
+      let n = pixHash x y 2700 `mod` 100
+          border = x == 0 || x == 15 || y == 0 || y == 15
+          cross = (x >= 7 && x <= 8) || (y >= 7 && y <= 8)
+          v = if border then 90
+              else if cross then fromIntegral (110 + n `mod` 15)
+              else fromIntegral (120 + n `mod` 20)
+      in (v, v, v, 255)
+
+    -- Piston side: wooden planks with iron band
+    pistonSidePattern x y =
+      let n = pixHash x y 2710 `mod` 30
+          ironBand = y >= 6 && y <= 9
+          border = x == 0 || x == 15 || y == 0 || y == 15
+          (r, g, b)
+            | border    = (80, 55, 25)
+            | ironBand  = (140 + fromIntegral n, 140 + fromIntegral n, 150 + fromIntegral n)
+            | otherwise = let base = 160 + fromIntegral n
+                          in (base, base * 170 `div` 210, base * 110 `div` 210)
+      in (r, g, b, 255)
+
+    -- Piston head: flat wooden panel with border
+    pistonHeadPattern x y =
+      let n = pixHash x y 2720 `mod` 20
+          border = x == 0 || x == 15 || y == 0 || y == 15
+          grain = y `mod` 4 == 0
+          (r, g, b)
+            | border = (80, 55, 25)
+            | grain  = (150 + fromIntegral n, fromIntegral ((150 + n) * 170 `div` 210), fromIntegral ((150 + n) * 110 `div` 210))
+            | otherwise = let base = 180 + fromIntegral n
+                          in (base, base * 170 `div` 210, base * 110 `div` 210)
+      in (r, g, b, 255)
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels
