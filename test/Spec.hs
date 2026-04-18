@@ -28,6 +28,7 @@ import qualified World.Dimension as Dim
 import Game.Enchanting
 import Game.Command
 import Game.Achievement
+import Game.Config
 import Game.Physics (BlockHeightQuery)
 import UI.Tooltip
 
@@ -2934,3 +2935,45 @@ dimensionSpec = describe "World.Dimension" $ do
       | y <- [120..126], lx <- [0..15], lz <- [0,4,8,12]
       ]
     any (== Torch) results `shouldBe` True
+
+  describe "Game.Config" $ do
+    it "defaultConfig has render distance 4" $ do
+      cfgRenderDistance defaultConfig `shouldBe` 4
+
+    it "defaultConfig has tick rate 20" $ do
+      cfgTickRate defaultConfig `shouldBe` 20.0
+
+    it "defaultConfig has max reach 5" $ do
+      cfgMaxReach defaultConfig `shouldBe` 5.0
+
+    it "defaultConfig has FOV 45" $ do
+      cfgFOV defaultConfig `shouldBe` 45.0
+
+    it "defaultConfig has mouse sensitivity 0.15" $ do
+      cfgMouseSensitivity defaultConfig `shouldBe` 0.15
+
+    it "defaultConfig has day length 1200 seconds" $ do
+      cfgDayLength defaultConfig `shouldBe` 1200.0
+
+    it "defaultConfig has hostile spawn cap 20" $ do
+      cfgMaxSpawnHostile defaultConfig `shouldBe` 20
+
+    it "defaultConfig has passive spawn cap 10" $ do
+      cfgMaxSpawnPassive defaultConfig `shouldBe` 10
+
+    it "defaultConfig has spawn radius 24" $ do
+      cfgSpawnRadius defaultConfig `shouldBe` 24
+
+    it "defaultConfig has despawn distance 128" $ do
+      cfgDespawnDistance defaultConfig `shouldBe` 128
+
+    it "defaultConfig has auto-save interval 18000" $ do
+      cfgAutoSaveInterval defaultConfig `shouldBe` 18000
+
+    it "defaultConfig has empty starting items" $ do
+      cfgStartingItems defaultConfig `shouldBe` []
+
+    it "record update produces new config without mutation" $ do
+      let custom = defaultConfig { cfgRenderDistance = 8 }
+      cfgRenderDistance custom `shouldBe` 8
+      cfgRenderDistance defaultConfig `shouldBe` 4
