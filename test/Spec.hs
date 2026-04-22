@@ -247,9 +247,9 @@ craftingSpec = describe "Game.Crafting" $ do
     let grid = setCraftingSlot (emptyCraftingGrid 2) 0 0 (Just (BlockItem OakLog))
     tryCraft grid `shouldBe` CraftSuccess (BlockItem OakPlanks) 4
 
-  it "sand produces glass" $ do
+  it "sand does not craft into glass (requires smelting)" $ do
     let grid = setCraftingSlot (emptyCraftingGrid 3) 0 0 (Just (BlockItem Sand))
-    tryCraft grid `shouldBe` CraftSuccess (BlockItem Glass) 1
+    tryCraft grid `shouldBe` CraftFailure
 
   it "wood pickaxe recipe works" $ do
     let p = Just (BlockItem OakPlanks)
