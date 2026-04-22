@@ -43,6 +43,8 @@ import Game.ItemDisplay (itemColor, itemMiniIcon)
 import Engine.Sound
 import Game.Particle
 
+import Game.Config (GameConfig(..), defaultConfig)
+
 import World.Redstone (RedstoneState, newRedstoneState, setPower, getPower, propagateRedstone)
 
 import Control.Monad (unless, when, forM_, forM, void)
@@ -87,13 +89,17 @@ data DebugInfo = DebugInfo
   , dbgDayTime     :: !Float
   }
 
--- | Fixed timestep for physics (20 ticks per second, like Minecraft)
+-- | Game configuration
+gameConfig :: GameConfig
+gameConfig = defaultConfig
+
+-- | Fixed timestep for physics
 tickRate :: Float
-tickRate = 1.0 / 20.0
+tickRate = 1.0 / cfgTickRate gameConfig
 
 -- | Max reach distance for block interaction
 maxReach :: Float
-maxReach = 5.0
+maxReach = cfgMaxReach gameConfig
 
 -- | Default save directory root
 savesRoot :: FilePath
