@@ -14,7 +14,7 @@ import qualified Vulkan.CStruct.Extends as Vk
 
 import Engine.Vulkan.Init (VulkanContext(..))
 import Engine.Vulkan.Swapchain (SwapchainContext(..))
-import Engine.Vulkan.Pipeline (PipelineContext(..), HudPipeline(..), EntityPipeline(..))
+import Engine.Vulkan.Pipeline (PipelineContext(..), HudPipeline(..), EntityPipeline(..), TransparentPipeline(..))
 import Engine.Vulkan.Memory (BufferAllocation(..))
 
 import Data.Vector (Vector)
@@ -85,9 +85,10 @@ recordCommandBuffer
   -> Vk.DescriptorSet        -- ^ Descriptor set (UBO + texture)
   -> (Float, Float, Float, Float)  -- ^ Sky clear color (r, g, b, a)
   -> Maybe (EntityPipeline, BufferAllocation, Int)  -- ^ Optional entity pipeline, vertex buffer, vertex count
-  -> Maybe (HudPipeline, BufferAllocation, Int)  -- ^ Optional HUD pipeline, vertex buffer, vertex count
+  -> Maybe (TransparentPipeline, [(BufferAllocation, BufferAllocation, Int)])
+  -> Maybe (HudPipeline, BufferAllocation, Int)
   -> IO ()
-recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent chunkDraws descriptorSet (skyR, skyG, skyB, skyA) mEntity mHud = do
+recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent chunkDraws descriptorSet (skyR, skyG, skyB, skyA) mEntity mTrans mHud = do
   let beginInfo = Vk.CommandBufferBeginInfo
         { Vk.next            = ()
         , Vk.flags           = Vk.zero
@@ -138,6 +139,18 @@ recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent
       Vk.cmdBindVertexBuffers cmdBuf 0 (V.singleton (baBuffer entVertBuf)) (V.singleton 0)
       Vk.cmdDraw cmdBuf (fromIntegral entVertCount) 1 0 0
 
+  case mTrans of
+    Nothing -> pure ()
+    Just (tp, tds) -> when (not (null tds)) $ do
+      Vk.cmdBindPipeline cmdBuf Vk.PIPELINE_BIND_POINT_GRAPHICS (tpPipeline tp)
+      Vk.cmdSetViewport cmdBuf 0 (V.singleton viewport)
+      Vk.cmdSetScissor cmdBuf 0 (V.singleton scissor)
+      Vk.cmdBindDescriptorSets cmdBuf Vk.PIPELINE_BIND_POINT_GRAPHICS (tpPipelineLayout tp) 0 (V.singleton descriptorSet) V.empty
+      mapM_ (\\(vb,ib,ic) -> when (ic>0) $ do
+        Vk.cmdBindVertexBuffers cmdBuf 0 (V.singleton (baBuffer vb)) (V.singleton 0)
+        Vk.cmdBindIndexBuffer cmdBuf (baBuffer ib) 0 Vk.INDEX_TYPE_UINT32
+        Vk.cmdDrawIndexed cmdBuf (fromIntegral ic) 1 0 0 0) tds
+
   -- Draw HUD overlay (crosshair, hotbar)
   case mHud of
     Nothing -> pure ()
@@ -164,9 +177,10 @@ drawFrame
   -> Vk.DescriptorSet        -- ^ Descriptor set for current frame
   -> (Float, Float, Float, Float)  -- ^ Sky clear color
   -> Maybe (EntityPipeline, BufferAllocation, Int)  -- ^ Optional entity billboards
-  -> Maybe (HudPipeline, BufferAllocation, Int)  -- ^ Optional HUD
+  -> Maybe (TransparentPipeline, [(BufferAllocation, BufferAllocation, Int)])
+  -> Maybe (HudPipeline, BufferAllocation, Int)
   -> IO Bool
-drawFrame vc sc pc framebuffers cmdBuf syncObj chunkDraws descriptorSet skyColor mEntity mHud = do
+drawFrame vc sc pc framebuffers cmdBuf syncObj chunkDraws descriptorSet skyColor mEntity mTrans mHud = do
   let device = vcDevice vc
       maxWait = maxBound :: Word64
 
@@ -198,6 +212,7 @@ drawFrame vc sc pc framebuffers cmdBuf syncObj chunkDraws descriptorSet skyColor
         descriptorSet
         skyColor
         mEntity
+        mTrans
         mHud
 
       -- Submit command buffer

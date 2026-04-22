@@ -28,7 +28,7 @@ import Game.Bucket (BucketAction(..), determineBucketAction)
 import Game.Crafting
 import Game.Enchanting
 import Game.DayNight
-import World.Biome (biomeAt)
+import World.Biome (biomeAt, BiomeType(..))
 import World.Weather (WeatherState(..), WeatherType(..), newWeatherState, updateWeather, isRaining, weatherSkyMultiplier, weatherAmbientMultiplier)
 import Game.Furnace
 import World.Fluid
@@ -264,6 +264,7 @@ main = do
     fluidState <- newFluidState
     droppedItems <- newDroppedItems
     particleSystemRef <- newParticleSystem
+    precipParticlesRef <- newIORef ([] :: [Particle])
 
     -- Sound system (no-op stub, ready for real audio backend)
     soundSystem <- initSoundSystem
@@ -406,6 +407,7 @@ main = do
             writeIORef miningRef Nothing
             writeIORef weatherRef newWeatherState
             writeIORef particleSystemRef []
+            writeIORef precipParticlesRef []
             writeIORef (fsFluids fluidState) Map.empty
             writeIORef (fsDirty fluidState) Seq.empty
             writeIORef poisonTimerRef 0.0
@@ -2048,6 +2050,27 @@ main = do
 
             -- Update particle effects
             tickParticles dt particleSystemRef
+
+            -- Update rain/snow precipitation particles
+            do weather <- readIORef weatherRef
+               player' <- readIORef playerRef
+               let V3 px _py pz = plPos player'
+                   biomeName = show (biomeAt seed (realToFrac px) (realToFrac pz))
+               if isRaining weather
+                 then do
+                   existing <- readIORef precipParticlesRef
+                   let updated = tickPrecipitation dt existing
+                   case precipitationForBiome biomeName of
+                     Just ptype -> do
+                       newBatch <- spawnPrecipitationBatch (length updated) ptype (plPos player')
+                       writeIORef precipParticlesRef (updated ++ newBatch)
+                     Nothing -> writeIORef precipParticlesRef []
+                 else do
+                   existing <- readIORef precipParticlesRef
+                   if null existing
+                     then pure ()
+                     else writeIORef precipParticlesRef (tickPrecipitation dt existing)
+
             do player' <- readIORef playerRef
                collected <- collectNearby droppedItems (plPos player') 1.5
                unless (null collected) $ do
@@ -2557,6 +2580,15 @@ main = do
             when (damageFlash > 0) $
               writeIORef damageFlashRef (max 0 (damageFlash - dt))
             let particleVerts = if mode == Playing then renderParticles particles vp else []
+            precipPs <- readIORef precipParticlesRef
+            let precipVerts = if mode == Playing && not (null precipPs)
+                  then let V3 ppx _ppy ppz = plPos player'
+                           bname = show (biomeAt seed (realToFrac ppx) (realToFrac ppz))
+                           ptype = case precipitationForBiome bname of
+                                     Just pt -> pt
+                                     Nothing -> PrecipRain
+                       in renderPrecipitation precipPs ptype vp
+                  else []
             spawnPos <- readIORef spawnPointRef
             playerXP <- readIORef playerXPRef
             chatState <- readIORef chatStateRef
@@ -2564,6 +2596,7 @@ main = do
             villTrades <- readIORef villagerTradesRef
             let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades
                     VS.++ VS.fromList particleVerts
+                    VS.++ VS.fromList precipVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
             when (hudVC > 0) $ do

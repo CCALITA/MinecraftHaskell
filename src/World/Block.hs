@@ -4,6 +4,7 @@ module World.Block
   , BlockProperties(..)
   , blockProperties
   , isTransparent
+  , isTranslucent
   , isSolid
   , isGravityAffected
   , isLeafBlock
@@ -268,6 +269,12 @@ blockProperties = \case
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
+
+isTranslucent :: BlockType -> Bool
+isTranslucent Water = True
+isTranslucent Glass = True
+isTranslucent Ice = True
+isTranslucent _ = False
 
 isSolid :: BlockType -> Bool
 isSolid = bpSolid . blockProperties
