@@ -18,6 +18,7 @@ import qualified Game.TileEntity as TE
 
 import Linear (V2(..), V3(..), V4(..), identity, (!*!))
 import qualified Data.Vector as V
+import Data.Maybe (isJust)
 
 main :: IO ()
 main = hspec $ do
@@ -439,6 +440,19 @@ smeltingSpec = describe "Game.TileEntity smelting" $ do
   it "smoker rejects non-food recipes" $ do
     findSmeltingRecipe SmokerFurnace (BlockItem IronOre) `shouldBe` Nothing
     findSmeltingRecipe SmokerFurnace (BlockItem Sand) `shouldBe` Nothing
+
+  it "smoker accepts raw pork" $ do
+    findSmeltingRecipe SmokerFurnace (MaterialItem RawPork) `shouldSatisfy` isJust
+
+  it "raw pork smelts to cooked pork" $ do
+    case findSmeltingRecipe NormalFurnace (MaterialItem RawPork) of
+      Just r  -> srOutput r `shouldBe` MaterialItem CookedPork
+      Nothing -> expectationFailure "Expected smelting recipe for raw pork"
+
+  it "raw beef smelts to cooked beef" $ do
+    case findSmeltingRecipe NormalFurnace (MaterialItem RawBeef) of
+      Just r  -> srOutput r `shouldBe` MaterialItem CookedBeef
+      Nothing -> expectationFailure "Expected smelting recipe for raw beef"
 
   it "fuel burn time is valid for known fuels" $ do
     fuelBurnTime (BlockItem OakPlanks) `shouldBe` Just 15.0
