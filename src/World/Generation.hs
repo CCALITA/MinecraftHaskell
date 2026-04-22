@@ -4,6 +4,8 @@ module World.Generation
   , defaultGenConfig
   , placeTreeWorld
   , placeTypedTree
+  , structureHashRoll
+  , placeStructureInChunk
   ) where
 
 import World.Block (BlockType(..))
@@ -12,6 +14,8 @@ import World.Biome
 import World.BiomeFeatures (BiomeFeature(..), TreeType(..), biomeFeatures, featureTrees,
                             treeLogBlock, treeLeafBlock)
 import World.Noise
+import World.Structure (Structure(..), StructureBlock(..), wellStructure,
+                        desertTempleStructure, dungeonStructure, villageHouseStructure)
 
 import Control.Monad (when, forM_)
 import Data.Bits (xor, shiftR)
@@ -240,8 +244,64 @@ generateChunk cfg chunkCoord = do
                 when (cur == blockW8 Air) $
                   MUV.write mvec (blockIndex lx y lz) (blockW8 SugarCane)
 
+  -- Pass 9: Structure placement (deterministic hash per chunk)
+  let structSeed = hashPos (seed + 10000) cx cz
+  -- Determine the dominant biome at chunk center for structure selection
+  let centerWx = fromIntegral (cx * chunkWidth + 8) :: Double
+      centerWz = fromIntegral (cz * chunkDepth + 8) :: Double
+      centerBiome = biomeAt seed centerWx centerWz
+
+  -- Desert: well 1/200, temple 1/500
+  when (centerBiome == Desert) $ do
+    let wellRoll = structureHashRoll seed cx cz 10001
+        templeRoll = structureHashRoll seed cx cz 10002
+    when (wellRoll `mod` 200 == 0) $ do
+      surfY <- findSurface mvec 5 5 (chunkHeight - 1)
+      when (surfY > gcSeaLevel cfg) $
+        placeStructureInChunk mvec wellStructure 5 surfY 5
+    when (templeRoll `mod` 500 == 0) $ do
+      surfY <- findSurface mvec 3 3 (chunkHeight - 1)
+      when (surfY > gcSeaLevel cfg) $
+        placeStructureInChunk mvec desertTempleStructure 3 (surfY - 3) 3
+
+  -- Plains/Savanna: village house 1/300
+  when (centerBiome == Plains || centerBiome == Savanna) $ do
+    let houseRoll = structureHashRoll seed cx cz 10003
+    when (houseRoll `mod` 300 == 0) $ do
+      surfY <- findSurface mvec 5 5 (chunkHeight - 1)
+      when (surfY > gcSeaLevel cfg) $
+        placeStructureInChunk mvec villageHouseStructure 5 surfY 5
+
+  -- Underground dungeon y<40: 1/400
+  do let dungeonRoll = structureHashRoll seed cx cz 10004
+     when (dungeonRoll `mod` 400 == 0) $ do
+       let dungeonY = 10 + structSeed `mod` 25  -- place between y=10..34
+       when (dungeonY < 40) $
+         placeStructureInChunk mvec dungeonStructure 4 dungeonY 4
+
   writeIORef (chunkDirty chunk) True
   pure chunk
+
+-- | Deterministic hash roll for structure placement.
+--   Pure function of (seed, chunkX, chunkZ, salt) for reproducibility.
+structureHashRoll :: Seed -> Int -> Int -> Int -> Int
+structureHashRoll seed cx cz salt =
+  let h0 = (seed + salt) * 374761393 + cx * 668265263 + cz * 2147483647
+      h1 = (h0 `xor` (h0 `shiftR` 13)) * 1274126177
+      h2 = h1 `xor` (h1 `shiftR` 16)
+  in abs h2
+
+-- | Place a structure's blocks directly into a chunk's mutable vector.
+--   Only writes blocks whose local x/z coordinates fall within [0..15].
+--   The origin (ox, oy, oz) is in local chunk coordinates.
+placeStructureInChunk :: MUV.IOVector Word8 -> Structure -> Int -> Int -> Int -> IO ()
+placeStructureInChunk mvec structure ox oy oz =
+  forM_ (stBlocks structure) $ \(StructureBlock (V3 dx dy dz) bt) -> do
+    let lx = ox + dx
+        ly = oy + dy
+        lz = oz + dz
+    when (isInBounds lx ly lz) $
+      MUV.write mvec (blockIndex lx ly lz) (blockW8 bt)
 
 -- | Find the highest non-air block in a column
 findSurface :: MUV.IOVector Word8 -> Int -> Int -> Int -> IO Int

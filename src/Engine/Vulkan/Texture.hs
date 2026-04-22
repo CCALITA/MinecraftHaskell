@@ -167,6 +167,14 @@ tileFull tileIdx lx ly = case tileIdx of
   111 -> brownMushroomPattern lx ly  -- brown mushroom (V2 15 6)
   -- Row 7: continued flora
   112 -> redMushroomPattern lx ly    -- red mushroom (V2 0 7)
+  113 -> bookshelfSide lx ly         -- bookshelf side (V2 1 7)
+  114 -> anvilPattern lx ly          -- anvil (V2 2 7)
+  115 -> brewingStandPattern lx ly   -- brewing stand (V2 3 7)
+  116 -> icePattern lx ly            -- ice (V2 4 7)
+  117 -> packedIcePattern lx ly      -- packed ice (V2 5 7)
+  118 -> redstoneLampPattern lx ly   -- redstone lamp (V2 6 7)
+  119 -> hopperPattern lx ly         -- hopper side (V2 7 7)
+  120 -> hopperTopPattern lx ly      -- hopper top opening (V2 8 7)
   -- Fallback: checkerboard pattern so missing tiles are visible
   _  -> let checker = (lx + ly) `mod` 2 == 0
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
@@ -812,6 +820,94 @@ tileFull tileIdx lx ly = case tileIdx of
          else if isCap then (200, 30, 30, 255)
          else if isStem then (200, 190, 170, 255)
          else (0, 0, 0, 0)
+
+    -- Bookshelf side: planks top/bottom with book spines in the middle
+    bookshelfSide x y =
+      let isPlank = y <= 2 || y >= 13
+          isSpine = y >= 4 && y <= 11 && x `mod` 4 /= 0
+          n = pixHash x y 5100 `mod` 30
+          spineColor = case (x `div` 4) `mod` 4 of
+            0 -> (120 + fromIntegral n, 50, 30, 255)   -- red-brown
+            1 -> (40, 80 + fromIntegral n, 40, 255)    -- green
+            2 -> (30, 50, 120 + fromIntegral n, 255)   -- blue
+            _ -> (100 + fromIntegral n, 80, 40, 255)   -- tan
+      in if isPlank then planksPattern x y
+         else if isSpine then spineColor
+         else (60, 40, 20, 255)  -- shelf shadow
+
+    -- Anvil: dark iron body with lighter top
+    anvilPattern x y =
+      let n = pixHash x y 5200 `mod` 20
+          isTop = y <= 4 && x >= 2 && x <= 13
+          isBase = y >= 12 && x >= 3 && x <= 12
+          isBody = y >= 5 && y <= 11 && x >= 5 && x <= 10
+          v = if isTop then fromIntegral (140 + n)
+              else if isBody then fromIntegral (100 + n)
+              else if isBase then fromIntegral (120 + n)
+              else 0
+      in if isTop || isBody || isBase then (v, v, fromIntegral (v + 5), 255)
+         else (0, 0, 0, 0)
+
+    -- Brewing stand: thin stand with bottles
+    brewingStandPattern x y =
+      let isPole = x >= 7 && x <= 8 && y >= 2 && y <= 12
+          isBase = y >= 13 && ((x >= 2 && x <= 5) || (x >= 10 && x <= 13) || (x >= 7 && x <= 8))
+          isBottle = (x >= 3 && x <= 5 && y >= 7 && y <= 11)
+                  || (x >= 10 && x <= 12 && y >= 7 && y <= 11)
+          n = pixHash x y 5300 `mod` 15
+      in if isPole then (120 + fromIntegral n, 120 + fromIntegral n, 130 + fromIntegral n, 255)
+         else if isBottle then (180, 180, 200, 200)
+         else if isBase then (80, 80, 90, 255)
+         else (0, 0, 0, 0)
+
+    -- Ice: light blue semi-transparent with white cracks
+    icePattern x y =
+      let n = pixHash x y 5400 `mod` 100
+          crack = pixHash (x `div` 4) (y `div` 3) 5401 `mod` 10 < 2
+          (r, g, b, a) = if crack then (220, 230, 255, 200)
+                         else if n < 30 then (140, 180, 220, 180)
+                         else (160, 200, 240, 190)
+      in (r, g, b, a)
+
+    -- Packed ice: solid opaque blue-white with dense cracks
+    packedIcePattern x y =
+      let n = pixHash x y 5500 `mod` 100
+          crack = pixHash (x `div` 3) (y `div` 3) 5501 `mod` 10 < 3
+          (r, g, b) = if crack then (180, 200, 230)
+                      else if n < 30 then (130, 160, 200)
+                      else (150, 180, 220)
+      in (r, g, b, 255)
+
+    -- Redstone lamp: glowing orange-yellow with grid pattern
+    redstoneLampPattern x y =
+      let n = pixHash x y 5600 `mod` 100
+          border = x == 0 || x == 15 || y == 0 || y == 15
+          grid = x `mod` 4 == 0 || y `mod` 4 == 0
+          (r, g, b) = if border then (100, 50, 20)
+                      else if grid then (160, 80, 30)
+                      else (220 + fromIntegral (n `mod` 35), 160 + fromIntegral (n `mod` 40), 60)
+      in (r, g, b, 255)
+
+    -- Hopper: dark iron funnel shape
+    hopperPattern x y =
+      let n = pixHash x y 5700 `mod` 20
+          border = x == 0 || x == 15
+          isFunnel = x >= (y `div` 2) && x <= (15 - y `div` 2)
+          v = if border then fromIntegral (60 + n)
+              else if isFunnel then fromIntegral (100 + n)
+              else 0
+      in if border || isFunnel then (v, v, fromIntegral (v + 3), 255)
+         else (0, 0, 0, 0)
+
+    -- Hopper top: dark iron with center opening
+    hopperTopPattern x y =
+      let n = pixHash x y 5710 `mod` 20
+          isOpening = x >= 4 && x <= 11 && y >= 4 && y <= 11
+          border = x == 0 || x == 15 || y == 0 || y == 15
+          v = if isOpening then fromIntegral (30 + n)
+              else if border then fromIntegral (80 + n)
+              else fromIntegral (110 + n)
+      in (v, v, fromIntegral (v + 3), 255)
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels

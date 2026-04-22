@@ -7,6 +7,7 @@ module World.Block
   , isSolid
   , isGravityAffected
   , isLeafBlock
+  , isWheatCropBlock
   , blockCollisionHeight
   , blockFaceTexCoords
   , allBlockFaces
@@ -98,6 +99,20 @@ data BlockType
   | Rose
   | BrownMushroom
   | RedMushroom
+  | Bookshelf
+  | Anvil
+  | BrewingStand
+  | Ice
+  | PackedIce
+  | RedstoneLamp
+  | Hopper
+  | WheatCrop1
+  | WheatCrop2
+  | WheatCrop3
+  | WheatCrop4
+  | WheatCrop5
+  | WheatCrop6
+  | WheatCrop7
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -212,6 +227,20 @@ blockProperties = \case
   Rose             -> BlockProperties False True  0  0.0
   BrownMushroom    -> BlockProperties False True  0  0.0
   RedMushroom      -> BlockProperties False True  0  0.0
+  Bookshelf        -> BlockProperties True  False 0  1.5
+  Anvil            -> BlockProperties True  False 0  5.0
+  BrewingStand     -> BlockProperties True  True  1  0.5
+  Ice              -> BlockProperties True  True  0  0.5
+  PackedIce        -> BlockProperties True  False 0  0.5
+  RedstoneLamp     -> BlockProperties True  False 0  0.3
+  Hopper           -> BlockProperties True  False 0  3.0
+  WheatCrop1       -> BlockProperties False True  0  0.0
+  WheatCrop2       -> BlockProperties False True  0  0.0
+  WheatCrop3       -> BlockProperties False True  0  0.0
+  WheatCrop4       -> BlockProperties False True  0  0.0
+  WheatCrop5       -> BlockProperties False True  0  0.0
+  WheatCrop6       -> BlockProperties False True  0  0.0
+  WheatCrop7       -> BlockProperties False True  0  0.0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -232,6 +261,18 @@ isLeafBlock BirchLeaves  = True
 isLeafBlock SpruceLeaves = True
 isLeafBlock JungleLeaves = True
 isLeafBlock _            = False
+
+-- | Whether a block is a wheat crop at any growth stage
+isWheatCropBlock :: BlockType -> Bool
+isWheatCropBlock WheatCrop  = True
+isWheatCropBlock WheatCrop1 = True
+isWheatCropBlock WheatCrop2 = True
+isWheatCropBlock WheatCrop3 = True
+isWheatCropBlock WheatCrop4 = True
+isWheatCropBlock WheatCrop5 = True
+isWheatCropBlock WheatCrop6 = True
+isWheatCropBlock WheatCrop7 = True
+isWheatCropBlock _          = False
 
 -- | Collision height for a block type. Slabs are half-height (0.5), all others are 1.0.
 blockCollisionHeight :: BlockType -> Float
@@ -363,3 +404,23 @@ blockFaceTexCoords blockType face = case blockType of
   Rose         -> V2 14 6
   BrownMushroom -> V2 15 6
   RedMushroom  -> V2 0 7
+  Bookshelf    -> case face of
+    FaceTop    -> V2 4 0   -- planks top
+    FaceBottom -> V2 4 0   -- planks bottom
+    _          -> V2 1 7   -- bookshelf side
+  Anvil        -> V2 2 7
+  BrewingStand -> V2 3 7
+  Ice          -> V2 4 7
+  PackedIce    -> V2 5 7
+  RedstoneLamp -> V2 6 7
+  Hopper       -> case face of
+    FaceTop    -> V2 8 7   -- hopper opening
+    FaceBottom -> V2 7 7   -- hopper bottom
+    _          -> V2 7 7   -- hopper side
+  WheatCrop1   -> V2 1 7
+  WheatCrop2   -> V2 2 7
+  WheatCrop3   -> V2 3 7
+  WheatCrop4   -> V2 4 7
+  WheatCrop5   -> V2 5 7
+  WheatCrop6   -> V2 6 7
+  WheatCrop7   -> V2 7 7

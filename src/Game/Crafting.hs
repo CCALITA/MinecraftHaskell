@@ -12,7 +12,7 @@ module Game.Crafting
   ) where
 
 import World.Block (BlockType(..))
-import Game.Item (Item(..), ToolType(..), ToolMaterial(..), toolInfo, ToolInfo(..), MaterialType(..), FoodType(..), PotionType(..))
+import Game.Item (Item(..), ToolType(..), ToolMaterial(..), toolInfo, ToolInfo(..), MaterialType(..), FoodType(..), PotionType(..), BucketType(..))
 import qualified Data.Vector as V
 
 -- | Crafting grid (2x2 or 3x3)
@@ -344,7 +344,7 @@ allRecipes =
       , rcResult  = BlockItem EnchantingTable
       , rcCount   = 1
       }
-  ] ++ toolRecipes ++ shearsRecipe ++ compassClockRecipes ++ fishingRodRecipe ++ boatRecipe ++ railRecipes ++ dispenserRecipe
+  ] ++ toolRecipes ++ shearsRecipe ++ compassClockRecipes ++ fishingRodRecipe ++ boatRecipe ++ railRecipes ++ dispenserRecipe ++ utilityBlockRecipes ++ bucketRecipes
 
 -- | Shears crafting recipe: 2 iron ingots diagonal
 shearsRecipe :: [Recipe]
@@ -438,4 +438,44 @@ railRecipes =
     Recipe [[ji (MaterialItem IronIngot), Nothing, ji (MaterialItem IronIngot)]
            ,[ji (MaterialItem IronIngot), ji (MaterialItem IronIngot), ji (MaterialItem IronIngot)]]
            MinecartItem 1
+  ]
+
+-- | Utility block crafting recipes
+utilityBlockRecipes :: [Recipe]
+utilityBlockRecipes =
+  [ -- Bookshelf: 3 planks top + 3 books (planks) middle + 3 planks bottom
+    -- Simplified: 6 planks + 3 paper
+    Recipe [[bi OakPlanks, bi OakPlanks, bi OakPlanks]
+           ,[ji (MaterialItem Paper), ji (MaterialItem Paper), ji (MaterialItem Paper)]
+           ,[bi OakPlanks, bi OakPlanks, bi OakPlanks]]
+           (BlockItem Bookshelf) 1
+  , -- Anvil: 3 iron blocks (iron ingots) on top, 1 iron ingot middle, 3 iron ingots bottom
+    -- Simplified: 7 iron ingots
+    Recipe [[ji (MaterialItem IronIngot), ji (MaterialItem IronIngot), ji (MaterialItem IronIngot)]
+           ,[Nothing,                     ji (MaterialItem IronIngot), Nothing]
+           ,[ji (MaterialItem IronIngot), ji (MaterialItem IronIngot), ji (MaterialItem IronIngot)]]
+           (BlockItem Anvil) 1
+  , -- Brewing stand: 1 blaze rod (stick placeholder) + 3 cobblestone
+    Recipe [[Nothing,       ji StickItem,    Nothing]
+           ,[bi Cobblestone, bi Cobblestone, bi Cobblestone]]
+           (BlockItem BrewingStand) 1
+  , -- Redstone lamp: 4 redstone dust + 1 glowstone
+    Recipe [[Nothing,       bi RedstoneDust, Nothing]
+           ,[bi RedstoneDust, bi Glowstone, bi RedstoneDust]
+           ,[Nothing,       bi RedstoneDust, Nothing]]
+           (BlockItem RedstoneLamp) 1
+  , -- Hopper: 5 iron ingots in V-shape + 1 chest
+    Recipe [[ji (MaterialItem IronIngot), Nothing,           ji (MaterialItem IronIngot)]
+           ,[ji (MaterialItem IronIngot), bi Chest,          ji (MaterialItem IronIngot)]
+           ,[Nothing,                     ji (MaterialItem IronIngot), Nothing]]
+           (BlockItem Hopper) 1
+  ]
+
+-- | Bucket crafting recipes
+bucketRecipes :: [Recipe]
+bucketRecipes =
+  [ -- Empty bucket: 3 iron ingots in V-shape
+    Recipe [[ji (MaterialItem IronIngot), Nothing,                     ji (MaterialItem IronIngot)]
+           ,[Nothing,                     ji (MaterialItem IronIngot), Nothing]]
+           (BucketItem BucketEmpty) 1
   ]
