@@ -90,6 +90,7 @@ data GameState = GameState
     -- Rendering state
   , gsHudVertCount     :: !(IORef Int)
   , gsMeshCache        :: !(IORef (HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int)))
+  , gsTransMeshCache   :: !(IORef (HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int)))
     -- Frame timing
   , gsFrame            :: !(IORef Int)
   , gsLastTime         :: !(IORef Double)
@@ -155,6 +156,7 @@ newGameState spawnPos = do
     <*> pure em
     -- Rendering state
     <*> newIORef 0
+    <*> newIORef HM.empty
     <*> newIORef HM.empty
     -- Frame timing
     <*> newIORef 0

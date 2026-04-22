@@ -56,6 +56,16 @@ itemColor (BlockItem bt) = case bt of
   Rail        -> (0.55, 0.45, 0.35, 1.0)
   Dispenser   -> (0.5, 0.5, 0.5, 1.0)
   EnchantingTable -> (0.3, 0.1, 0.4, 1.0)
+  Netherrack       -> (0.5, 0.2, 0.2, 1.0)
+  SoulSand         -> (0.35, 0.27, 0.2, 1.0)
+  Glowstone        -> (0.9, 0.8, 0.4, 1.0)
+  NetherBrick      -> (0.3, 0.12, 0.12, 1.0)
+  NetherPortal     -> (0.5, 0.15, 0.8, 0.8)
+  RedstoneOre      -> (0.7, 0.15, 0.15, 1.0)
+  LapisOre         -> (0.15, 0.3, 0.7, 1.0)
+  EmeraldOre       -> (0.2, 0.75, 0.3, 1.0)
+  MossyCobblestone -> (0.35, 0.5, 0.35, 1.0)
+  MossyStoneBrick  -> (0.4, 0.5, 0.4, 1.0)
   _           -> (0.6, 0.6, 0.6, 1.0)
 itemColor (ToolItem Pickaxe _ _) = (0.7, 0.7, 0.8, 1.0)
 itemColor (ToolItem Sword _ _)   = (0.8, 0.8, 0.9, 1.0)
@@ -92,6 +102,9 @@ itemColor (MaterialItem mt) = case mt of
   Wheat      -> (0.9, 0.8, 0.3, 1.0)
   Flint      -> (0.4, 0.4, 0.4, 1.0)
   Paper      -> (0.95, 0.95, 0.9, 1.0)
+  LapisGem       -> (0.2, 0.3, 0.8, 1.0)
+  Emerald        -> (0.2, 0.8, 0.3, 1.0)
+  RedstoneDustMat -> (0.8, 0.1, 0.1, 1.0)
 itemColor (ArmorItem _ mat _) = case mat of
   LeatherArmor -> (0.6, 0.35, 0.15, 1.0)
   IronArmor    -> (0.75, 0.75, 0.75, 1.0)
@@ -171,6 +184,12 @@ itemMiniIcon (MaterialItem mt) = case mt of
   Flint      -> [(0,1,c), (1,0,c),(1,1,c), (2,1,c),(2,2,c)]
     where c = (0.4,0.4,0.4,1)
   Paper      -> fill (0.95,0.95,0.9,1)
+  LapisGem       -> [(0,1,c), (1,0,c),(1,1,c),(1,2,c), (2,1,c)]
+    where c = (0.2,0.3,0.8,1)
+  Emerald        -> [(0,1,c), (1,0,c),(1,1,c),(1,2,c), (2,1,c)]
+    where c = (0.2,0.8,0.3,1)
+  RedstoneDustMat -> [(1,0,c),(1,1,c),(1,2,c), (2,1,c)]
+    where c = (0.8,0.1,0.1,1)
   where fill c = [(r,col,c) | r <- [0..2], col <- [0..2]]
 itemMiniIcon (ArmorItem slot mat dur) = case slot of
   Helmet     -> [(0,0,c),(0,1,c),(0,2,c), (1,0,c),(1,2,c)]

@@ -63,6 +63,7 @@ data MaterialType
   | Bone | ArrowMat | StringMat | Gunpowder
   | Feather | Leather | WheatSeeds | Wheat | Flint
   | Paper
+  | LapisGem | Emerald | RedstoneDustMat
   deriving stock (Show, Eq, Ord, Enum, Bounded)
 
 -- | Armor equipment slots
@@ -226,6 +227,16 @@ blockDrops = \case
   Rail        -> [(BlockItem Rail, 1)]
   Dispenser   -> [(BlockItem Dispenser, 1)]
   EnchantingTable -> [(BlockItem EnchantingTable, 1)]
+  Netherrack       -> [(BlockItem Netherrack, 1)]
+  SoulSand         -> [(BlockItem SoulSand, 1)]
+  Glowstone        -> [(MaterialItem RedstoneDustMat, 2)]  -- drops glowstone dust (redstone-like)
+  NetherBrick      -> [(BlockItem NetherBrick, 1)]
+  NetherPortal     -> []  -- cannot be broken for drops
+  RedstoneOre      -> [(MaterialItem RedstoneDustMat, 4)]
+  LapisOre         -> [(MaterialItem LapisGem, 4)]
+  EmeraldOre       -> [(MaterialItem Emerald, 1)]
+  MossyCobblestone -> [(BlockItem MossyCobblestone, 1)]
+  MossyStoneBrick  -> [(BlockItem MossyStoneBrick, 1)]
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
@@ -240,6 +251,9 @@ blockRequiredHarvestLevel = \case
   StoneBrick  -> 1
   Brick       -> 1
   StoneStairs -> 1
+  RedstoneOre -> 3  -- iron pickaxe or better
+  LapisOre    -> 2  -- stone pickaxe or better
+  EmeraldOre  -> 3  -- iron pickaxe or better
   _           -> 0  -- hand is fine
 
 -- | The preferred tool type for faster mining of this block.
@@ -285,6 +299,15 @@ blockPreferredTool = \case
   Rail        -> Just Pickaxe
   Dispenser   -> Just Pickaxe
   EnchantingTable -> Just Pickaxe
+  Netherrack       -> Just Pickaxe
+  NetherBrick      -> Just Pickaxe
+  RedstoneOre      -> Just Pickaxe
+  LapisOre         -> Just Pickaxe
+  EmeraldOre       -> Just Pickaxe
+  MossyCobblestone -> Just Pickaxe
+  MossyStoneBrick  -> Just Pickaxe
+  SoulSand         -> Just Shovel
+  Glowstone        -> Just Pickaxe
   _           -> Nothing
 
 -- | How much hunger a food type restores
@@ -355,6 +378,9 @@ materialName = \case
   Wheat      -> "Wheat"
   Flint      -> "Flint"
   Paper      -> "Paper"
+  LapisGem       -> "Lapis Lazuli"
+  Emerald        -> "Emerald"
+  RedstoneDustMat -> "Redstone Dust"
 
 -- | Defense points for armor by slot and material
 armorDefensePoints :: ArmorSlot -> ArmorMaterial -> Int
