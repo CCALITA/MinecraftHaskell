@@ -2342,7 +2342,7 @@ main = do
                   , uboProjection   = transpose $ cameraProjectionMatrix aspect 0.1 1000 cam
                   , uboSunDirection = V4 sx sy sz 0
                   , uboAmbientLight = getAmbientLight dayNightVal * weatherAmbientMultiplier weatherVal
-                  , _uboPad1        = 0
+                  , uboTime         = realToFrac now
                   , _uboPad2        = 0
                   , _uboPad3        = 0
                   }
