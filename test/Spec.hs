@@ -28,6 +28,8 @@ import Game.RecipeRegistry
 import World.BiomeFeatures
 import World.Biome (BiomeType(..))
 import Game.ItemRegistry
+import World.Generation (generateChunk, GenerationConfig(..), defaultGenConfig,
+                         structureHashRoll, placeStructureInChunk)
 
 import Entity.Villager
 import qualified World.Dimension as Dim
@@ -50,6 +52,7 @@ import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
 
 import Data.Binary (encode, decode)
 import Data.IORef (newIORef, readIORef, modifyIORef')
+import Data.List (nub, isPrefixOf, isInfixOf)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..))
@@ -57,6 +60,7 @@ import qualified Data.Vector as V
 import Control.Concurrent.STM (atomically, readTVar)
 import qualified Data.HashMap.Strict as HM
 import Data.Function ((&))
+import qualified Data.Vector.Unboxed.Mutable as MUV
 
 main :: IO ()
 main = hspec $ do
@@ -113,6 +117,11 @@ main = hspec $ do
   xpSpec
   utilityBlockSpec
   bucketItemSpec
+  wheatCropGrowthSpec
+  structurePlacementSpec
+  executeCommandSpec
+  chatStateSpec
+  lookupItemByNameSpec
 
 -- =========================================================================
 -- Block
@@ -2645,7 +2654,7 @@ structureSpec = describe "World.Structure" $ do
 
   -- placeStructure integration test
   it "placeStructure places blocks into the world" $ withTestWorld $ \world -> do
-    placeStructure world (V3 0 64 0) wellStructure
+    placeStructure (worldSetBlock world) (V3 0 64 0) wellStructure
     -- Check cobblestone floor at origin
     bt00 <- worldGetBlock world (V3 0 64 0)
     bt00 `shouldBe` Cobblestone
@@ -2654,7 +2663,7 @@ structureSpec = describe "World.Structure" $ do
     btWater `shouldBe` Water
 
   it "placeStructure respects offset" $ withTestWorld $ \world -> do
-    placeStructure world (V3 5 70 5) dungeonStructure
+    placeStructure (worldSetBlock world) (V3 5 70 5) dungeonStructure
     -- Floor corner at (5,70,5)
     bt <- worldGetBlock world (V3 5 70 5)
     bt `shouldBe` Cobblestone
@@ -2663,7 +2672,7 @@ structureSpec = describe "World.Structure" $ do
     btChest `shouldBe` Chest
 
   it "placeStructure does not affect unrelated positions" $ withTestWorld $ \world -> do
-    placeStructure world (V3 0 64 0) wellStructure
+    placeStructure (worldSetBlock world) (V3 0 64 0) wellStructure
     -- Position outside the structure should still be Air
     btFar <- worldGetBlock world (V3 10 64 10)
     btFar `shouldBe` Air
@@ -4510,3 +4519,367 @@ bucketItemSpec = describe "Bucket items" $ do
             & \g -> setCraftingSlot g 0 2 (Just (MaterialItem IronIngot))
             & \g -> setCraftingSlot g 1 1 (Just (MaterialItem IronIngot))
       tryCraft grid `shouldBe` CraftSuccess (BucketItem BucketEmpty) 1
+-- Wheat Crop Growth Stages
+-- =========================================================================
+wheatCropGrowthSpec :: Spec
+wheatCropGrowthSpec = describe "Wheat crop growth stages" $ do
+  -- Block properties
+  it "all wheat crop stages are non-solid" $ do
+    isSolid WheatCrop  `shouldBe` False
+    isSolid WheatCrop1 `shouldBe` False
+    isSolid WheatCrop2 `shouldBe` False
+    isSolid WheatCrop3 `shouldBe` False
+    isSolid WheatCrop4 `shouldBe` False
+    isSolid WheatCrop5 `shouldBe` False
+    isSolid WheatCrop6 `shouldBe` False
+    isSolid WheatCrop7 `shouldBe` False
+
+  it "all wheat crop stages are transparent" $ do
+    isTransparent WheatCrop  `shouldBe` True
+    isTransparent WheatCrop1 `shouldBe` True
+    isTransparent WheatCrop2 `shouldBe` True
+    isTransparent WheatCrop3 `shouldBe` True
+    isTransparent WheatCrop4 `shouldBe` True
+    isTransparent WheatCrop5 `shouldBe` True
+    isTransparent WheatCrop6 `shouldBe` True
+    isTransparent WheatCrop7 `shouldBe` True
+
+  it "all wheat crop stages have hardness 0" $ do
+    bpHardness (blockProperties WheatCrop)  `shouldBe` 0
+    bpHardness (blockProperties WheatCrop1) `shouldBe` 0
+    bpHardness (blockProperties WheatCrop2) `shouldBe` 0
+    bpHardness (blockProperties WheatCrop3) `shouldBe` 0
+    bpHardness (blockProperties WheatCrop4) `shouldBe` 0
+    bpHardness (blockProperties WheatCrop5) `shouldBe` 0
+    bpHardness (blockProperties WheatCrop6) `shouldBe` 0
+    bpHardness (blockProperties WheatCrop7) `shouldBe` 0
+
+  it "isWheatCropBlock identifies all stages" $ do
+    isWheatCropBlock WheatCrop  `shouldBe` True
+    isWheatCropBlock WheatCrop1 `shouldBe` True
+    isWheatCropBlock WheatCrop2 `shouldBe` True
+    isWheatCropBlock WheatCrop3 `shouldBe` True
+    isWheatCropBlock WheatCrop4 `shouldBe` True
+    isWheatCropBlock WheatCrop5 `shouldBe` True
+    isWheatCropBlock WheatCrop6 `shouldBe` True
+    isWheatCropBlock WheatCrop7 `shouldBe` True
+
+  it "isWheatCropBlock rejects non-wheat blocks" $ do
+    isWheatCropBlock Air       `shouldBe` False
+    isWheatCropBlock Farmland  `shouldBe` False
+    isWheatCropBlock Dirt      `shouldBe` False
+    isWheatCropBlock OakSapling `shouldBe` False
+
+  -- Texture coordinates are valid atlas positions
+  it "all wheat crop stages have valid texture coords" $ do
+    let checkCoords bt = do
+          let V2 u v = blockFaceTexCoords bt FaceTop
+          u `shouldSatisfy` (>= 0)
+          v `shouldSatisfy` (>= 0)
+          u `shouldSatisfy` (< 16)
+          v `shouldSatisfy` (< 16)
+    checkCoords WheatCrop1
+    checkCoords WheatCrop2
+    checkCoords WheatCrop3
+    checkCoords WheatCrop4
+    checkCoords WheatCrop5
+    checkCoords WheatCrop6
+    checkCoords WheatCrop7
+
+  it "each wheat crop stage has distinct texture coords" $ do
+    let coords = map (\bt -> blockFaceTexCoords bt FaceTop)
+          [WheatCrop, WheatCrop1, WheatCrop2, WheatCrop3,
+           WheatCrop4, WheatCrop5, WheatCrop6, WheatCrop7]
+    length coords `shouldBe` length (nub coords)
+
+  -- Drops
+  it "WheatCrop (stage 0) drops WheatSeeds only" $
+    blockDrops WheatCrop `shouldBe` [(MaterialItem Wheat, 1)]
+
+  it "intermediate stages drop WheatSeeds only" $ do
+    blockDrops WheatCrop1 `shouldBe` [(MaterialItem WheatSeeds, 1)]
+    blockDrops WheatCrop2 `shouldBe` [(MaterialItem WheatSeeds, 1)]
+    blockDrops WheatCrop3 `shouldBe` [(MaterialItem WheatSeeds, 1)]
+    blockDrops WheatCrop4 `shouldBe` [(MaterialItem WheatSeeds, 1)]
+    blockDrops WheatCrop5 `shouldBe` [(MaterialItem WheatSeeds, 1)]
+    blockDrops WheatCrop6 `shouldBe` [(MaterialItem WheatSeeds, 1)]
+
+  it "WheatCrop7 (fully mature) drops Wheat and WheatSeeds" $
+    blockDrops WheatCrop7 `shouldBe` [(MaterialItem Wheat, 1), (MaterialItem WheatSeeds, 1)]
+
+  -- Enum ordering (added at the end)
+  it "wheat crop stages follow Hopper in enum" $ do
+    fromEnum WheatCrop1 `shouldBe` fromEnum Hopper + 1
+    fromEnum WheatCrop7 `shouldBe` fromEnum Hopper + 7
+-- Structure Placement in World Generation
+-- =========================================================================
+structurePlacementSpec :: Spec
+structurePlacementSpec = describe "World.Generation structure placement" $ do
+
+  it "structureHashRoll is deterministic for same inputs" $ do
+    let r1 = structureHashRoll 42 3 7 10001
+        r2 = structureHashRoll 42 3 7 10001
+    r1 `shouldBe` r2
+
+  it "structureHashRoll returns non-negative values" $
+    property $ \s cx cz salt ->
+      structureHashRoll s cx cz salt >= 0
+
+  it "structureHashRoll varies with different salts" $ do
+    let r1 = structureHashRoll 42 3 7 10001
+        r2 = structureHashRoll 42 3 7 10002
+    r1 `shouldNotBe` r2
+
+  it "structureHashRoll varies with different chunk positions" $ do
+    let r1 = structureHashRoll 42 0 0 10001
+        r2 = structureHashRoll 42 1 0 10001
+        r3 = structureHashRoll 42 0 1 10001
+    r1 `shouldNotBe` r2
+    r1 `shouldNotBe` r3
+
+  it "structureHashRoll varies with different seeds" $ do
+    let r1 = structureHashRoll 42 3 7 10001
+        r2 = structureHashRoll 99 3 7 10001
+    r1 `shouldNotBe` r2
+
+  it "placeStructureInChunk writes well blocks into chunk vector" $ do
+    chunk <- newChunk (V2 0 0)
+    let mvec = chunkBlocks chunk
+    -- Place well at local (5, 64, 5)
+    placeStructureInChunk mvec wellStructure 5 64 5
+    -- Check cobblestone floor at (5, 64, 5)
+    b <- MUV.read mvec (blockIndex 5 64 5)
+    b `shouldBe` fromIntegral (fromEnum Cobblestone)
+    -- Check water at (7, 65, 7) = origin (5,64,5) + offset (2,1,2)
+    w <- MUV.read mvec (blockIndex 7 65 7)
+    w `shouldBe` fromIntegral (fromEnum Water)
+
+  it "placeStructureInChunk clips blocks outside chunk bounds" $ do
+    chunk <- newChunk (V2 0 0)
+    let mvec = chunkBlocks chunk
+    -- Place well at edge so some blocks would go out of bounds
+    placeStructureInChunk mvec wellStructure 14 64 14
+    -- (14+4, 64, 14) = (18, 64, 14) is out of bounds, should not crash
+    -- (14, 64, 14) should still have cobblestone
+    b <- MUV.read mvec (blockIndex 14 64 14)
+    b `shouldBe` fromIntegral (fromEnum Cobblestone)
+    -- (14+1, 64, 14+1) = (15, 64, 15) is in bounds
+    b2 <- MUV.read mvec (blockIndex 15 64 15)
+    b2 `shouldBe` fromIntegral (fromEnum Cobblestone)
+
+  it "placeStructureInChunk places dungeon underground" $ do
+    chunk <- newChunk (V2 0 0)
+    let mvec = chunkBlocks chunk
+    placeStructureInChunk mvec dungeonStructure 4 20 4
+    -- Floor cobblestone at (4, 20, 4)
+    b <- MUV.read mvec (blockIndex 4 20 4)
+    b `shouldBe` fromIntegral (fromEnum Cobblestone)
+    -- Chest at center (4+3, 20+1, 4+3) = (7, 21, 7)
+    c <- MUV.read mvec (blockIndex 7 21 7)
+    c `shouldBe` fromIntegral (fromEnum Chest)
+
+  it "generateChunk is deterministic — same seed produces identical chunks" $ do
+    let cfg = defaultGenConfig { gcSeed = 12345 }
+        pos = V2 10 20
+    chunk1 <- generateChunk cfg pos
+    chunk2 <- generateChunk cfg pos
+    -- Compare all blocks in both chunks
+    let totalBlocks = chunkWidth * chunkDepth * chunkHeight
+    allSame <- allBlocksSame (chunkBlocks chunk1) (chunkBlocks chunk2) totalBlocks 0
+    allSame `shouldBe` True
+
+  it "generateChunk produces different chunks for different seeds" $ do
+    let cfg1 = defaultGenConfig { gcSeed = 11111 }
+        cfg2 = defaultGenConfig { gcSeed = 22222 }
+        pos = V2 5 5
+    chunk1 <- generateChunk cfg1 pos
+    chunk2 <- generateChunk cfg2 pos
+    -- At least one block should differ
+    let totalBlocks = chunkWidth * chunkDepth * chunkHeight
+    allSame <- allBlocksSame (chunkBlocks chunk1) (chunkBlocks chunk2) totalBlocks 0
+    allSame `shouldBe` False
+
+  it "generateChunk produces different chunks for different positions" $ do
+    let cfg = defaultGenConfig { gcSeed = 42 }
+    chunk1 <- generateChunk cfg (V2 0 0)
+    chunk2 <- generateChunk cfg (V2 100 100)
+    let totalBlocks = chunkWidth * chunkDepth * chunkHeight
+    allSame <- allBlocksSame (chunkBlocks chunk1) (chunkBlocks chunk2) totalBlocks 0
+    allSame `shouldBe` False
+
+-- | Helper: compare all blocks in two mutable vectors
+allBlocksSame :: MUV.IOVector Word8 -> MUV.IOVector Word8 -> Int -> Int -> IO Bool
+allBlocksSame v1 v2 total i
+  | i >= total = pure True
+  | otherwise = do
+      a <- MUV.read v1 i
+      b <- MUV.read v2 i
+      if a /= b then pure False else allBlocksSame v1 v2 total (i + 1)
+
+-- =========================================================================
+-- Command execution
+-- =========================================================================
+executeCommandSpec :: Spec
+executeCommandSpec = describe "Game.Command.executeCommand" $ do
+  it "/give returns CmdSuccess with item and count" $ do
+    executeCommand (CmdGive "stone" 64) `shouldBe` CmdSuccess "Gave 64 stone"
+
+  it "/give with count 1 shows count" $ do
+    executeCommand (CmdGive "diamond" 1) `shouldBe` CmdSuccess "Gave 1 diamond"
+
+  it "/tp returns CmdSuccess with coordinates" $ do
+    let result = executeCommand (CmdTeleport 100 65 (-200))
+    case result of
+      CmdSuccess msg -> do
+        msg `shouldSatisfy` \m -> "Teleported to" `isPrefixOf` m
+      CmdError _ -> expectationFailure "Expected CmdSuccess"
+
+  it "/time returns CmdSuccess" $ do
+    executeCommand (CmdTime "day") `shouldBe` CmdSuccess "Time set to day"
+
+  it "/time night returns CmdSuccess" $ do
+    executeCommand (CmdTime "night") `shouldBe` CmdSuccess "Time set to night"
+
+  it "/weather returns CmdSuccess" $ do
+    executeCommand (CmdWeather "clear") `shouldBe` CmdSuccess "Weather set to clear"
+
+  it "/weather rain returns CmdSuccess" $ do
+    executeCommand (CmdWeather "rain") `shouldBe` CmdSuccess "Weather set to rain"
+
+  it "/gamemode returns CmdSuccess" $ do
+    executeCommand (CmdGamemode "creative") `shouldBe` CmdSuccess "Game mode set to creative"
+
+  it "/gamemode survival returns CmdSuccess" $ do
+    executeCommand (CmdGamemode "survival") `shouldBe` CmdSuccess "Game mode set to survival"
+
+  it "/kill returns CmdSuccess" $ do
+    executeCommand CmdKill `shouldBe` CmdSuccess "Killed player"
+
+  it "/seed returns CmdSuccess" $ do
+    executeCommand CmdSeed `shouldBe` CmdSuccess "Seed: 12345"
+
+  it "/help returns CmdSuccess with command list" $ do
+    let result = executeCommand CmdHelp
+    case result of
+      CmdSuccess msg -> msg `shouldSatisfy` \m -> "/give" `isInfixOf` m
+      CmdError _ -> expectationFailure "Expected CmdSuccess"
+
+  it "/summon returns CmdSuccess" $ do
+    executeCommand (CmdSpawnMob "zombie") `shouldBe` CmdSuccess "Summoned zombie"
+
+-- =========================================================================
+-- Chat state
+-- =========================================================================
+chatStateSpec :: Spec
+chatStateSpec = describe "Game.Command.ChatState" $ do
+  it "emptyChatState has empty buffer" $ do
+    chatGetBuffer emptyChatState `shouldBe` ""
+
+  it "emptyChatState has no messages" $ do
+    csMessages emptyChatState `shouldBe` []
+
+  it "chatAddChar appends character to buffer" $ do
+    let s = chatAddChar 'a' emptyChatState
+    chatGetBuffer s `shouldBe` "a"
+
+  it "chatAddChar builds up string correctly" $ do
+    let s = chatAddChar 'c' $ chatAddChar 'b' $ chatAddChar 'a' emptyChatState
+    chatGetBuffer s `shouldBe` "abc"
+
+  it "chatDeleteChar removes last character" $ do
+    let s = chatDeleteChar $ chatAddChar 'b' $ chatAddChar 'a' emptyChatState
+    chatGetBuffer s `shouldBe` "a"
+
+  it "chatDeleteChar on empty buffer is no-op" $ do
+    let s = chatDeleteChar emptyChatState
+    chatGetBuffer s `shouldBe` ""
+
+  it "chatClear empties the buffer" $ do
+    let s = chatClear $ chatAddChar 'x' emptyChatState
+    chatGetBuffer s `shouldBe` ""
+
+  it "chatClear preserves messages" $ do
+    let s = addChatMessage "hello" 3.0 emptyChatState
+        s' = chatClear $ chatAddChar 'x' s
+    length (csMessages s') `shouldBe` 1
+
+  it "addChatMessage adds a message" $ do
+    let s = addChatMessage "test" 3.0 emptyChatState
+    length (csMessages s) `shouldBe` 1
+    cmText (head (csMessages s)) `shouldBe` "test"
+    cmTimer (head (csMessages s)) `shouldBe` 3.0
+
+  it "addChatMessage preserves existing messages" $ do
+    let s = addChatMessage "b" 2.0 $ addChatMessage "a" 3.0 emptyChatState
+    length (csMessages s) `shouldBe` 2
+
+  it "updateChatMessages decrements timers" $ do
+    let s = addChatMessage "test" 3.0 emptyChatState
+        s' = updateChatMessages 1.0 s
+    cmTimer (head (csMessages s')) `shouldBe` 2.0
+
+  it "updateChatMessages removes expired messages" $ do
+    let s = addChatMessage "test" 1.0 emptyChatState
+        s' = updateChatMessages 1.5 s
+    csMessages s' `shouldBe` []
+
+  it "updateChatMessages keeps fresh messages" $ do
+    let s = addChatMessage "old" 1.0 $ addChatMessage "new" 5.0 emptyChatState
+        s' = updateChatMessages 2.0 s
+    length (csMessages s') `shouldBe` 1
+    cmText (head (csMessages s')) `shouldBe` "new"
+
+  it "slash pre-fill sets buffer to /" $ do
+    let s = chatAddChar '/' (chatClear emptyChatState)
+    chatGetBuffer s `shouldBe` "/"
+
+-- =========================================================================
+-- Item name lookup
+-- =========================================================================
+lookupItemByNameSpec :: Spec
+lookupItemByNameSpec = describe "Game.Item.lookupItemByName" $ do
+  it "looks up stone block" $ do
+    lookupItemByName "stone" `shouldBe` Just (BlockItem Stone)
+
+  it "looks up dirt block" $ do
+    lookupItemByName "dirt" `shouldBe` Just (BlockItem Dirt)
+
+  it "looks up diamond material" $ do
+    lookupItemByName "diamond" `shouldBe` Just (MaterialItem DiamondGem)
+
+  it "looks up coal material" $ do
+    lookupItemByName "coal" `shouldBe` Just (MaterialItem Coal)
+
+  it "looks up iron_ingot" $ do
+    lookupItemByName "iron_ingot" `shouldBe` Just (MaterialItem IronIngot)
+
+  it "looks up diamond_pickaxe" $ do
+    lookupItemByName "diamond_pickaxe" `shouldBe` Just (ToolItem Pickaxe Diamond 1561)
+
+  it "looks up wooden_sword" $ do
+    lookupItemByName "wooden_sword" `shouldBe` Just (ToolItem Sword Wood 59)
+
+  it "looks up stick" $ do
+    lookupItemByName "stick" `shouldBe` Just StickItem
+
+  it "looks up apple food" $ do
+    lookupItemByName "apple" `shouldBe` Just (FoodItem Apple)
+
+  it "looks up bread food" $ do
+    lookupItemByName "bread" `shouldBe` Just (FoodItem Bread)
+
+  it "returns Nothing for unknown item" $ do
+    lookupItemByName "unobtainium" `shouldBe` Nothing
+
+  it "is case-insensitive" $ do
+    lookupItemByName "Stone" `shouldBe` Just (BlockItem Stone)
+    lookupItemByName "DIAMOND" `shouldBe` Just (MaterialItem DiamondGem)
+
+  it "looks up torch block" $ do
+    lookupItemByName "torch" `shouldBe` Just (BlockItem Torch)
+
+  it "looks up compass" $ do
+    lookupItemByName "compass" `shouldBe` Just CompassItem
+
+  it "looks up glass_bottle" $ do
+    lookupItemByName "glass_bottle" `shouldBe` Just GlassBottleItem

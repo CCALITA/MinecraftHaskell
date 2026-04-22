@@ -27,12 +27,14 @@ module Game.Item
   , mobDrops
   , potionName
   , potionColor
+  , lookupItemByName
   ) where
 
 import World.Block (BlockType(..))
 import System.Random (randomRIO)
 import Data.Binary (Binary(..), Get)
 import Data.Word (Word8)
+import Data.Char (toLower)
 
 -- | Tool types
 data ToolType
@@ -266,6 +268,13 @@ blockDrops = \case
   PackedIce        -> [(BlockItem PackedIce, 1)]
   RedstoneLamp     -> [(BlockItem RedstoneLamp, 1)]
   Hopper           -> [(BlockItem Hopper, 1)]
+  WheatCrop1       -> [(MaterialItem WheatSeeds, 1)]
+  WheatCrop2       -> [(MaterialItem WheatSeeds, 1)]
+  WheatCrop3       -> [(MaterialItem WheatSeeds, 1)]
+  WheatCrop4       -> [(MaterialItem WheatSeeds, 1)]
+  WheatCrop5       -> [(MaterialItem WheatSeeds, 1)]
+  WheatCrop6       -> [(MaterialItem WheatSeeds, 1)]
+  WheatCrop7       -> [(MaterialItem Wheat, 1), (MaterialItem WheatSeeds, 1)]
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
@@ -558,3 +567,83 @@ instance Binary Item where
       14 -> pure MinecartItem
       15 -> BucketItem <$> get
       _ -> fail "Unknown Item tag"
+
+-- | Look up an item by its lowercase name string.
+-- Supports block items (by block type name) and common non-block items.
+lookupItemByName :: String -> Maybe Item
+lookupItemByName name = case map toLower name of
+  -- Common block items
+  "stone"           -> Just (BlockItem Stone)
+  "dirt"            -> Just (BlockItem Dirt)
+  "grass"           -> Just (BlockItem Grass)
+  "sand"            -> Just (BlockItem Sand)
+  "gravel"          -> Just (BlockItem Gravel)
+  "cobblestone"     -> Just (BlockItem Cobblestone)
+  "oak_planks"      -> Just (BlockItem OakPlanks)
+  "oakplanks"       -> Just (BlockItem OakPlanks)
+  "planks"          -> Just (BlockItem OakPlanks)
+  "glass"           -> Just (BlockItem Glass)
+  "oak_log"         -> Just (BlockItem OakLog)
+  "oaklog"          -> Just (BlockItem OakLog)
+  "log"             -> Just (BlockItem OakLog)
+  "iron_ore"        -> Just (BlockItem IronOre)
+  "ironore"         -> Just (BlockItem IronOre)
+  "coal_ore"        -> Just (BlockItem CoalOre)
+  "coalore"         -> Just (BlockItem CoalOre)
+  "gold_ore"        -> Just (BlockItem GoldOre)
+  "goldore"         -> Just (BlockItem GoldOre)
+  "diamond_ore"     -> Just (BlockItem DiamondOre)
+  "diamondore"      -> Just (BlockItem DiamondOre)
+  "obsidian"        -> Just (BlockItem Obsidian)
+  "tnt"             -> Just (BlockItem TNT)
+  "torch"           -> Just (BlockItem Torch)
+  "wool"            -> Just (BlockItem Wool)
+  "brick"           -> Just (BlockItem Brick)
+  "stonebrick"      -> Just (BlockItem StoneBrick)
+  "stone_brick"     -> Just (BlockItem StoneBrick)
+  "crafting_table"  -> Just (BlockItem CraftingTable)
+  "craftingtable"   -> Just (BlockItem CraftingTable)
+  "furnace"         -> Just (BlockItem Furnace)
+  "chest"           -> Just (BlockItem Chest)
+  "ladder"          -> Just (BlockItem Ladder)
+  "bed"             -> Just (BlockItem Bed)
+  "snow"            -> Just (BlockItem Snow)
+  "clay"            -> Just (BlockItem Clay)
+  "bedrock"         -> Just (BlockItem Bedrock)
+  "water"           -> Just (BlockItem Water)
+  "lava"            -> Just (BlockItem Lava)
+  -- Tools (wood, default durability)
+  "wooden_pickaxe"  -> Just (ToolItem Pickaxe Wood 59)
+  "wooden_sword"    -> Just (ToolItem Sword Wood 59)
+  "wooden_axe"      -> Just (ToolItem Axe Wood 59)
+  "wooden_shovel"   -> Just (ToolItem Shovel Wood 59)
+  "stone_pickaxe"   -> Just (ToolItem Pickaxe StoneTier 131)
+  "stone_sword"     -> Just (ToolItem Sword StoneTier 131)
+  "iron_pickaxe"    -> Just (ToolItem Pickaxe Iron 250)
+  "iron_sword"      -> Just (ToolItem Sword Iron 250)
+  "diamond_pickaxe" -> Just (ToolItem Pickaxe Diamond 1561)
+  "diamond_sword"   -> Just (ToolItem Sword Diamond 1561)
+  -- Simple items
+  "stick"           -> Just StickItem
+  "compass"         -> Just CompassItem
+  "clock"           -> Just ClockItem
+  "boat"            -> Just BoatItem
+  "minecart"        -> Just MinecartItem
+  "glass_bottle"    -> Just GlassBottleItem
+  -- Food
+  "apple"           -> Just (FoodItem Apple)
+  "bread"           -> Just (FoodItem Bread)
+  "raw_beef"        -> Just (FoodItem RawBeef)
+  "cooked_beef"     -> Just (FoodItem Steak)
+  "steak"           -> Just (FoodItem Steak)
+  "raw_pork"        -> Just (FoodItem RawPorkchop)
+  "cooked_pork"     -> Just (FoodItem CookedPorkchop)
+  -- Materials
+  "coal"            -> Just (MaterialItem Coal)
+  "iron_ingot"      -> Just (MaterialItem IronIngot)
+  "ironingot"       -> Just (MaterialItem IronIngot)
+  "gold_ingot"      -> Just (MaterialItem GoldIngot)
+  "goldingot"       -> Just (MaterialItem GoldIngot)
+  "diamond"         -> Just (MaterialItem DiamondGem)
+  "bone"            -> Just (MaterialItem Bone)
+  _                 -> Nothing
