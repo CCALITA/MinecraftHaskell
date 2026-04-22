@@ -39,6 +39,7 @@ import Game.Save
 import Game.DroppedItem
 import Game.BlockEntity
 import Game.State (GameState(..), GameMode(..), Projectile(..), newGameState)
+import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
 import Game.ItemDisplay (itemColor, itemMiniIcon)
 import Engine.Sound
 import Game.Particle
@@ -71,6 +72,7 @@ import qualified System.Random
 import System.Random (randomRIO)
 import System.Environment (getArgs)
 import Data.Char (isDigit)
+import Text.Read (readMaybe)
 
 -- | Debug overlay information shown when F3 is active
 data DebugInfo = DebugInfo
@@ -236,6 +238,7 @@ main = do
         fpsCounterRef       = gsFpsCounter gs
         fpsTimerRef         = gsFpsTimer gs
         fpsDisplayRef       = gsFpsDisplay gs
+        chatStateRef        = gsChatState gs
 
     -- World save management: use world1 as default
     let defaultSaveDir = savesRoot </> "world1"
