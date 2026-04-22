@@ -46,7 +46,7 @@ import Game.PotionEffect
 import Game.Bucket (BucketAction(..), determineBucketAction, bucketTypeToFluidBlock, fluidBlockToBucketType)
 import World.Fluid (FluidState, FluidType(..), newFluidState, addFluidSource, removeFluid, getFluid, FluidBlock(..))
 
-import Engine.Mesh (MeshData(..), NeighborData(..), meshChunkWithLight, emptyNeighborData, BlockVertex(..))
+import Engine.Mesh (MeshData(..), NeighborData(..), meshChunkWithLight, emptyNeighborData, BlockVertex(..), computeVertexAO)
 import Entity.Pathfinding (findPath, pathDistance)
 import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
 import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, getTimeOfDay, TimeOfDay(..))
@@ -139,6 +139,7 @@ main = hspec $ do
   crossChunkCullingSpec
   greedyMeshingSpec
   dimensionWiringSpec
+  meshAOSpec
   directionalPistonSpec
 
 -- =========================================================================
@@ -5986,3 +5987,56 @@ directionalPistonSpec = describe "Directional Pistons" $ do
         worldSetBlock world (V3 5 64 5) PistonHeadDown
         blk <- worldGetBlock world (V3 5 64 5)
         blk `shouldBe` PistonHeadDown
+
+-- =========================================================================
+-- Mesh AO (per-vertex ambient occlusion)
+-- =========================================================================
+meshAOSpec :: Spec
+meshAOSpec = describe "Engine.Mesh AO" $ do
+  describe "computeVertexAO" $ do
+    it "no neighbors solid => AO = 1.0" $
+      computeVertexAO False False False `shouldBe` 1.0
+    it "one side solid => AO = 2/3" $
+      computeVertexAO True False False `shouldSatisfy` (\v -> abs (v - 2.0/3.0) < 1e-6)
+    it "two sides solid => forces corner, AO = 0.0" $
+      computeVertexAO True True False `shouldBe` 0.0
+    it "two sides solid with corner already solid => AO = 0.0" $
+      computeVertexAO True True True `shouldBe` 0.0
+    it "one side + corner solid => AO = 1/3" $
+      computeVertexAO True False True `shouldSatisfy` (\v -> abs (v - 1.0/3.0) < 1e-6)
+    it "corner only solid => AO = 2/3" $
+      computeVertexAO False False True `shouldSatisfy` (\v -> abs (v - 2.0/3.0) < 1e-6)
+    it "both sides not solid, corner not solid => AO = 1.0" $
+      computeVertexAO False False False `shouldBe` 1.0
+    it "AO is always in [0, 1]" $
+      property $ \s1 s2 c ->
+        let ao = computeVertexAO s1 s2 c
+        in ao >= 0.0 && ao <= 1.0
+  describe "meshChunkWithLight AO integration" $ do
+    it "isolated block has all AO > 0 (no solid neighbors)" $ do
+      chunk <- newChunk (V2 0 0)
+      setBlock chunk 8 8 8 Stone
+      lm <- newLightMap
+      propagateSkyLight chunk lm
+      mesh <- meshChunkWithLight chunk lm emptyNeighborData
+      let verts = VS.toList (mdVertices mesh)
+      all (\v -> bvAO v > 0.0) verts `shouldBe` True
+    it "block with raised neighbors has varying AO on top face" $ do
+      chunk <- newChunk (V2 0 0)
+      setBlock chunk 8 250 8 Stone
+      setBlock chunk 7 250 8 Stone
+      setBlock chunk 7 251 8 Stone
+      setBlock chunk 8 250 7 Stone
+      setBlock chunk 8 251 7 Stone
+      lm <- newLightMap
+      propagateSkyLight chunk lm
+      mesh <- meshChunkWithLight chunk lm emptyNeighborData
+      let verts = VS.toList (mdVertices mesh)
+          topFaceVerts = filter (\v ->
+            let V3 px py pz = bvPosition v
+                V3 _ ny _ = bvNormal v
+            in abs (py - 251.0) < 0.01 && ny > 0.5 &&
+               px >= 8.0 && px <= 9.0 && pz >= 8.0 && pz <= 9.0) verts
+          aoVals = map bvAO topFaceVerts
+      length topFaceVerts `shouldBe` 4
+      (maximum aoVals - minimum aoVals) `shouldSatisfy` (> 0.01)
