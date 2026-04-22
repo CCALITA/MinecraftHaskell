@@ -4,6 +4,8 @@ module World.Dimension
   , overworldConfig
   , netherConfig
   , endConfig
+  , dimensionSkyColor
+  , dimensionConfig
   , generateNetherChunk
   -- * Nether portal
   , PortalOrientation(..)
@@ -21,7 +23,7 @@ import Control.Monad (when, forM_)
 import Data.Bits (xor, shiftR)
 import Data.IORef (writeIORef)
 import Data.Word (Word8)
-import Linear (V2(..), V3(..))
+import Linear (V2(..), V3(..), V4(..))
 import qualified Data.Vector.Unboxed.Mutable as MUV
 
 -- | The three Minecraft dimensions.
@@ -70,6 +72,20 @@ endConfig = DimensionConfig
   , dcCeilingY    = Nothing
   , dcGravity     = 1.0
   }
+
+-- | Look up the config for a given dimension.
+dimensionConfig :: DimensionType -> DimensionConfig
+dimensionConfig Overworld = overworldConfig
+dimensionConfig Nether    = netherConfig
+dimensionConfig TheEnd    = endConfig
+
+-- | Sky color tint for each dimension (RGBA multiplier applied to the
+--   base day/night sky color).  Overworld is identity (1,1,1,1).
+--   Nether has a dark reddish tint.  The End has a dark purplish tint.
+dimensionSkyColor :: DimensionType -> V4 Float
+dimensionSkyColor Overworld = V4 1.0 1.0 1.0 1.0
+dimensionSkyColor Nether    = V4 0.6 0.1 0.1 1.0
+dimensionSkyColor TheEnd    = V4 0.1 0.0 0.15 1.0
 
 -- ---------------------------------------------------------------------------
 -- Nether portal logic
