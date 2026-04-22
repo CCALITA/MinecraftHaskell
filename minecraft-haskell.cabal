@@ -87,6 +87,7 @@ library
     Game.DroppedItem
     Game.PotionEffect
     Game.Particle
+    Game.XP
     Entity.ECS
     Entity.Component
     Entity.Mob
