@@ -19,6 +19,7 @@ import Game.Crafting (CraftingGrid, emptyCraftingGrid)
 import Game.Furnace (FurnaceState, newFurnaceState)
 import Game.Enchanting (EnchantmentType, EnchantmentMap, newEnchantmentMap)
 import Game.PotionEffect (ActiveEffect)
+import Game.Event (EventBus, newEventBus)
 import Game.DayNight (DayNightCycle, newDayNightCycle)
 import World.Weather (WeatherState, newWeatherState)
 import World.Redstone (RedstoneState, newRedstoneState)
@@ -100,6 +101,8 @@ data GameState = GameState
   , gsFpsCounter       :: !(IORef Int)
   , gsFpsTimer         :: !(IORef Float)
   , gsFpsDisplay       :: !(IORef Int)
+    -- Event system
+  , gsEventBus         :: !EventBus
   }
 
 -- | Create a fresh GameState with default initial values.
@@ -168,3 +171,5 @@ newGameState spawnPos = do
     <*> newIORef 0
     <*> newIORef 0.0
     <*> newIORef 0
+    -- Event system
+    <*> newEventBus
