@@ -6,8 +6,9 @@ import Test.QuickCheck
 import World.Block
 import World.Chunk
 import World.Noise
-import World.World (worldToChunkLocal, World(..), worldGetBlock, worldSetBlock, triggerGravityAbove, settleGravityBlock, settleChunkGravity)
+import World.World (worldToChunkLocal, World(..), worldGetBlock, worldSetBlock, triggerGravityAbove, settleGravityBlock, settleChunkGravity, placeStructure)
 import World.Structure
+import World.Generation (generateChunk, defaultGenConfig, GenerationConfig(..), structureHashPos)
 import Game.Inventory
 import Game.Item
 import Game.Crafting
@@ -95,6 +96,7 @@ main = hspec $ do
   villagerTradingSpec
   tooltipSpec
   structureSpec
+  structureGenerationSpec
   blockRegistrySpec
   biomeFeaturesSpec
   itemRegistrySpec
@@ -2692,6 +2694,53 @@ structureSpec = describe "World.Structure" $ do
       y `shouldSatisfy` (\v -> v >= 0 && v < sy)
       z `shouldSatisfy` (\v -> v >= 0 && v < sz)
       ) (stBlocks villageHouseStructure)
+
+-- =========================================================================
+-- Structure generation (wired into world generation)
+-- =========================================================================
+structureGenerationSpec :: Spec
+structureGenerationSpec = describe "World.Generation structure placement" $ do
+
+  it "structureHashPos is deterministic (same inputs = same output)" $ do
+    let a = structureHashPos 42 3 7 10000
+        b = structureHashPos 42 3 7 10000
+    a `shouldBe` b
+
+  it "structureHashPos varies with salt" $ do
+    let a = structureHashPos 42 3 7 10000
+        b = structureHashPos 42 3 7 11000
+    a `shouldSatisfy` (/= b)
+
+  it "structureHashPos varies with chunk coordinates" $ do
+    let a = structureHashPos 42 3 7 10000
+        b = structureHashPos 42 4 7 10000
+        c = structureHashPos 42 3 8 10000
+    a `shouldSatisfy` (/= b)
+    a `shouldSatisfy` (/= c)
+
+  it "structureHashPos varies with seed" $ do
+    let a = structureHashPos 42  3 7 10000
+        b = structureHashPos 999 3 7 10000
+    a `shouldSatisfy` (/= b)
+
+  it "generateChunk is deterministic (two runs with same seed/pos produce identical blocks)" $ do
+    let cfg = defaultGenConfig { gcSeed = 12345 }
+        pos = V2 5 5
+    chunk1 <- generateChunk cfg pos
+    chunk2 <- generateChunk cfg pos
+    frozen1 <- freezeBlocks chunk1
+    frozen2 <- freezeBlocks chunk2
+    frozen1 `shouldBe` frozen2
+
+  it "generateChunk with different seed produces different blocks" $ do
+    let cfg1 = defaultGenConfig { gcSeed = 12345 }
+        cfg2 = defaultGenConfig { gcSeed = 99999 }
+        pos  = V2 5 5
+    chunk1 <- generateChunk cfg1 pos
+    chunk2 <- generateChunk cfg2 pos
+    frozen1 <- freezeBlocks chunk1
+    frozen2 <- freezeBlocks chunk2
+    frozen1 `shouldSatisfy` (/= frozen2)
 
 -- =========================================================================
 -- Block Registry

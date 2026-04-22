@@ -3,12 +3,16 @@ module World.Generation
   , GenerationConfig(..)
   , defaultGenConfig
   , placeTreeWorld
+  , structureHashPos
   ) where
 
 import World.Block (BlockType(..))
 import World.Chunk
 import World.Biome
 import World.Noise
+import World.Structure (Structure(..), StructureBlock(..), wellStructure,
+                        desertTempleStructure, dungeonStructure,
+                        villageHouseStructure)
 
 import Control.Monad (when, forM_)
 import Data.Bits (xor, shiftR)
@@ -230,6 +234,48 @@ generateChunk cfg chunkCoord = do
                 when (cur == blockW8 Air) $
                   MUV.write mvec (blockIndex lx y lz) (blockW8 SugarCane)
 
+  -- Pass 9: Structure placement — deterministic per-chunk hash decides spawns
+  let structHash = structureHashPos seed cx cz
+      -- Desert structures
+      biomeCenter = biomeAt seed
+                      (fromIntegral (cx * chunkWidth + 8))
+                      (fromIntegral (cz * chunkDepth + 8))
+  when (biomeCenter == Desert) $ do
+    -- Well: 1 in 200 desert chunks
+    when (structHash 10000 `mod` 200 == 0) $ do
+      let ox = structHash 10001 `mod` 10 + 2   -- keep away from chunk edges
+          oz = structHash 10002 `mod` 10 + 2
+      surfY <- findSurface mvec ox oz (chunkHeight - 1)
+      when (surfY > gcSeaLevel cfg && surfY < chunkHeight - 10) $
+        placeStructureInChunk mvec wellStructure ox surfY oz
+    -- Temple: 1 in 500 desert chunks
+    when (structHash 11000 `mod` 500 == 0) $ do
+      let ox = structHash 11001 `mod` 6 + 1
+          oz = structHash 11002 `mod` 6 + 1
+      surfY <- findSurface mvec ox oz (chunkHeight - 1)
+      when (surfY > gcSeaLevel cfg && surfY < chunkHeight - 12) $
+        placeStructureInChunk mvec desertTempleStructure ox (surfY - 3) oz
+        -- Origin at bottom of hidden chamber, 3 blocks below surface
+
+  -- Village house: 1 in 300 plains/savanna chunks
+  when (biomeCenter == Plains || biomeCenter == Savanna) $
+    when (structHash 12000 `mod` 300 == 0) $ do
+      let ox = structHash 12001 `mod` 10 + 2
+          oz = structHash 12002 `mod` 10 + 2
+      surfY <- findSurface mvec ox oz (chunkHeight - 1)
+      when (surfY > gcSeaLevel cfg && surfY < chunkHeight - 10) $
+        placeStructureInChunk mvec villageHouseStructure ox surfY oz
+
+  -- Underground dungeon: 1 in 400 chunks (any biome), placed at y<40
+  when (structHash 13000 `mod` 400 == 0) $ do
+    let ox = structHash 13001 `mod` 8 + 2
+        oz = structHash 13002 `mod` 8 + 2
+        dy = structHash 13003 `mod` 25 + 10  -- y between 10 and 34
+    -- Verify the target area is underground (stone)
+    curBlock <- MUV.read mvec (blockIndex ox dy oz)
+    when (curBlock == blockW8 Stone) $
+      placeStructureInChunk mvec dungeonStructure ox dy oz
+
   writeIORef (chunkDirty chunk) True
   pure chunk
 
@@ -349,3 +395,30 @@ anyM _ []     = pure False
 anyM f (x:xs) = do
   b <- f x
   if b then pure True else anyM f xs
+
+-- | Deterministic hash for structure placement, parameterised by a salt.
+--   Combines chunk coordinates and world seed into a reproducible integer.
+structureHashPos :: Seed -> Int -> Int -> Int -> Int
+structureHashPos seed cx cz salt =
+  let h0 = seed * 374761393 + cx * 668265263 + cz * 2147483647 + salt * 1103515245
+      h1 = (h0 `xor` (h0 `shiftR` 13)) * 1274126177
+      h2 = h1 `xor` (h1 `shiftR` 16)
+  in abs h2
+
+-- | Place a structure template directly into a chunk mutable vector.
+--   Only writes blocks whose local x/z coordinates fall in [0..15].
+--   'ox', 'oz' are the local-chunk origin; 'oy' is the world-Y origin.
+placeStructureInChunk
+  :: MUV.IOVector Word8
+  -> Structure
+  -> Int   -- ^ local X origin in chunk
+  -> Int   -- ^ Y origin (world coordinate)
+  -> Int   -- ^ local Z origin in chunk
+  -> IO ()
+placeStructureInChunk mvec structure ox oy oz =
+  forM_ (stBlocks structure) $ \(StructureBlock (V3 dx dy dz) bt) -> do
+    let lx = ox + dx
+        ly = oy + dy
+        lz = oz + dz
+    when (isInBounds lx ly lz) $
+      MUV.write mvec (blockIndex lx ly lz) (blockW8 bt)

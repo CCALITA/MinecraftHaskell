@@ -10,12 +10,14 @@ module World.World
   , triggerGravityAbove
   , settleGravityBlock
   , settleChunkGravity
+  , placeStructure
   ) where
 
 import World.Block (BlockType(..), isGravityAffected)
 import World.Chunk
 import World.Generation
 import World.Noise (Seed)
+import World.Structure (Structure(..), StructureBlock(..))
 
 import Control.Concurrent.Async (async, wait)
 import Control.Concurrent.STM
@@ -202,3 +204,9 @@ settleChunkGravity world chunk = do
             worldSetBlock world (V3 wx landY wz) bt
             writeIORef anyMoved True
   readIORef anyMoved
+
+-- | Place all blocks of a structure at the given world origin.
+placeStructure :: World -> V3 Int -> Structure -> IO ()
+placeStructure world (V3 ox oy oz) structure =
+  forM_ (stBlocks structure) $ \(StructureBlock (V3 dx dy dz) bt) ->
+    worldSetBlock world (V3 (ox + dx) (oy + dy) (oz + dz)) bt

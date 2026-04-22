@@ -1,7 +1,6 @@
 module World.Structure
   ( Structure(..)
   , StructureBlock(..)
-  , placeStructure
   , wellStructure
   , desertTempleStructure
   , dungeonStructure
@@ -9,9 +8,7 @@ module World.Structure
   ) where
 
 import World.Block (BlockType(..))
-import World.World (World, worldSetBlock)
 import Linear (V3(..))
-import Control.Monad (forM_)
 
 -- | A single block placement relative to a structure origin.
 data StructureBlock = StructureBlock
@@ -25,12 +22,6 @@ data Structure = Structure
   , stSize   :: !(V3 Int)       -- ^ Bounding box dimensions (width, height, depth)
   , stBlocks :: ![StructureBlock] -- ^ All non-air blocks in the structure
   } deriving stock (Show, Eq)
-
--- | Place all blocks of a structure at the given world origin.
-placeStructure :: World -> V3 Int -> Structure -> IO ()
-placeStructure world (V3 ox oy oz) structure =
-  forM_ (stBlocks structure) $ \(StructureBlock (V3 dx dy dz) bt) ->
-    worldSetBlock world (V3 (ox + dx) (oy + dy) (oz + dz)) bt
 
 -- | 5x5 cobblestone well with water in the center column.
 --   Origin is the bottom-southwest corner.
