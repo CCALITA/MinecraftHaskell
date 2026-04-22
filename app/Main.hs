@@ -42,6 +42,7 @@ import Game.State (GameState(..), GameMode(..), Projectile(..), newGameState)
 import Game.ItemDisplay (itemColor, itemMiniIcon)
 import Engine.Sound
 import Game.Particle
+import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpProgress)
 
 import Game.Config (GameConfig(..), defaultConfig)
 import Game.Event (emit, GameEvent(..))
@@ -1614,6 +1615,10 @@ main = do
                                 _ -> blockDrops bt
                               V3 bxf byf bzf = fmap fromIntegral blockPos :: V3 Float
                           mapM_ (\(item, cnt) -> spawnDrop droppedItems item cnt (V3 bxf byf bzf)) drops
+                          -- Award XP for mining ore blocks
+                          let oreXP = xpForBlock bt
+                          when (oreXP > 0) $
+                            modifyIORef' playerXPRef (+ oreXP)
                           -- If it's a chest, also drop all stored items and remove block entity
                           when (bt == Chest) $ do
                             mBE <- removeBlockEntity blockEntityMapRef blockPos
@@ -1930,6 +1935,9 @@ main = do
                     destroyEntity entityWorld eid
                     modifyIORef' aiStatesRef (HM.delete eid)
                     modifyIORef' skeletonCooldownRef (HM.delete eid)
+                    -- Award XP for killing the mob
+                    let killXP = xpForMobKill mobType
+                    modifyIORef' playerXPRef (+ killXP)
                     let dropPos = entPosition ent'
                     drops <- mobDrops (entTag ent)
                     forM_ drops $ \(item, count) ->
@@ -2245,7 +2253,8 @@ main = do
               writeIORef damageFlashRef (max 0 (damageFlash - dt))
             let particleVerts = if mode == Playing then renderParticles particles vp else []
             spawnPos <- readIORef spawnPointRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal
+            playerXP <- readIORef playerXPRef
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -2677,12 +2686,12 @@ checkLogNearby world (V3 wx wy wz) radius = go offsets
 -- debugInfo: Just DebugInfo when F3 overlay is active
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- sleepMsgText: Just "message" when a bed-related message should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
-    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts
     ChestOpen     -> chestScreenVerts ++ cursorVerts
@@ -2800,6 +2809,24 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
             | partialBubble = (0.3, 0.6, 0.9, 0.4)   -- popping bubble (faded)
             | otherwise     = (0.15, 0.25, 0.35, 0.2) -- empty slot (very faded)
       in quad bX bY (bX + bw) (bY + bh) color
+
+    -- XP bar: green bar just above hotbar background
+    xpBarW = 9 * slotW  -- same width as hotbar
+    xpBarH = 0.018 :: Float
+    xpBarY = hotbarY - xpBarH - 0.002  -- between hotbar and hearts
+    xpBarX0 = hotbarX0
+    xpFill = xpProgress playerXP
+    xpBarVerts =
+      -- Background (dark gray)
+      quad xpBarX0 xpBarY (xpBarX0 + xpBarW) (xpBarY + xpBarH) (0.1, 0.1, 0.1, 0.6)
+      -- Filled portion (green)
+      ++ if xpFill > 0
+         then quad xpBarX0 xpBarY (xpBarX0 + xpBarW * xpFill) (xpBarY + xpBarH) (0.3, 0.9, 0.2, 0.85)
+         else []
+
+    -- XP level number centered above the XP bar
+    xpLvl = xpLevel playerXP
+    xpLevelVerts = renderTextCentered (xpBarY - 0.06) 0.7 (0.3, 1.0, 0.3, 1.0) (show xpLvl)
 
     -- First-person hand/arm in lower-right
     handVerts =
@@ -3334,7 +3361,7 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
       -- Item slot (left side)
       ++ quad enchItemX0 enchItemY0 (enchItemX0 + enchItemSz) (enchItemY0 + enchItemSz) (0.15, 0.15, 0.15, 0.8)
       -- XP level display (below item slot)
-      ++ renderText (-0.26) (-0.02) 0.6 (0.5, 1.0, 0.5, 1.0) ("XP: " ++ show (0 :: Int))
+      ++ renderText (-0.26) (-0.02) 0.6 (0.5, 1.0, 0.5, 1.0) ("XP: " ++ show playerXP ++ " LVL: " ++ show (xpLevel playerXP))
       -- 3 enchantment option buttons (right side)
       ++ enchantOptionVerts
       -- Inventory grid below
