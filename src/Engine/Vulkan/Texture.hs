@@ -137,6 +137,17 @@ tileFull tileIdx lx ly = case tileIdx of
   89 -> dispenserFrontPattern lx ly  -- dispenser front (V2 9 5)
   90 -> enchantingTableTop lx ly     -- enchanting table top
   91 -> enchantingTableSide lx ly    -- enchanting table side
+  -- Nether and ore block textures
+  92 -> netherrackPattern lx ly      -- netherrack (V2 10 5)
+  93 -> soulSandPattern lx ly        -- soul sand (V2 11 5)
+  94 -> glowstonePattern lx ly       -- glowstone (V2 12 5)
+  95 -> netherBrickPattern lx ly     -- nether brick (V2 13 5)
+  96 -> netherPortalPattern lx ly    -- nether portal (V2 14 5)
+  51 -> orePattern lx ly (180, 0, 0)     -- redstone ore (V2 3 3)
+  52 -> orePattern lx ly (30, 70, 180)   -- lapis ore (V2 4 3)
+  53 -> orePattern lx ly (60, 200, 80)   -- emerald ore (V2 5 3)
+  67 -> mossyCobblePattern lx ly     -- mossy cobblestone (V2 3 4)
+  68 -> mossyStoneBrickPattern lx ly -- mossy stone brick (V2 4 4)
   -- Fallback: checkerboard pattern so missing tiles are visible
   _  -> let checker = (lx + ly) `mod` 2 == 0
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
@@ -598,6 +609,57 @@ tileFull tileIdx lx ly = case tileIdx of
          else if streak then (30, 15, 40, 255)                 -- subtle purple streak
          else if n < 30 then (20, 10, 28, 255)
          else (25, 12, 32, 255)
+
+    -- Netherrack: dark red with brownish veins
+    netherrackPattern x y =
+      let n = pixHash x y 3000 `mod` 100
+          vein = pixHash (x `div` 3) (y `div` 2) 3001 `mod` 10 < 2
+          (r, g, b) = if vein then (100, 40, 35) else if n < 30 then (110, 50, 45) else (120, 55, 50)
+      in (r, g, b, 255)
+
+    -- Soul sand: dark brown with wailing-face-like dark spots
+    soulSandPattern x y =
+      let n = pixHash x y 3100 `mod` 100
+          face = pixHash (x `div` 4) (y `div` 4) 3101 `mod` 10 < 3
+          (r, g, b) = if face then (60, 45, 30) else if n < 40 then (80, 60, 40) else (90, 70, 50)
+      in (r, g, b, 255)
+
+    -- Glowstone: bright yellow-gold with luminous cracks
+    glowstonePattern x y =
+      let n = pixHash x y 3200 `mod` 100
+          bright = pixHash (x `div` 2) (y `div` 2) 3201 `mod` 10 < 3
+          (r, g, b) = if bright then (255, 230, 120) else if n < 30 then (200, 170, 80) else (220, 190, 100)
+      in (r, g, b, 255)
+
+    -- Nether brick: dark red-brown bricks with mortar lines
+    netherBrickPattern x y =
+      let row = y `div` 4
+          offset = if row `mod` 2 == 0 then 0 else 8
+          bx = (x + offset) `mod` 16
+          isMortar = y `mod` 4 == 0 || bx `mod` 8 == 0
+      in if isMortar then (30, 20, 20, 255) else (70, 30, 30, 255)
+
+    -- Nether portal: swirling purple pattern (semi-transparent)
+    netherPortalPattern x y =
+      let n = pixHash x y 3300 `mod` 100
+          swirl = pixHash (x + y `div` 2) (y `div` 3) 3301 `mod` 10 < 4
+          (r, g, b, a) = if swirl then (140, 50, 200, 200) else (80 + fromIntegral (n `mod` 30), 20, 130 + fromIntegral (n `mod` 40), 160)
+      in (r, g, b, a)
+
+    -- Mossy cobblestone: cobblestone with green moss patches
+    mossyCobblePattern x y =
+      let base@(br, bg, bb, _) = cobblePattern x y
+          mossy = pixHash (x `div` 3) (y `div` 3) 3400 `mod` 10 < 4
+      in if mossy then (fromIntegral (br `div` 2), fromIntegral (min 255 (fromIntegral bg + 40)), fromIntegral (bb `div` 2), 255) else base
+
+    -- Mossy stone brick: stone bricks with green moss in mortar
+    mossyStoneBrickPattern x y =
+      let isMortar = y `mod` 8 == 0 || (x + (if (y `div` 8) `mod` 2 == 0 then 0 else 4)) `mod` 8 == 0
+          n = pixHash x y 3500 `mod` 20
+          mossy = pixHash (x `div` 4) (y `div` 4) 3501 `mod` 10 < 4
+      in if isMortar && mossy then (60, fromIntegral (120 + n), 40, 255)
+         else if isMortar then (100, fromIntegral (100 + n), 100, 255)
+         else let v = fromIntegral (130 + n) in (v, v, v, 255)
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels

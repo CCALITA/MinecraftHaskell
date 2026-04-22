@@ -74,6 +74,16 @@ data BlockType
   | Rail
   | Dispenser
   | EnchantingTable
+  | Netherrack
+  | SoulSand
+  | Glowstone
+  | NetherBrick
+  | NetherPortal
+  | RedstoneOre
+  | LapisOre
+  | EmeraldOre
+  | MossyCobblestone
+  | MossyStoneBrick
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -164,6 +174,16 @@ blockProperties = \case
   Rail         -> BlockProperties False True  0  0.7
   Dispenser    -> BlockProperties True  False 0  3.5
   EnchantingTable -> BlockProperties True  False 7  5.0
+  Netherrack      -> BlockProperties True  False 0  0.4
+  SoulSand        -> BlockProperties True  False 0  0.5
+  Glowstone       -> BlockProperties True  False 15 0.3
+  NetherBrick     -> BlockProperties True  False 0  2.0
+  NetherPortal    -> BlockProperties False True  11 0    -- unbreakable portal
+  RedstoneOre     -> BlockProperties True  False 0  3.0
+  LapisOre        -> BlockProperties True  False 0  3.0
+  EmeraldOre      -> BlockProperties True  False 0  3.0
+  MossyCobblestone -> BlockProperties True  False 0  2.0
+  MossyStoneBrick -> BlockProperties True  False 0  1.5
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -279,3 +299,13 @@ blockFaceTexCoords blockType face = case blockType of
     FaceTop    -> V2 5 5   -- enchanting table top (diamond-studded)
     FaceBottom -> V2 11 1  -- obsidian bottom
     _          -> V2 6 5   -- enchanting table side
+  Netherrack       -> V2 10 5
+  SoulSand         -> V2 11 5
+  Glowstone        -> V2 12 5
+  NetherBrick      -> V2 13 5
+  NetherPortal     -> V2 14 5
+  RedstoneOre      -> V2 3 3
+  LapisOre         -> V2 4 3
+  EmeraldOre       -> V2 5 3
+  MossyCobblestone -> V2 3 4
+  MossyStoneBrick  -> V2 4 4
