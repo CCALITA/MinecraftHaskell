@@ -137,6 +137,7 @@ main = hspec $ do
   lookupItemByNameSpec
   netherPortalSpec
   crossChunkCullingSpec
+  greedyMeshingSpec
   dimensionWiringSpec
 
 -- =========================================================================
@@ -5552,6 +5553,111 @@ crossChunkCullingSpec = describe "Engine.Mesh cross-chunk face culling" $ do
     -- Interior block with no neighbors needed: 6 faces (all neighbors are Air within chunk)
     mesh <- meshChunkWithLight chunk lm emptyNeighborData
     VS.length (mdVertices mesh) `shouldBe` 24
+-- =========================================================================
+-- Greedy meshing
+-- =========================================================================
+greedyMeshingSpec :: Spec
+greedyMeshingSpec = describe "Engine.Mesh greedy meshing" $ do
+
+  it "single block produces 24 vertices (6 faces, no merging possible)" $ do
+    chunk <- newChunk (V2 0 0)
+    setBlock chunk 5 10 5 Stone
+    lm <- newLightMap
+    propagateBlockLight chunk lm
+    propagateSkyLight chunk lm
+    mesh <- meshChunkWithLight chunk lm emptyNeighborData
+    VS.length (mdVertices mesh) `shouldBe` 24
+    VS.length (mdIndices mesh) `shouldBe` 36
+
+  it "2x1 row of same blocks merges top/bottom faces, reducing vertex count" $ do
+    -- Two adjacent stone blocks at same Y, same Z, consecutive X
+    -- Naive: 2 blocks * 5 exposed faces each * 4 verts = 40 verts
+    --   (the shared internal face between them is culled, leaving 5 faces each = 10 faces)
+    -- Greedy: top face merges into 1 quad (4 verts), bottom merges into 1 quad,
+    --   front/back merge into 1 quad each, plus 2 end caps = 6 quads = 24 verts
+    -- That's fewer than the naive 10 faces * 4 verts = 40.
+    chunk <- newChunk (V2 0 0)
+    setBlock chunk 5 10 5 Stone
+    setBlock chunk 6 10 5 Stone
+    lm <- newLightMap
+    propagateBlockLight chunk lm
+    propagateSkyLight chunk lm
+    mesh <- meshChunkWithLight chunk lm emptyNeighborData
+    -- Greedy merging should produce fewer vertices than naive (40 verts)
+    let vertCount = VS.length (mdVertices mesh)
+    vertCount `shouldSatisfy` (< 40)
+    -- Should be exactly 6 merged quads = 24 verts
+    vertCount `shouldBe` 24
+
+  it "2x2 flat layer of same blocks merges into fewer quads" $ do
+    -- 4 blocks in a 2x2 square at same Y level
+    chunk <- newChunk (V2 0 0)
+    setBlock chunk 5 10 5 Stone
+    setBlock chunk 6 10 5 Stone
+    setBlock chunk 5 10 6 Stone
+    setBlock chunk 6 10 6 Stone
+    lm <- newLightMap
+    propagateBlockLight chunk lm
+    propagateSkyLight chunk lm
+    mesh <- meshChunkWithLight chunk lm emptyNeighborData
+    let vertCount = VS.length (mdVertices mesh)
+    -- Naive: 4 blocks, each with 5 or fewer exposed faces.
+    --   Total exposed faces = 4*4 + 2*2 = 20 (4 top + 4 bottom + 8 sides + 4 internal culled)
+    --   Actually: each block has 6 faces minus adjacencies.
+    --   Top: 4 faces -> greedy merges to 1 quad (4 verts)
+    --   Bottom: 4 faces -> 1 quad (4 verts)
+    --   4 side faces -> some merge
+    -- Greedy should produce significantly fewer than naive
+    vertCount `shouldSatisfy` (< 64)  -- naive would be at most 4*6*4=96 verts
+    -- 6 quads: top(1) + bottom(1) + north(1) + south(1) + east(1) + west(1) = 24 verts
+    vertCount `shouldBe` 24
+
+  it "4x4 flat layer merges each face direction into a single quad" $ do
+    -- 16 stone blocks in a 4x4 square at y=0
+    chunk <- newChunk (V2 0 0)
+    forM_ [0..3] $ \x ->
+      forM_ [0..3] $ \z ->
+        setBlock chunk x 0 z Stone
+    lm <- newLightMap
+    propagateBlockLight chunk lm
+    propagateSkyLight chunk lm
+    mesh <- meshChunkWithLight chunk lm emptyNeighborData
+    let vertCount = VS.length (mdVertices mesh)
+    -- Naive: 16 blocks * ~5 faces * 4 verts = ~320 verts
+    -- Greedy: top(1) + bottom(1) + north(1) + south(1) + east(1) + west(1) = 6 quads
+    --   but bottom face at y=0 borders y=-1 which is Air, so bottom is emitted
+    --   Side faces: 4 sides, each a strip of 4 blocks -> each merges to 1 quad
+    --   Total: 6 quads = 24 verts
+    vertCount `shouldBe` 24
+
+  it "different block types are not merged together" $ do
+    -- Two adjacent blocks of different types should NOT be merged
+    chunk <- newChunk (V2 0 0)
+    setBlock chunk 5 10 5 Stone
+    setBlock chunk 6 10 5 Dirt
+    lm <- newLightMap
+    propagateBlockLight chunk lm
+    propagateSkyLight chunk lm
+    mesh <- meshChunkWithLight chunk lm emptyNeighborData
+    let vertCount = VS.length (mdVertices mesh)
+    -- No merging possible across different block types.
+    -- Each block has 5 exposed faces (internal face culled) = 10 faces * 4 verts = 40
+    vertCount `shouldBe` 40
+
+  it "16x1x16 flat layer produces 6 quads (24 verts)" $ do
+    -- A full 16x16 flat layer of stone at y=64
+    chunk <- newChunk (V2 0 0)
+    forM_ [0..15] $ \x ->
+      forM_ [0..15] $ \z ->
+        setBlock chunk x 64 z Stone
+    lm <- newLightMap
+    propagateBlockLight chunk lm
+    propagateSkyLight chunk lm
+    mesh <- meshChunkWithLight chunk lm emptyNeighborData
+    let vertCount = VS.length (mdVertices mesh)
+    -- Top, bottom, and 4 sides each merge to a single quad = 6 * 4 = 24
+    vertCount `shouldBe` 24
+
 -- Dimension wiring (sky color, GameState fields, coordinate mapping)
 -- =========================================================================
 dimensionWiringSpec :: Spec
