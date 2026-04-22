@@ -98,6 +98,13 @@ data BlockType
   | Rose
   | BrownMushroom
   | RedMushroom
+  | Bookshelf
+  | Anvil
+  | BrewingStand
+  | Ice
+  | PackedIce
+  | RedstoneLamp
+  | Hopper
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -212,6 +219,13 @@ blockProperties = \case
   Rose             -> BlockProperties False True  0  0.0
   BrownMushroom    -> BlockProperties False True  0  0.0
   RedMushroom      -> BlockProperties False True  0  0.0
+  Bookshelf        -> BlockProperties True  False 0  1.5
+  Anvil            -> BlockProperties True  False 0  5.0
+  BrewingStand     -> BlockProperties True  True  1  0.5
+  Ice              -> BlockProperties True  True  0  0.5
+  PackedIce        -> BlockProperties True  False 0  0.5
+  RedstoneLamp     -> BlockProperties True  False 0  0.3
+  Hopper           -> BlockProperties True  False 0  3.0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -363,3 +377,16 @@ blockFaceTexCoords blockType face = case blockType of
   Rose         -> V2 14 6
   BrownMushroom -> V2 15 6
   RedMushroom  -> V2 0 7
+  Bookshelf    -> case face of
+    FaceTop    -> V2 4 0   -- planks top
+    FaceBottom -> V2 4 0   -- planks bottom
+    _          -> V2 1 7   -- bookshelf side
+  Anvil        -> V2 2 7
+  BrewingStand -> V2 3 7
+  Ice          -> V2 4 7
+  PackedIce    -> V2 5 7
+  RedstoneLamp -> V2 6 7
+  Hopper       -> case face of
+    FaceTop    -> V2 8 7   -- hopper opening
+    FaceBottom -> V2 7 7   -- hopper bottom
+    _          -> V2 7 7   -- hopper side
