@@ -27,6 +27,7 @@ import World.Redstone (RedstoneState, newRedstoneState)
 import Game.BlockEntity (BlockEntityMap, newBlockEntityMap)
 import Game.Achievement (AchievementState, newAchievementState)
 import World.Chunk (ChunkPos)
+import World.Dimension (DimensionType(..))
 import Engine.Vulkan.Memory (BufferAllocation)
 import Entity.Mob (AIState)
 
@@ -110,6 +111,9 @@ data GameState = GameState
   , gsAchievementToast :: !(IORef (Maybe (String, Float)))
     -- Chat system
   , gsChatState        :: !(IORef ChatState)
+    -- Dimension system
+  , gsDimension        :: !(IORef DimensionType)
+  , gsPortalTimer      :: !(IORef Float)
   }
 
 -- | Create a fresh GameState with default initial values.
@@ -185,3 +189,6 @@ newGameState spawnPos = do
     <*> newIORef Nothing
     -- Chat system
     <*> newIORef emptyChatState
+    -- Dimension system
+    <*> newIORef Overworld
+    <*> newIORef 0.0

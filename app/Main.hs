@@ -47,6 +47,8 @@ import Engine.Sound
 import Game.Particle
 import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpProgress)
 
+import World.Dimension (DimensionType(..), detectPortalFrame, netherCoords, overworldCoords, portalTransitTime)
+
 import Game.Config (GameConfig(..), defaultConfig)
 import Game.Event (emit, GameEvent(..))
 
@@ -1164,6 +1166,32 @@ main = do
                                   rebuildExplosionChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz 3
                                   consumeDurability
                                   putStrLn $ "Ignited TNT at " ++ show (V3 bx by bz)
+                                else if hitBlock == Obsidian
+                                  then do
+                                    -- Try to detect and activate a nether portal frame
+                                    mPortal <- detectPortalFrame (worldGetBlock world) (V3 bx by bz)
+                                    case mPortal of
+                                      Just (_orient, interiorBlocks) -> do
+                                        forM_ interiorBlocks $ \pos -> do
+                                          worldSetBlock world pos NetherPortal
+                                        consumeDurability
+                                        -- Rebuild meshes for all affected positions
+                                        forM_ interiorBlocks $ \(V3 px' _ pz') ->
+                                          rebuildChunkWithNeighbors world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
+                                        putStrLn $ "Activated Nether portal at " ++ show (V3 bx by bz)
+                                      Nothing -> do
+                                        -- No valid frame: place fire as normal
+                                        let V3 nx ny nz = rhFaceNormal hit
+                                            firePos = V3 (bx + nx) (by + ny) (bz + nz)
+                                            V3 _ fireY _ = firePos
+                                        when (fireY >= 0 && fireY < chunkHeight) $ do
+                                          existing <- worldGetBlock world firePos
+                                          when (existing == Air) $ do
+                                            worldSetBlock world firePos Fire
+                                            consumeDurability
+                                            let V3 fpx _ fpz = firePos
+                                            rebuildChunkWithNeighbors world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef fpx fpz
+                                            putStrLn $ "Placed fire at " ++ show firePos
                                 else do
                                   let V3 nx ny nz = rhFaceNormal hit
                                       firePos = V3 (bx + nx) (by + ny) (bz + nz)
@@ -1851,6 +1879,36 @@ main = do
                 let newTimer = max 0 (speedTimer - dt)
                 writeIORef speedBuffTimerRef newTimer
                 when (newTimer <= 0) $ putStrLn "Speed boost expired"
+
+            -- Portal standing timer: check if player is on a NetherPortal block
+            when (gameMode == Playing) $ do
+              player' <- readIORef playerRef
+              let V3 ppx ppy ppz = plPos player'
+                  feetX = floor ppx :: Int
+                  feetY = floor (ppy - 0.1) :: Int
+                  feetZ = floor ppz :: Int
+              blockAtFeet <- worldGetBlock world (V3 feetX feetY feetZ)
+              if blockAtFeet == NetherPortal
+                then do
+                  oldTimer <- readIORef (gsPortalTimer gs)
+                  let newTimer = oldTimer + dt
+                  writeIORef (gsPortalTimer gs) newTimer
+                  when (newTimer >= portalTransitTime && oldTimer < portalTransitTime) $ do
+                    -- Dimension switch!
+                    curDim <- readIORef (gsDimension gs)
+                    let (newDim, newPos) = case curDim of
+                          Overworld ->
+                            let V3 nx ny nz = netherCoords (V3 feetX feetY feetZ)
+                            in (Nether, V3 (fromIntegral nx + 0.5) (fromIntegral ny + 1.0) (fromIntegral nz + 0.5))
+                          Nether ->
+                            let V3 nx ny nz = overworldCoords (V3 feetX feetY feetZ)
+                            in (Overworld, V3 (fromIntegral nx + 0.5) (fromIntegral ny + 1.0) (fromIntegral nz + 0.5))
+                          TheEnd -> (TheEnd, plPos player')  -- no portal from The End
+                    writeIORef (gsDimension gs) newDim
+                    modifyIORef' playerRef (\p -> p { plPos = newPos, plVelocity = V3 0 0 0 })
+                    putStrLn $ "Dimension switch: " ++ show curDim ++ " -> " ++ show newDim
+                    putStrLn $ "  New position: " ++ show newPos
+                else writeIORef (gsPortalTimer gs) 0.0
 
             -- Update day/night cycle
             modifyIORef' dayNightRef (updateDayNight dt)

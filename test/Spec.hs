@@ -64,6 +64,7 @@ import System.Directory (removeDirectoryRecursive, doesFileExist)
 import System.IO.Temp (withSystemTempDirectory)
 import Data.Function ((&))
 import qualified Data.Vector.Unboxed.Mutable as MUV
+import Control.Monad (forM_)
 
 main :: IO ()
 main = hspec $ do
@@ -126,6 +127,7 @@ main = hspec $ do
   executeCommandSpec
   chatStateSpec
   lookupItemByNameSpec
+  netherPortalSpec
 
 -- =========================================================================
 -- Block
@@ -5049,3 +5051,184 @@ lookupItemByNameSpec = describe "Game.Item.lookupItemByName" $ do
 
   it "looks up glass_bottle" $ do
     lookupItemByName "glass_bottle" `shouldBe` Just GlassBottleItem
+
+-- =========================================================================
+-- Nether Portal (frame detection + coordinate mapping)
+-- =========================================================================
+netherPortalSpec :: Spec
+netherPortalSpec = describe "World.Dimension.NetherPortal" $ do
+  -- Coordinate mapping
+  it "netherCoords divides overworld coordinates by 8" $ do
+    Dim.netherCoords (V3 80 64 160) `shouldBe` V3 10 64 20
+
+  it "netherCoords handles zero" $ do
+    Dim.netherCoords (V3 0 64 0) `shouldBe` V3 0 64 0
+
+  it "netherCoords preserves Y coordinate" $ do
+    let V3 _ y _ = Dim.netherCoords (V3 100 42 200)
+    y `shouldBe` 42
+
+  it "netherCoords handles negative coordinates" $ do
+    -- Haskell div rounds toward negative infinity
+    Dim.netherCoords (V3 (-80) 64 (-160)) `shouldBe` V3 (-10) 64 (-20)
+
+  it "overworldCoords multiplies Nether coordinates by 8" $ do
+    Dim.overworldCoords (V3 10 64 20) `shouldBe` V3 80 64 160
+
+  it "overworldCoords handles zero" $ do
+    Dim.overworldCoords (V3 0 64 0) `shouldBe` V3 0 64 0
+
+  it "overworldCoords preserves Y coordinate" $ do
+    let V3 _ y _ = Dim.overworldCoords (V3 10 42 20)
+    y `shouldBe` 42
+
+  it "overworldCoords handles negative coordinates" $ do
+    Dim.overworldCoords (V3 (-10) 64 (-20)) `shouldBe` V3 (-80) 64 (-160)
+
+  it "netherCoords and overworldCoords are approximate inverses" $ do
+    -- overworldCoords . netherCoords rounds toward nearest 8-multiple
+    let original = V3 80 64 160
+    Dim.overworldCoords (Dim.netherCoords original) `shouldBe` original
+
+  it "portalTransitTime is 4 seconds" $ do
+    Dim.portalTransitTime `shouldBe` 4.0
+
+  -- Portal frame detection with X-axis orientation
+  it "detectPortalFrame finds a valid X-axis portal" $ do
+    withTestWorld $ \world -> do
+      -- Build a 4x5 obsidian frame along X-axis at z=5
+      -- Bottom row: x=2..5, y=10, z=5
+      forM_ [2..5] $ \x -> worldSetBlock world (V3 x 10 5) Obsidian
+      -- Top row: x=2..5, y=14, z=5
+      forM_ [2..5] $ \x -> worldSetBlock world (V3 x 14 5) Obsidian
+      -- Left column: x=2, y=11..13, z=5
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 2 y 5) Obsidian
+      -- Right column: x=5, y=11..13, z=5
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 5 y 5) Obsidian
+      -- Interior should be Air by default
+
+      result <- Dim.detectPortalFrame (worldGetBlock world) (V3 2 10 5)
+      result `shouldSatisfy` \case
+        Just (Dim.PortalX, interior) -> length interior == 6
+        _ -> False
+
+  it "detectPortalFrame returns interior positions for X-axis portal" $ do
+    withTestWorld $ \world -> do
+      -- Build a 4x5 frame along X-axis at z=5
+      forM_ [2..5] $ \x -> worldSetBlock world (V3 x 10 5) Obsidian
+      forM_ [2..5] $ \x -> worldSetBlock world (V3 x 14 5) Obsidian
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 2 y 5) Obsidian
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 5 y 5) Obsidian
+
+      result <- Dim.detectPortalFrame (worldGetBlock world) (V3 3 10 5)
+      case result of
+        Just (_, interior) -> do
+          -- Interior should be 2 wide x 3 tall = 6 blocks
+          length interior `shouldBe` 6
+          -- All interior positions should be Air
+          blocks <- mapM (worldGetBlock world) interior
+          all (== Air) blocks `shouldBe` True
+        Nothing -> expectationFailure "Expected portal frame to be detected"
+
+  it "detectPortalFrame finds a valid Z-axis portal" $ do
+    withTestWorld $ \world -> do
+      -- Build a 4x5 obsidian frame along Z-axis at x=5
+      -- Bottom row: z=2..5, y=10, x=5
+      forM_ [2..5] $ \z -> worldSetBlock world (V3 5 10 z) Obsidian
+      -- Top row: z=2..5, y=14, x=5
+      forM_ [2..5] $ \z -> worldSetBlock world (V3 5 14 z) Obsidian
+      -- Left column: z=2, y=11..13, x=5
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 5 y 2) Obsidian
+      -- Right column: z=5, y=11..13, x=5
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 5 y 5) Obsidian
+
+      result <- Dim.detectPortalFrame (worldGetBlock world) (V3 5 10 2)
+      result `shouldSatisfy` \case
+        Just (Dim.PortalZ, interior) -> length interior == 6
+        _ -> False
+
+  it "detectPortalFrame returns Nothing for incomplete frame" $ do
+    withTestWorld $ \world -> do
+      -- Build an incomplete frame (missing top row)
+      forM_ [2..5] $ \x -> worldSetBlock world (V3 x 10 5) Obsidian
+      -- No top row
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 2 y 5) Obsidian
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 5 y 5) Obsidian
+
+      result <- Dim.detectPortalFrame (worldGetBlock world) (V3 2 10 5)
+      result `shouldBe` Nothing
+
+  it "detectPortalFrame returns Nothing for frame with wrong block" $ do
+    withTestWorld $ \world -> do
+      -- Build a frame but with one cobblestone instead of obsidian
+      forM_ [2..5] $ \x -> worldSetBlock world (V3 x 10 5) Obsidian
+      forM_ [2..5] $ \x -> worldSetBlock world (V3 x 14 5) Obsidian
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 2 y 5) Obsidian
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 5 y 5) Obsidian
+      -- Replace one frame block with cobblestone
+      worldSetBlock world (V3 3 14 5) Cobblestone
+
+      result <- Dim.detectPortalFrame (worldGetBlock world) (V3 2 10 5)
+      result `shouldBe` Nothing
+
+  it "detectPortalFrame returns Nothing for frame with blocked interior" $ do
+    withTestWorld $ \world -> do
+      -- Build a valid frame
+      forM_ [2..5] $ \x -> worldSetBlock world (V3 x 10 5) Obsidian
+      forM_ [2..5] $ \x -> worldSetBlock world (V3 x 14 5) Obsidian
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 2 y 5) Obsidian
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 5 y 5) Obsidian
+      -- Place a stone block inside the portal interior
+      worldSetBlock world (V3 3 12 5) Stone
+
+      result <- Dim.detectPortalFrame (worldGetBlock world) (V3 2 10 5)
+      result `shouldBe` Nothing
+
+  it "detectPortalFrame click on any frame block detects portal" $ do
+    withTestWorld $ \world -> do
+      -- Build a valid X-axis frame
+      forM_ [2..5] $ \x -> worldSetBlock world (V3 x 10 5) Obsidian
+      forM_ [2..5] $ \x -> worldSetBlock world (V3 x 14 5) Obsidian
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 2 y 5) Obsidian
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 5 y 5) Obsidian
+
+      -- Click on top-right corner
+      result <- Dim.detectPortalFrame (worldGetBlock world) (V3 5 14 5)
+      result `shouldSatisfy` \case
+        Just (Dim.PortalX, _) -> True
+        _ -> False
+
+  it "detectPortalFrame allows existing NetherPortal blocks in interior" $ do
+    withTestWorld $ \world -> do
+      -- Build a valid frame with some interior already filled
+      forM_ [2..5] $ \x -> worldSetBlock world (V3 x 10 5) Obsidian
+      forM_ [2..5] $ \x -> worldSetBlock world (V3 x 14 5) Obsidian
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 2 y 5) Obsidian
+      forM_ [11..13] $ \y -> worldSetBlock world (V3 5 y 5) Obsidian
+      -- Pre-fill some interior with NetherPortal
+      worldSetBlock world (V3 3 11 5) NetherPortal
+
+      result <- Dim.detectPortalFrame (worldGetBlock world) (V3 2 10 5)
+      result `shouldSatisfy` \case
+        Just (Dim.PortalX, interior) -> length interior == 6
+        _ -> False
+
+  -- PortalOrientation enum
+  it "PortalOrientation has 2 values" $ do
+    let allOrients = [minBound .. maxBound] :: [Dim.PortalOrientation]
+    length allOrients `shouldBe` 2
+
+  it "PortalOrientation enum is PortalX=0, PortalZ=1" $ do
+    fromEnum Dim.PortalX `shouldBe` 0
+    fromEnum Dim.PortalZ `shouldBe` 1
+
+  -- Dimension switching integration
+  it "NetherPortal block is not solid and is transparent" $ do
+    isSolid NetherPortal `shouldBe` False
+    isTransparent NetherPortal `shouldBe` True
+
+  it "NetherPortal has light emission 11" $ do
+    bpLightEmit (blockProperties NetherPortal) `shouldBe` 11
+
+  it "NetherPortal block drops nothing" $ do
+    blockDrops NetherPortal `shouldBe` []
