@@ -98,6 +98,7 @@ main = hspec $ do
   blockRegistrySpec
   biomeFeaturesSpec
   itemRegistrySpec
+  armorDamageReductionSpec
   dimensionSpec
   screenRegistrySpec
   componentSpec
@@ -3740,3 +3741,112 @@ itemRegistrySpec = describe "Game.ItemRegistry" $ do
 
     it "defaultSpawnRules cooldown is positive" $ do
       srSpawnCooldown defaultSpawnRules `shouldSatisfy` (> 0)
+
+-- =========================================================================
+-- Armor damage reduction
+-- =========================================================================
+armorDamageReductionSpec :: Spec
+armorDamageReductionSpec = describe "Armor damage reduction" $ do
+  it "no armor: full damage applied (minimum 1)" $ do
+    let player = defaultPlayer (V3 0 80 0)
+    plHealth (damagePlayer 4 player) `shouldBe` (maxHealth - 4)
+
+  it "no armor: 1 raw damage stays 1" $ do
+    let player = defaultPlayer (V3 0 80 0)
+    plHealth (damagePlayer 1 player) `shouldBe` (maxHealth - 1)
+
+  it "full iron armor reduces damage" $ do
+    -- Iron armor total defense: helmet(2) + chestplate(6) + leggings(5) + boots(2) = 15
+    let ironArmor = [ Just (ItemStack (ArmorItem Helmet IronArmor 100) 1)
+                    , Just (ItemStack (ArmorItem Chestplate IronArmor 100) 1)
+                    , Just (ItemStack (ArmorItem Leggings IronArmor 100) 1)
+                    , Just (ItemStack (ArmorItem Boots IronArmor 100) 1)
+                    ]
+        player = (defaultPlayer (V3 0 80 0)) { plArmorSlots = ironArmor }
+    -- 10 raw damage - 15/2 = 10 - 7 = 3; max(1, 3) = 3
+    plHealth (damagePlayer 10 player) `shouldBe` (maxHealth - 3)
+
+  it "full diamond armor reduces damage further" $ do
+    -- Diamond armor total defense: helmet(3) + chestplate(8) + leggings(6) + boots(3) = 20
+    let diamondArmor = [ Just (ItemStack (ArmorItem Helmet DiamondArmor 100) 1)
+                       , Just (ItemStack (ArmorItem Chestplate DiamondArmor 100) 1)
+                       , Just (ItemStack (ArmorItem Leggings DiamondArmor 100) 1)
+                       , Just (ItemStack (ArmorItem Boots DiamondArmor 100) 1)
+                       ]
+        player = (defaultPlayer (V3 0 80 0)) { plArmorSlots = diamondArmor }
+    -- 10 raw damage - 20/2 = 10 - 10 = 0; max(1, 0) = 1
+    plHealth (damagePlayer 10 player) `shouldBe` (maxHealth - 1)
+
+  it "damage reduction never reduces below 1" $ do
+    -- Even with full diamond armor, minimum 1 damage
+    let diamondArmor = [ Just (ItemStack (ArmorItem Helmet DiamondArmor 100) 1)
+                       , Just (ItemStack (ArmorItem Chestplate DiamondArmor 100) 1)
+                       , Just (ItemStack (ArmorItem Leggings DiamondArmor 100) 1)
+                       , Just (ItemStack (ArmorItem Boots DiamondArmor 100) 1)
+                       ]
+        player = (defaultPlayer (V3 0 80 0)) { plArmorSlots = diamondArmor }
+    -- 5 raw damage - 20/2 = 5 - 10 = -5; max(1, -5) = 1
+    plHealth (damagePlayer 5 player) `shouldBe` (maxHealth - 1)
+
+  it "partial armor (only chestplate) provides partial defense" $ do
+    -- Iron chestplate: 6 defense
+    let partialArmor = [ Nothing
+                       , Just (ItemStack (ArmorItem Chestplate IronArmor 100) 1)
+                       , Nothing
+                       , Nothing
+                       ]
+        player = (defaultPlayer (V3 0 80 0)) { plArmorSlots = partialArmor }
+    -- 10 raw damage - 6/2 = 10 - 3 = 7
+    plHealth (damagePlayer 10 player) `shouldBe` (maxHealth - 7)
+
+  it "armor durability decreases on hit" $ do
+    let armor = [ Just (ItemStack (ArmorItem Helmet IronArmor 50) 1)
+                , Just (ItemStack (ArmorItem Chestplate IronArmor 50) 1)
+                , Nothing
+                , Nothing
+                ]
+        player = (defaultPlayer (V3 0 80 0)) { plArmorSlots = armor }
+        player' = damagePlayer 4 player
+    -- Both equipped pieces lose 1 durability
+    plArmorSlots player' `shouldBe`
+      [ Just (ItemStack (ArmorItem Helmet IronArmor 49) 1)
+      , Just (ItemStack (ArmorItem Chestplate IronArmor 49) 1)
+      , Nothing
+      , Nothing
+      ]
+
+  it "armor breaks when durability reaches 0" $ do
+    let armor = [ Just (ItemStack (ArmorItem Helmet IronArmor 1) 1)
+                , Just (ItemStack (ArmorItem Chestplate IronArmor 50) 1)
+                , Nothing
+                , Nothing
+                ]
+        player = (defaultPlayer (V3 0 80 0)) { plArmorSlots = armor }
+        player' = damagePlayer 4 player
+    -- Helmet breaks (durability was 1), chestplate loses 1
+    plArmorSlots player' `shouldBe`
+      [ Nothing
+      , Just (ItemStack (ArmorItem Chestplate IronArmor 49) 1)
+      , Nothing
+      , Nothing
+      ]
+
+  it "no armor worn: armor slots unchanged on hit" $ do
+    let player = defaultPlayer (V3 0 80 0)
+        player' = damagePlayer 4 player
+    plArmorSlots player' `shouldBe` [Nothing, Nothing, Nothing, Nothing]
+
+  it "totalArmorDefense computes correctly for mixed armor" $ do
+    let armor = [ Just (ItemStack (ArmorItem Helmet LeatherArmor 50) 1)    -- 1
+                , Just (ItemStack (ArmorItem Chestplate DiamondArmor 50) 1) -- 8
+                , Nothing                                                    -- 0
+                , Just (ItemStack (ArmorItem Boots IronArmor 50) 1)         -- 2
+                ]
+    totalArmorDefense armor `shouldBe` 11
+
+  it "calcArmorDamageReduction formula: max(1, raw - defense/2)" $ do
+    calcArmorDamageReduction 10 0 `shouldBe` 10
+    calcArmorDamageReduction 10 6 `shouldBe` 7
+    calcArmorDamageReduction 10 20 `shouldBe` 1
+    calcArmorDamageReduction 1 0 `shouldBe` 1
+    calcArmorDamageReduction 1 20 `shouldBe` 1

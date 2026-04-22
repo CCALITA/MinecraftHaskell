@@ -16,10 +16,13 @@ module Game.Player
   , damagePlayer
   , respawnPlayer
   , isPlayerDead
+  , totalArmorDefense
+  , calcArmorDamageReduction
   ) where
 
 import Game.Physics
 import Game.Inventory (ItemStack(..))
+import Game.Item (Item(..), ArmorSlot(..), armorDefensePoints)
 import World.Block (BlockType(..), isSolid)
 
 import Linear (V3(..), normalize, cross, (^*), norm)
@@ -312,9 +315,45 @@ applyFallDamage player
       player  -- distance tracking is done in updatePlayer
   | otherwise = player { plFallDist = 0 }  -- going up, reset
 
--- | Apply damage to player
+-- | Calculate total armor defense points from equipped armor slots.
+totalArmorDefense :: [Maybe ItemStack] -> Int
+totalArmorDefense slots =
+  let armorSlots = [Helmet, Chestplate, Leggings, Boots]
+      defenseFor (slot, Just (ItemStack (ArmorItem _ mat _) _)) = armorDefensePoints slot mat
+      defenseFor _ = 0
+  in sum (map defenseFor (zip armorSlots slots))
+
+-- | Calculate final damage after armor reduction.
+--   finalDamage = max(1, rawDamage - totalDefense / 2)
+calcArmorDamageReduction :: Int -> Int -> Int
+calcArmorDamageReduction rawDamage totalDefense =
+  max 1 (rawDamage - totalDefense `div` 2)
+
+-- | Reduce durability of all equipped armor by 1 on hit.
+--   Remove armor pieces whose durability reaches 0.
+degradeArmor :: [Maybe ItemStack] -> [Maybe ItemStack]
+degradeArmor = map degradeSlot
+  where
+    degradeSlot (Just (ItemStack (ArmorItem slot mat dur) cnt))
+      | dur <= 1  = Nothing  -- armor breaks
+      | otherwise = Just (ItemStack (ArmorItem slot mat (dur - 1)) cnt)
+    degradeSlot other = other
+
+-- | Apply damage to player with armor damage reduction.
+--   1. Calculate total defense from equipped armor
+--   2. Reduce damage: finalDamage = max(1, rawDamage - totalDefense/2)
+--   3. Degrade armor durability by 1 per hit, removing broken pieces
 damagePlayer :: Int -> Player -> Player
-damagePlayer dmg player = player { plHealth = max 0 (plHealth player - dmg) }
+damagePlayer rawDmg player =
+  let defense = totalArmorDefense (plArmorSlots player)
+      finalDmg = calcArmorDamageReduction rawDmg defense
+      newArmor = if defense > 0
+                 then degradeArmor (plArmorSlots player)
+                 else plArmorSlots player
+  in player
+    { plHealth     = max 0 (plHealth player - finalDmg)
+    , plArmorSlots = newArmor
+    }
 
 -- | Respawn player at given position with full health
 respawnPlayer :: V3 Float -> Player -> Player
