@@ -139,6 +139,7 @@ main = hspec $ do
   crossChunkCullingSpec
   greedyMeshingSpec
   dimensionWiringSpec
+  directionalPistonSpec
 
 -- =========================================================================
 -- Block
@@ -5757,3 +5758,231 @@ dimensionWiringSpec = describe "Dimension wiring" $ do
       gs <- newGameState (V3 0 80 0)
       timer <- readIORef (gsPortalTimer gs)
       timer `shouldBe` 0.0
+
+-- =========================================================================
+-- Directional Pistons
+-- =========================================================================
+directionalPistonSpec :: Spec
+directionalPistonSpec = describe "Directional Pistons" $ do
+
+  describe "BlockType constructors" $ do
+    it "PistonNorth exists and is distinct from Piston" $
+      PistonNorth `shouldSatisfy` (/= Piston)
+
+    it "PistonSouth exists and is distinct from Piston" $
+      PistonSouth `shouldSatisfy` (/= Piston)
+
+    it "PistonEast exists and is distinct from Piston" $
+      PistonEast `shouldSatisfy` (/= Piston)
+
+    it "PistonWest exists and is distinct from Piston" $
+      PistonWest `shouldSatisfy` (/= Piston)
+
+    it "PistonDown exists and is distinct from Piston" $
+      PistonDown `shouldSatisfy` (/= Piston)
+
+    it "PistonHeadNorth exists and is distinct from PistonHead" $
+      PistonHeadNorth `shouldSatisfy` (/= PistonHead)
+
+    it "PistonHeadSouth exists and is distinct from PistonHead" $
+      PistonHeadSouth `shouldSatisfy` (/= PistonHead)
+
+    it "PistonHeadEast exists and is distinct from PistonHead" $
+      PistonHeadEast `shouldSatisfy` (/= PistonHead)
+
+    it "PistonHeadWest exists and is distinct from PistonHead" $
+      PistonHeadWest `shouldSatisfy` (/= PistonHead)
+
+    it "PistonHeadDown exists and is distinct from PistonHead" $
+      PistonHeadDown `shouldSatisfy` (/= PistonHead)
+
+  describe "Enum ordering" $ do
+    it "directional pistons come after WheatCrop7" $ do
+      fromEnum PistonNorth `shouldSatisfy` (> fromEnum WheatCrop7)
+      fromEnum PistonSouth `shouldSatisfy` (> fromEnum WheatCrop7)
+      fromEnum PistonEast `shouldSatisfy` (> fromEnum WheatCrop7)
+      fromEnum PistonWest `shouldSatisfy` (> fromEnum WheatCrop7)
+      fromEnum PistonDown `shouldSatisfy` (> fromEnum WheatCrop7)
+
+    it "directional piston heads come after directional pistons" $ do
+      fromEnum PistonHeadNorth `shouldSatisfy` (> fromEnum PistonDown)
+      fromEnum PistonHeadSouth `shouldSatisfy` (> fromEnum PistonDown)
+      fromEnum PistonHeadEast `shouldSatisfy` (> fromEnum PistonDown)
+      fromEnum PistonHeadWest `shouldSatisfy` (> fromEnum PistonDown)
+      fromEnum PistonHeadDown `shouldSatisfy` (> fromEnum PistonDown)
+
+    it "PistonHeadDown is the last enum value (Bounded maxBound)" $
+      (maxBound :: BlockType) `shouldBe` PistonHeadDown
+
+  describe "isPistonBlock" $ do
+    it "Piston (upward) is a piston" $
+      isPistonBlock Piston `shouldBe` True
+
+    it "PistonNorth is a piston" $
+      isPistonBlock PistonNorth `shouldBe` True
+
+    it "PistonSouth is a piston" $
+      isPistonBlock PistonSouth `shouldBe` True
+
+    it "PistonEast is a piston" $
+      isPistonBlock PistonEast `shouldBe` True
+
+    it "PistonWest is a piston" $
+      isPistonBlock PistonWest `shouldBe` True
+
+    it "PistonDown is a piston" $
+      isPistonBlock PistonDown `shouldBe` True
+
+    it "Stone is not a piston" $
+      isPistonBlock Stone `shouldBe` False
+
+    it "PistonHead is not a piston (it is a head)" $
+      isPistonBlock PistonHead `shouldBe` False
+
+  describe "isPistonHeadBlock" $ do
+    it "PistonHead (upward) is a piston head" $
+      isPistonHeadBlock PistonHead `shouldBe` True
+
+    it "PistonHeadNorth is a piston head" $
+      isPistonHeadBlock PistonHeadNorth `shouldBe` True
+
+    it "PistonHeadSouth is a piston head" $
+      isPistonHeadBlock PistonHeadSouth `shouldBe` True
+
+    it "PistonHeadEast is a piston head" $
+      isPistonHeadBlock PistonHeadEast `shouldBe` True
+
+    it "PistonHeadWest is a piston head" $
+      isPistonHeadBlock PistonHeadWest `shouldBe` True
+
+    it "PistonHeadDown is a piston head" $
+      isPistonHeadBlock PistonHeadDown `shouldBe` True
+
+    it "Piston is not a piston head" $
+      isPistonHeadBlock Piston `shouldBe` False
+
+    it "Air is not a piston head" $
+      isPistonHeadBlock Air `shouldBe` False
+
+  describe "pistonDirection" $ do
+    it "Piston pushes upward (+Y)" $
+      pistonDirection Piston `shouldBe` V3 0 1 0
+
+    it "PistonNorth pushes +Z" $
+      pistonDirection PistonNorth `shouldBe` V3 0 0 1
+
+    it "PistonSouth pushes -Z" $
+      pistonDirection PistonSouth `shouldBe` V3 0 0 (-1)
+
+    it "PistonEast pushes +X" $
+      pistonDirection PistonEast `shouldBe` V3 1 0 0
+
+    it "PistonWest pushes -X" $
+      pistonDirection PistonWest `shouldBe` V3 (-1) 0 0
+
+    it "PistonDown pushes -Y" $
+      pistonDirection PistonDown `shouldBe` V3 0 (-1) 0
+
+  describe "pistonHeadForPiston" $ do
+    it "Piston maps to PistonHead" $
+      pistonHeadForPiston Piston `shouldBe` PistonHead
+
+    it "PistonNorth maps to PistonHeadNorth" $
+      pistonHeadForPiston PistonNorth `shouldBe` PistonHeadNorth
+
+    it "PistonSouth maps to PistonHeadSouth" $
+      pistonHeadForPiston PistonSouth `shouldBe` PistonHeadSouth
+
+    it "PistonEast maps to PistonHeadEast" $
+      pistonHeadForPiston PistonEast `shouldBe` PistonHeadEast
+
+    it "PistonWest maps to PistonHeadWest" $
+      pistonHeadForPiston PistonWest `shouldBe` PistonHeadWest
+
+    it "PistonDown maps to PistonHeadDown" $
+      pistonHeadForPiston PistonDown `shouldBe` PistonHeadDown
+
+  describe "block properties" $ do
+    it "all directional pistons are solid" $ do
+      let pistons = [PistonNorth, PistonSouth, PistonEast, PistonWest, PistonDown]
+      mapM_ (\p -> isSolid p `shouldBe` True) pistons
+
+    it "all directional pistons are not transparent" $ do
+      let pistons = [PistonNorth, PistonSouth, PistonEast, PistonWest, PistonDown]
+      mapM_ (\p -> isTransparent p `shouldBe` False) pistons
+
+    it "all directional pistons have hardness 0.5" $ do
+      let pistons = [PistonNorth, PistonSouth, PistonEast, PistonWest, PistonDown]
+      mapM_ (\p -> bpHardness (blockProperties p) `shouldBe` 0.5) pistons
+
+    it "all directional piston heads are solid" $ do
+      let heads = [PistonHeadNorth, PistonHeadSouth, PistonHeadEast, PistonHeadWest, PistonHeadDown]
+      mapM_ (\h -> isSolid h `shouldBe` True) heads
+
+    it "all directional piston heads have hardness 0.5" $ do
+      let heads = [PistonHeadNorth, PistonHeadSouth, PistonHeadEast, PistonHeadWest, PistonHeadDown]
+      mapM_ (\h -> bpHardness (blockProperties h) `shouldBe` 0.5) heads
+
+    it "directional piston properties match original Piston" $ do
+      let ref = blockProperties Piston
+      mapM_ (\p -> blockProperties p `shouldBe` ref)
+        [PistonNorth, PistonSouth, PistonEast, PistonWest, PistonDown]
+
+    it "directional piston head properties match original PistonHead" $ do
+      let ref = blockProperties PistonHead
+      mapM_ (\h -> blockProperties h `shouldBe` ref)
+        [PistonHeadNorth, PistonHeadSouth, PistonHeadEast, PistonHeadWest, PistonHeadDown]
+
+  describe "texture coordinates" $ do
+    it "PistonNorth push face is on FaceNorth" $
+      blockFaceTexCoords PistonNorth FaceNorth `shouldBe` V2 5 5
+
+    it "PistonSouth push face is on FaceSouth" $
+      blockFaceTexCoords PistonSouth FaceSouth `shouldBe` V2 5 5
+
+    it "PistonEast push face is on FaceEast" $
+      blockFaceTexCoords PistonEast FaceEast `shouldBe` V2 5 5
+
+    it "PistonWest push face is on FaceWest" $
+      blockFaceTexCoords PistonWest FaceWest `shouldBe` V2 5 5
+
+    it "PistonDown push face is on FaceBottom" $
+      blockFaceTexCoords PistonDown FaceBottom `shouldBe` V2 5 5
+
+    it "PistonNorth back face (south) is wooden base" $
+      blockFaceTexCoords PistonNorth FaceSouth `shouldBe` V2 4 0
+
+    it "PistonEast side faces are wooden" $ do
+      blockFaceTexCoords PistonEast FaceTop `shouldBe` V2 6 5
+      blockFaceTexCoords PistonEast FaceBottom `shouldBe` V2 6 5
+
+  describe "world integration" $ do
+    it "can place and read PistonNorth" $ do
+      withTestWorld $ \world -> do
+        worldSetBlock world (V3 5 64 5) PistonNorth
+        blk <- worldGetBlock world (V3 5 64 5)
+        blk `shouldBe` PistonNorth
+
+    it "can place and read PistonEast" $ do
+      withTestWorld $ \world -> do
+        worldSetBlock world (V3 5 64 5) PistonEast
+        blk <- worldGetBlock world (V3 5 64 5)
+        blk `shouldBe` PistonEast
+
+    it "can place and read PistonHeadSouth" $ do
+      withTestWorld $ \world -> do
+        worldSetBlock world (V3 5 64 5) PistonHeadSouth
+        blk <- worldGetBlock world (V3 5 64 5)
+        blk `shouldBe` PistonHeadSouth
+
+    it "can place and read PistonDown" $ do
+      withTestWorld $ \world -> do
+        worldSetBlock world (V3 5 64 5) PistonDown
+        blk <- worldGetBlock world (V3 5 64 5)
+        blk `shouldBe` PistonDown
+
+    it "can place and read PistonHeadDown" $ do
+      withTestWorld $ \world -> do
+        worldSetBlock world (V3 5 64 5) PistonHeadDown
+        blk <- worldGetBlock world (V3 5 64 5)
+        blk `shouldBe` PistonHeadDown
