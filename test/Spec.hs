@@ -13,8 +13,8 @@ import Game.Item
 import Game.Crafting
 import Game.Player
 import Game.DroppedItem
-import Game.Save (SaveData(..), inventoryToSlotList, slotListToInventory)
-import Game.SaveV3 (SaveDataV3(..), ChunkMeta(..), savev3Version, encodeSaveV3, decodeSaveV3, migrateV2toV3)
+import Game.Save (SaveData(..), inventoryToSlotList, slotListToInventory, savePlayer, playerSavePath)
+import Game.SaveV3 (SaveDataV3(..), ChunkMeta(..), savev3Version, encodeSaveV3, decodeSaveV3, migrateV2toV3, savePlayerV3, loadPlayerV3)
 import Game.BlockEntity
 import Game.Furnace
 import World.Weather
@@ -56,6 +56,8 @@ import Linear (V2(..), V3(..), V4(..))
 import qualified Data.Vector as V
 import Control.Concurrent.STM (atomically, readTVar)
 import qualified Data.HashMap.Strict as HM
+import System.Directory (removeDirectoryRecursive, doesFileExist)
+import System.IO.Temp (withSystemTempDirectory)
 
 main :: IO ()
 main = hspec $ do
@@ -105,6 +107,7 @@ main = hspec $ do
   componentSpec
   eventBusSpec
   saveV3Spec
+  saveV3FileSpec
   recipeRegistrySpec
   bedSleepSpec
   mobLootDropSpec
@@ -3324,6 +3327,73 @@ sampleV3 = SaveDataV3
   , sv3WorldSeed    = 12345
   , sv3ChunkMetas   = []
   }
+
+-- =========================================================================
+-- SaveV3 File I/O: roundtrip and V2 backward compatibility
+-- =========================================================================
+saveV3FileSpec :: Spec
+saveV3FileSpec = describe "SaveV3 file I/O and migration" $ do
+
+  it "savePlayerV3 / loadPlayerV3 roundtrip via filesystem" $ do
+    withSystemTempDirectory "savev3test" $ \tmpDir -> do
+      let sd = sampleV3
+      savePlayerV3 tmpDir sd
+      result <- loadPlayerV3 tmpDir
+      result `shouldBe` Just sd
+
+  it "loadPlayerV3 reads V2 file and migrates to V3" $ do
+    withSystemTempDirectory "savev2compat" $ \tmpDir -> do
+      let v2 = sampleV2
+      savePlayer tmpDir v2           -- write V2 format
+      result <- loadPlayerV3 tmpDir  -- should auto-detect and migrate
+      case result of
+        Nothing -> expectationFailure "loadPlayerV3 returned Nothing for V2 save"
+        Just v3 -> do
+          sv3PlayerPos v3 `shouldBe` sdPlayerPos v2
+          sv3PlayerYaw v3 `shouldBe` sdPlayerYaw v2
+          sv3PlayerPitch v3 `shouldBe` sdPlayerPitch v2
+          sv3Flying v3 `shouldBe` sdPlayerFlying v2
+          sv3Health v3 `shouldBe` fromIntegral (sdHealth v2)
+          sv3Hunger v3 `shouldBe` sdHunger v2
+          sv3Inventory v3 `shouldBe` sdInventory v2
+          sv3WorldSeed v3 `shouldBe` sdWorldSeed v2
+          sv3DayTime v3 `shouldBe` sdDayTime v2
+          sv3DayCount v3 `shouldBe` sdDayCount v2
+          sv3Version v3 `shouldBe` savev3Version
+
+  it "loadPlayerV3 returns Nothing for missing save directory" $ do
+    withSystemTempDirectory "savev3empty" $ \tmpDir -> do
+      result <- loadPlayerV3 tmpDir
+      result `shouldBe` Nothing
+
+  it "migrateV2toV3 roundtrip: migrated data encodes and decodes cleanly" $ do
+    let v3 = migrateV2toV3 sampleV2
+        encoded = encodeSaveV3 v3
+        decoded = decodeSaveV3 encoded
+    decoded `shouldBe` Just v3
+
+  it "migrateV2toV3 sets default armor, spawn, weather fields" $ do
+    let v3 = migrateV2toV3 sampleV2
+    sv3ArmorSlots v3 `shouldBe` []
+    sv3SpawnPoint v3 `shouldBe` (0, 80, 0)
+    sv3WeatherType v3 `shouldBe` 0
+    sv3WeatherTimer v3 `shouldBe` 600.0
+
+  it "savePlayerV3 creates the player.dat file" $ do
+    withSystemTempDirectory "savev3file" $ \tmpDir -> do
+      savePlayerV3 tmpDir sampleV3
+      exists <- doesFileExist (playerSavePath tmpDir)
+      exists `shouldBe` True
+
+  it "savePlayerV3 then loadPlayerV3 preserves armor and chunk metas" $ do
+    withSystemTempDirectory "savev3armor" $ \tmpDir -> do
+      let sd = sampleV3
+                { sv3ArmorSlots = [Just (ToolItem Pickaxe Diamond 100, 1), Nothing, Nothing, Nothing]
+                , sv3ChunkMetas = [ChunkMeta (V2 0 0) True True, ChunkMeta (V2 1 (-1)) False False]
+                }
+      savePlayerV3 tmpDir sd
+      result <- loadPlayerV3 tmpDir
+      result `shouldBe` Just sd
 
 -- =========================================================================
 -- RecipeRegistry
