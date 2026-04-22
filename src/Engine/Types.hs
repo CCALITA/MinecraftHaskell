@@ -42,12 +42,13 @@ data UniformBufferObject = UniformBufferObject
   , uboSunDirection :: !(V4 Float)    -- xyz = sun dir, w = unused (padding)
   , uboAmbientLight :: !Float         -- 0.0-1.0 ambient brightness
   , uboTime         :: !Float         -- elapsed time in seconds (for animated textures)
-  , _uboPad2        :: !Float
-  , _uboPad3        :: !Float
+  , uboFogStart     :: !Float         -- distance (blocks) where fog begins
+  , uboFogEnd       :: !Float         -- distance (blocks) where fog is fully opaque
+  , uboFogColor     :: !(V4 Float)    -- fog color (usually matches sky color)
   } deriving stock (Show, Eq, Generic)
 
 instance Storable UniformBufferObject where
-  sizeOf _ = 3 * sizeOf (undefined :: M44 Float) + sizeOf (undefined :: V4 Float) + 4 * sizeOf (undefined :: Float)  -- 192 + 16 + 16 = 224
+  sizeOf _ = 3 * sizeOf (undefined :: M44 Float) + 2 * sizeOf (undefined :: V4 Float) + 4 * sizeOf (undefined :: Float)  -- 192 + 16 + 16 + 16 = 240
   alignment _ = alignment (undefined :: Float)
   peek ptr = do
     let p = castPtr ptr
@@ -57,8 +58,11 @@ instance Storable UniformBufferObject where
     sunDir <- peekByteOff p 192
     ambient <- peekByteOff p 208
     t <- peekByteOff p 212
-    pure $ UniformBufferObject m v proj sunDir ambient t 0 0
-  poke ptr (UniformBufferObject m v proj sunDir ambient t _ _) = do
+    fogS <- peekByteOff p 216
+    fogE <- peekByteOff p 220
+    fogC <- peekByteOff p 224
+    pure $ UniformBufferObject m v proj sunDir ambient t fogS fogE fogC
+  poke ptr (UniformBufferObject m v proj sunDir ambient t fogS fogE fogC) = do
     let p = castPtr ptr
     pokeByteOff p 0   m
     pokeByteOff p 64  v
@@ -66,8 +70,9 @@ instance Storable UniformBufferObject where
     pokeByteOff p 192 sunDir
     pokeByteOff p 208 ambient
     pokeByteOff p 212 t
-    pokeByteOff p 216 (0 :: Float)
-    pokeByteOff p 220 (0 :: Float)
+    pokeByteOff p 216 fogS
+    pokeByteOff p 220 fogE
+    pokeByteOff p 224 fogC
 
 -- | Per-frame synchronization and command data
 data FrameData = FrameData

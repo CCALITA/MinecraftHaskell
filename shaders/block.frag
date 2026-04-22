@@ -7,8 +7,9 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 sunDirection;
     float ambientLight;
     float time;
-    float _pad2;
-    float _pad3;
+    float fogStart;
+    float fogEnd;
+    vec4 fogColor;
 } ubo;
 
 layout(binding = 1) uniform sampler2D texSampler;
@@ -18,6 +19,7 @@ layout(location = 1) in vec3 fragNormal;
 layout(location = 2) in float fragAO;
 layout(location = 3) in vec3 fragWorldPos;
 layout(location = 4) in float fragAmbient;
+layout(location = 5) in float fragViewDist;
 
 layout(location = 0) out vec4 outColor;
 
@@ -76,5 +78,11 @@ void main() {
     // Minimum visibility so player can always see something
     light = max(light, 0.05);
 
-    outColor = vec4(texColor.rgb * light, texColor.a);
+    vec3 litColor = texColor.rgb * light;
+
+    // Distance fog: smoothstep blend from lit color to fog color
+    float fogFactor = smoothstep(ubo.fogStart, ubo.fogEnd, fragViewDist);
+    vec3 finalColor = mix(litColor, ubo.fogColor.rgb, fogFactor);
+
+    outColor = vec4(finalColor, texColor.a);
 }

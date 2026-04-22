@@ -7,8 +7,9 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 sunDirection;    // xyz = sun direction, w = unused
     float ambientLight;   // 0.0-1.0 overall brightness
     float time;           // elapsed time in seconds (for animated textures)
-    float _pad2;
-    float _pad3;
+    float fogStart;       // distance (blocks) where fog begins
+    float fogEnd;         // distance (blocks) where fog is fully opaque
+    vec4 fogColor;        // fog color (usually matches sky color)
 } ubo;
 
 layout(location = 0) in vec3 inPosition;
@@ -21,13 +22,16 @@ layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out float fragAO;
 layout(location = 3) out vec3 fragWorldPos;
 layout(location = 4) out float fragAmbient;
+layout(location = 5) out float fragViewDist;
 
 void main() {
     vec4 worldPos = ubo.model * vec4(inPosition, 1.0);
-    gl_Position = ubo.projection * ubo.view * worldPos;
+    vec4 viewPos = ubo.view * worldPos;
+    gl_Position = ubo.projection * viewPos;
     fragTexCoord = inTexCoord;
     fragNormal = mat3(ubo.model) * inNormal;
     fragAO = inAO;
     fragWorldPos = worldPos.xyz;
     fragAmbient = ubo.ambientLight;
+    fragViewDist = length(viewPos.xyz);
 }
