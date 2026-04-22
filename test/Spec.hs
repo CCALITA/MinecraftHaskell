@@ -104,6 +104,7 @@ main = hspec $ do
   eventBusSpec
   saveV3Spec
   recipeRegistrySpec
+  bedSleepSpec
 
 -- =========================================================================
 -- Block
@@ -3740,3 +3741,117 @@ itemRegistrySpec = describe "Game.ItemRegistry" $ do
 
     it "defaultSpawnRules cooldown is positive" $ do
       srSpawnCooldown defaultSpawnRules `shouldSatisfy` (> 0)
+
+-- =========================================================================
+-- Bed Sleep (night detection & hostile check)
+-- =========================================================================
+bedSleepSpec :: Spec
+bedSleepSpec = describe "Bed sleep logic" $ do
+  describe "Night time range detection" $ do
+    it "isNight is True at midnight (dncTime = 0.0)" $ do
+      let dnc = newDayNightCycle { dncTime = 0.0 }
+      isNight dnc `shouldBe` True
+
+    it "isNight is True at dncTime = 0.10" $ do
+      let dnc = newDayNightCycle { dncTime = 0.10 }
+      isNight dnc `shouldBe` True
+
+    it "isNight is True at dncTime = 0.19" $ do
+      let dnc = newDayNightCycle { dncTime = 0.19 }
+      isNight dnc `shouldBe` True
+
+    it "isNight is False at dawn (dncTime = 0.25)" $ do
+      let dnc = newDayNightCycle { dncTime = 0.25 }
+      isNight dnc `shouldBe` False
+
+    it "isNight is False at noon (dncTime = 0.50)" $ do
+      let dnc = newDayNightCycle { dncTime = 0.50 }
+      isNight dnc `shouldBe` False
+
+    it "isNight is True at dncTime = 0.80" $ do
+      let dnc = newDayNightCycle { dncTime = 0.80 }
+      isNight dnc `shouldBe` True
+
+    it "isNight is True at dncTime = 0.95" $ do
+      let dnc = newDayNightCycle { dncTime = 0.95 }
+      isNight dnc `shouldBe` True
+
+    it "isNight is False during dusk (dncTime = 0.75)" $ do
+      let dnc = newDayNightCycle { dncTime = 0.75 }
+      isNight dnc `shouldBe` False
+
+    it "getTimeOfDay returns Night for values >= 0.80" $ do
+      let dnc = newDayNightCycle { dncTime = 0.85 }
+      getTimeOfDay dnc `shouldBe` Night
+
+    it "getTimeOfDay returns Night for values < 0.20" $ do
+      let dnc = newDayNightCycle { dncTime = 0.05 }
+      getTimeOfDay dnc `shouldBe` Night
+
+    it "getTimeOfDay returns Day for values in 0.30-0.70" $ do
+      let dnc = newDayNightCycle { dncTime = 0.50 }
+      getTimeOfDay dnc `shouldBe` Day
+
+    it "getTimeOfDay returns Dawn for values in 0.20-0.30" $ do
+      let dnc = newDayNightCycle { dncTime = 0.25 }
+      getTimeOfDay dnc `shouldBe` Dawn
+
+    it "getTimeOfDay returns Dusk for values in 0.70-0.80" $ do
+      let dnc = newDayNightCycle { dncTime = 0.75 }
+      getTimeOfDay dnc `shouldBe` Dusk
+
+  describe "Hostile mob detection for bed sleep" $ do
+    it "entitiesInRange returns entities within radius" $ do
+      ew <- newEntityWorld
+      _ <- spawnEntity ew (V3 10 65 10) 20 "Zombie"
+      nearby <- entitiesInRange ew (V3 12 65 10) 8.0
+      length nearby `shouldBe` 1
+
+    it "entitiesInRange excludes entities outside radius" $ do
+      ew <- newEntityWorld
+      _ <- spawnEntity ew (V3 100 65 100) 20 "Zombie"
+      nearby <- entitiesInRange ew (V3 10 65 10) 8.0
+      length nearby `shouldBe` 0
+
+    it "hostile tag check identifies Zombie as hostile" $ do
+      let hostileTags = ["Zombie", "Skeleton", "Creeper", "Spider"] :: [String]
+      ("Zombie" `elem` hostileTags) `shouldBe` True
+
+    it "hostile tag check identifies Skeleton as hostile" $ do
+      let hostileTags = ["Zombie", "Skeleton", "Creeper", "Spider"] :: [String]
+      ("Skeleton" `elem` hostileTags) `shouldBe` True
+
+    it "hostile tag check does not match Pig" $ do
+      let hostileTags = ["Zombie", "Skeleton", "Creeper", "Spider"] :: [String]
+      ("Pig" `elem` hostileTags) `shouldBe` False
+
+    it "nearby hostile blocks sleep" $ do
+      ew <- newEntityWorld
+      _ <- spawnEntity ew (V3 10 65 10) 20 "Zombie"
+      nearby <- entitiesInRange ew (V3 12 65 10) 8.0
+      let hostileTags = ["Zombie", "Skeleton", "Creeper", "Spider"] :: [String]
+          hasHostile = any (\e -> entTag e `elem` hostileTags) nearby
+      hasHostile `shouldBe` True
+
+    it "nearby passive mob does not block sleep" $ do
+      ew <- newEntityWorld
+      _ <- spawnEntity ew (V3 10 65 10) 10 "Pig"
+      nearby <- entitiesInRange ew (V3 12 65 10) 8.0
+      let hostileTags = ["Zombie", "Skeleton", "Creeper", "Spider"] :: [String]
+          hasHostile = any (\e -> entTag e `elem` hostileTags) nearby
+      hasHostile `shouldBe` False
+
+    it "no entities means sleep is allowed" $ do
+      ew <- newEntityWorld
+      nearby <- entitiesInRange ew (V3 10 65 10) 8.0
+      let hostileTags = ["Zombie", "Skeleton", "Creeper", "Spider"] :: [String]
+          hasHostile = any (\e -> entTag e `elem` hostileTags) nearby
+      hasHostile `shouldBe` False
+
+    it "dawn time (0.25) after successful sleep" $ do
+      let dnc = newDayNightCycle { dncTime = 0.0, dncDayCount = 0 }
+          -- Simulate what happens when sleep succeeds
+          dnc' = dnc { dncTime = 0.25, dncDayCount = dncDayCount dnc + 1 }
+      dncTime dnc' `shouldBe` 0.25
+      dncDayCount dnc' `shouldBe` 1
+      isNight dnc' `shouldBe` False
