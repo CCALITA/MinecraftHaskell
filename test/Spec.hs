@@ -20,7 +20,7 @@ import Game.Furnace
 import World.Weather
 import Entity.ECS
 import Entity.Component
-import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), AIState(..), mobInfo)
+import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), AIState(..), mobInfo, isPassive, isHostile)
 import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpForNextLevel, xpProgress)
 import World.Redstone
 import World.BlockRegistry
@@ -50,7 +50,7 @@ import Engine.Mesh (MeshData(..), NeighborData(..), meshChunkWithLight, emptyNei
 import Entity.Pathfinding (findPath, pathDistance)
 import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
 import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, getTimeOfDay, TimeOfDay(..))
-import Game.State (GameState(..), newGameState)
+import Game.State (GameState(..), GameMode(..), newGameState)
 import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
 
 import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
@@ -2540,6 +2540,236 @@ villagerTradingSpec = describe "Entity.Villager trading framework" $ do
     let trades = generateTrades Shepherd
         hasWoolTrade = any (\t -> toInputItem t == BlockItem Wool) trades
     hasWoolTrade `shouldBe` True
+
+  it "Shepherd offers shears trade" $ do
+    let trades = generateTrades Shepherd
+        hasShears = any (\t -> case toOutputItem t of
+          ShearsItem _ -> True
+          _            -> False) trades
+    hasShears `shouldBe` True
+
+  -- Cleric trades
+  it "Cleric offers glass trade" $ do
+    let trades = generateTrades Cleric
+        hasGlass = any (\t -> toOutputItem t == BlockItem Glass) trades
+    hasGlass `shouldBe` True
+
+  it "Cleric offers redstone dust trade" $ do
+    let trades = generateTrades Cleric
+        hasRedstone = any (\t -> toOutputItem t == BlockItem RedstoneDust) trades
+    hasRedstone `shouldBe` True
+
+  it "Cleric has 2 trades" $ do
+    length (generateTrades Cleric) `shouldBe` 2
+
+  -- Farmer trade count
+  it "Farmer has 2 trades" $ do
+    length (generateTrades Farmer) `shouldBe` 2
+
+  -- Librarian trade count
+  it "Librarian has 2 trades" $ do
+    length (generateTrades Librarian) `shouldBe` 2
+
+  -- Butcher trade count
+  it "Butcher has 3 trades" $ do
+    length (generateTrades Butcher) `shouldBe` 3
+
+  -- Shepherd trade count
+  it "Shepherd has 2 trades" $ do
+    length (generateTrades Shepherd) `shouldBe` 2
+
+  -- Butcher outputs cooked porkchop
+  it "Butcher offers cooked porkchop trade" $ do
+    let trades = generateTrades Butcher
+        hasCookedPork = any (\t -> toOutputItem t == FoodItem CookedPorkchop) trades
+    hasCookedPork `shouldBe` True
+
+  -- Librarian outputs glass
+  it "Librarian offers glass output" $ do
+    let trades = generateTrades Librarian
+        hasGlass = any (\t -> toOutputItem t == BlockItem Glass) trades
+    hasGlass `shouldBe` True
+
+  -- executeTrade tests
+  it "executeTrade succeeds with sufficient items" $ do
+    let trade = TradeOffer (MaterialItem Wheat) 20 (MaterialItem GoldIngot) 1 12 12
+        inv0 = fst $ addItem emptyInventory (MaterialItem Wheat) 20
+    case executeTrade inv0 trade of
+      Just (inv', trade') -> do
+        hasItem inv' (MaterialItem GoldIngot) 1 `shouldBe` True
+        toUsesLeft trade' `shouldBe` 11
+      Nothing -> expectationFailure "executeTrade should have succeeded"
+
+  it "executeTrade removes input items from inventory" $ do
+    let trade = TradeOffer (MaterialItem Wheat) 20 (MaterialItem GoldIngot) 1 12 12
+        inv0 = fst $ addItem emptyInventory (MaterialItem Wheat) 20
+    case executeTrade inv0 trade of
+      Just (inv', _) -> do
+        hasItem inv' (MaterialItem Wheat) 1 `shouldBe` False
+      Nothing -> expectationFailure "executeTrade should have succeeded"
+
+  it "executeTrade fails with insufficient items" $ do
+    let trade = TradeOffer (MaterialItem Wheat) 20 (MaterialItem GoldIngot) 1 12 12
+        inv0 = fst $ addItem emptyInventory (MaterialItem Wheat) 10
+    executeTrade inv0 trade `shouldBe` Nothing
+
+  it "executeTrade fails with empty inventory" $ do
+    let trade = TradeOffer (MaterialItem Wheat) 20 (MaterialItem GoldIngot) 1 12 12
+    executeTrade emptyInventory trade `shouldBe` Nothing
+
+  it "executeTrade fails when trade out of stock" $ do
+    let trade = TradeOffer (MaterialItem Wheat) 20 (MaterialItem GoldIngot) 1 12 0
+        inv0 = fst $ addItem emptyInventory (MaterialItem Wheat) 20
+    executeTrade inv0 trade `shouldBe` Nothing
+
+  it "executeTrade decrements usesLeft by 1" $ do
+    let trade = TradeOffer (MaterialItem Coal) 15 (MaterialItem GoldIngot) 1 12 12
+        inv0 = fst $ addItem emptyInventory (MaterialItem Coal) 15
+    case executeTrade inv0 trade of
+      Just (_, trade') -> toUsesLeft trade' `shouldBe` 11
+      Nothing -> expectationFailure "trade should succeed"
+
+  it "executeTrade adds correct output count" $ do
+    let trade = TradeOffer (MaterialItem GoldIngot) 1 (FoodItem Bread) 4 12 12
+        inv0 = fst $ addItem emptyInventory (MaterialItem GoldIngot) 1
+    case executeTrade inv0 trade of
+      Just (inv', _) -> hasItem inv' (FoodItem Bread) 4 `shouldBe` True
+      Nothing -> expectationFailure "trade should succeed"
+
+  it "executeTrade can be applied multiple times" $ do
+    let trade = TradeOffer (MaterialItem Wheat) 20 (MaterialItem GoldIngot) 1 12 12
+        inv0 = fst $ addItem emptyInventory (MaterialItem Wheat) 64
+    case executeTrade inv0 trade of
+      Just (inv1, trade1) -> do
+        toUsesLeft trade1 `shouldBe` 11
+        case executeTrade inv1 trade1 of
+          Just (inv2, trade2) -> do
+            toUsesLeft trade2 `shouldBe` 10
+            hasItem inv2 (MaterialItem GoldIngot) 2 `shouldBe` True
+          Nothing -> expectationFailure "second trade should succeed"
+      Nothing -> expectationFailure "first trade should succeed"
+
+  it "executeTrade fails on last use when usesLeft is 1 then 0" $ do
+    let trade = TradeOffer (MaterialItem Wheat) 20 (MaterialItem GoldIngot) 1 12 1
+        inv0 = fst $ addItem emptyInventory (MaterialItem Wheat) 64
+    case executeTrade inv0 trade of
+      Just (inv1, trade1) -> do
+        toUsesLeft trade1 `shouldBe` 0
+        -- Next trade attempt should fail (out of stock)
+        executeTrade inv1 trade1 `shouldBe` Nothing
+      Nothing -> expectationFailure "first trade should succeed"
+
+  it "executeTrade with Blacksmith iron pickaxe trade" $ do
+    let trades = generateTrades Blacksmith
+        pickTrade = head $ filter (\t -> case toOutputItem t of
+          ToolItem Pickaxe Iron _ -> True
+          _ -> False) trades
+        inv0 = fst $ addItem emptyInventory (MaterialItem GoldIngot) 3
+    case executeTrade inv0 pickTrade of
+      Just (inv', _) -> do
+        let hasPick = any (\idx -> case getSlot inv' idx of
+              Just (ItemStack (ToolItem Pickaxe Iron _) _) -> True
+              _ -> False) [0..35]
+        hasPick `shouldBe` True
+      Nothing -> expectationFailure "pickaxe trade should succeed"
+
+  it "executeTrade with Shepherd wool trade" $ do
+    let trades = generateTrades Shepherd
+        woolTrade = head $ filter (\t -> toInputItem t == BlockItem Wool) trades
+        inv0 = fst $ addItem emptyInventory (BlockItem Wool) 18
+    case executeTrade inv0 woolTrade of
+      Just (inv', trade') -> do
+        hasItem inv' (MaterialItem GoldIngot) 1 `shouldBe` True
+        toUsesLeft trade' `shouldBe` (toMaxUses woolTrade - 1)
+      Nothing -> expectationFailure "wool trade should succeed"
+
+  -- Villager MobType in Entity.Mob
+  it "Villager is Passive behavior" $ do
+    miBehavior (mobInfo Villager) `shouldBe` Passive
+
+  it "Villager has 20 HP" $ do
+    miMaxHealth (mobInfo Villager) `shouldBe` 20
+
+  it "Villager has 0 attack damage" $ do
+    miAttackDmg (mobInfo Villager) `shouldBe` 0.0
+
+  it "Villager has 0 detect range" $ do
+    miDetectRange (mobInfo Villager) `shouldBe` 0.0
+
+  it "Villager has 0 attack range" $ do
+    miAttackRange (mobInfo Villager) `shouldBe` 0.0
+
+  it "Villager speed is 2.5" $ do
+    miSpeed (mobInfo Villager) `shouldBe` 2.5
+
+  it "isPassive returns True for Villager" $ do
+    isPassive Villager `shouldBe` True
+
+  it "isHostile returns False for Villager" $ do
+    isHostile Villager `shouldBe` False
+
+  -- GameState VillagerTrading mode
+  it "VillagerTrading is distinct from other GameModes" $ do
+    VillagerTrading `shouldNotBe` Playing
+    VillagerTrading `shouldNotBe` InventoryOpen
+    VillagerTrading `shouldNotBe` CraftingOpen
+    VillagerTrading `shouldNotBe` MainMenu
+
+  it "VillagerTrading shows correctly" $ do
+    show VillagerTrading `shouldBe` "VillagerTrading"
+
+  it "GameState initializes with empty villager trades" $ do
+    gs <- newGameState (V3 0 60 0)
+    trades <- readIORef (gsVillagerTrades gs)
+    trades `shouldBe` []
+
+  it "GameState initializes with no villager profession" $ do
+    gs <- newGameState (V3 0 60 0)
+    prof <- readIORef (gsVillagerProf gs)
+    prof `shouldBe` Nothing
+
+  it "GameState villager trades can be written and read" $ do
+    gs <- newGameState (V3 0 60 0)
+    let trades = generateTrades Farmer
+    writeIORef (gsVillagerTrades gs) trades
+    result <- readIORef (gsVillagerTrades gs)
+    result `shouldBe` trades
+
+  it "GameState villager profession can be written and read" $ do
+    gs <- newGameState (V3 0 60 0)
+    writeIORef (gsVillagerProf gs) (Just Blacksmith)
+    result <- readIORef (gsVillagerProf gs)
+    result `shouldBe` Just Blacksmith
+
+  -- Trade input/output item types are distinct
+  it "no trade has same input and output item" $ do
+    let allTrades = concatMap generateTrades allProfessions
+    mapM_ (\t -> toInputItem t `shouldNotBe` toOutputItem t) allTrades
+
+  -- Currency is GoldIngot (Emerald substitute)
+  it "Farmer wheat trade output is GoldIngot currency" $ do
+    let trades = generateTrades Farmer
+        wheatTrade = head $ filter (\t -> toInputItem t == MaterialItem Wheat) trades
+    toOutputItem wheatTrade `shouldBe` MaterialItem GoldIngot
+
+  it "Farmer bread trade input is GoldIngot currency" $ do
+    let trades = generateTrades Farmer
+        breadTrade = head $ filter (\t -> toOutputItem t == FoodItem Bread) trades
+    toInputItem breadTrade `shouldBe` MaterialItem GoldIngot
+
+  -- Blacksmith coal trade
+  it "Blacksmith accepts coal for currency" $ do
+    let trades = generateTrades Blacksmith
+        hasCoal = any (\t -> toInputItem t == MaterialItem Coal) trades
+    hasCoal `shouldBe` True
+
+  -- Blacksmith sword trade
+  it "Blacksmith offers iron sword trade" $ do
+    let trades = generateTrades Blacksmith
+        hasSword = any (\t -> case toOutputItem t of
+          ToolItem Sword Iron _ -> True
+          _                     -> False) trades
+    hasSword `shouldBe` True
 
 -- =========================================================================
 -- Tooltip
