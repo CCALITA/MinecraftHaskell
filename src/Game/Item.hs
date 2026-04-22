@@ -463,6 +463,7 @@ mobDrops tag = case tag of
   "Spider"   -> randomDrops [(MaterialItem StringMat, 0, 2)]
   _ | tag `elem` ["Wolf", "TamedWolf", "TamedWolfSitting"]
               -> randomDrops [(MaterialItem Bone, 0, 2)]
+    | tag == "Villager" -> pure []
     | otherwise -> pure []
  where
   randomDrops :: [(Item, Int, Int)] -> IO [(Item, Int)]

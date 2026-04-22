@@ -36,6 +36,7 @@ import World.Light
 import Entity.ECS
 import Entity.Mob (MobType(..), MobInfo(..), updateMobAI, AIState(..), mobInfo, damageEntity, isHostile)
 import Entity.Spawn
+import Entity.Villager (VillagerProfession(..), TradeOffer(..), generateTrades, professionName, allProfessions, executeTrade)
 import Game.Save
 import Game.SaveV3 (SaveDataV3(..), savev3Version, savePlayerV3, loadPlayerV3)
 import Game.DroppedItem
@@ -246,6 +247,8 @@ main = do
         achievementsRef     = gsAchievements gs
         achievementToastRef = gsAchievementToast gs
         chatStateRef        = gsChatState gs
+        villagerProfRef     = gsVillagerProf gs
+        villagerTradesRef   = gsVillagerTrades gs
 
     -- World save management: use world1 as default
     let defaultSaveDir = savesRoot </> "world1"
@@ -752,6 +755,47 @@ main = do
                   writeIORef cursorItemRef slotContent
                 Nothing -> pure ()
 
+        VillagerTrading -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
+          (mx, my) <- readIORef mousePosRef
+          (winW, winH) <- getWindowSize wh
+          let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+              ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
+          trades <- readIORef villagerTradesRef
+          let tradeRowH = 0.12 :: Float
+              tradeRowGap = 0.02 :: Float
+              tradeX0 = -0.60 :: Float
+              tradeX1 = 0.60 :: Float
+              tradeY0Base = -0.25 :: Float
+              clickedTradeIdx = if ndcX >= tradeX0 && ndcX <= tradeX1
+                then let relY = ndcY - tradeY0Base
+                         row = floor (relY / (tradeRowH + tradeRowGap)) :: Int
+                     in if row >= 0 && row < length trades
+                           && (relY - fromIntegral row * (tradeRowH + tradeRowGap)) <= tradeRowH
+                        then Just row
+                        else Nothing
+                else Nothing
+          case clickedTradeIdx of
+            Just idx -> do
+              inv <- readIORef inventoryRef
+              let trade = trades !! idx
+              case executeTrade inv trade of
+                Just (inv', trade') -> do
+                  writeIORef inventoryRef inv'
+                  let trades' = take idx trades ++ [trade'] ++ drop (idx + 1) trades
+                  writeIORef villagerTradesRef trades'
+                  putStrLn $ "Executed trade #" ++ show idx
+                Nothing -> putStrLn "Cannot execute trade: insufficient items or out of stock"
+            Nothing -> do
+              let mSlot = hitInventorySlot ndcX (ndcY - 0.4)
+              case mSlot of
+                Just slotIdx -> do
+                  inv <- readIORef inventoryRef
+                  cursor <- readIORef cursorItemRef
+                  let slotContent = getSlot inv slotIdx
+                  writeIORef inventoryRef (setSlot inv slotIdx cursor)
+                  writeIORef cursorItemRef slotContent
+                Nothing -> pure ()
+
         DeathScreen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
           (winW, winH) <- getWindowSize wh
@@ -958,6 +1002,24 @@ main = do
                           putStrLn $ "Cast fishing line! Wait time: " ++ show (round timer :: Int) ++ "s"
                         Nothing -> pure ()
                 _ -> pure ()
+
+            -- RMB: right-click villager to open trading UI
+            when (button == GLFW.MouseButton'2) $ do
+              nearby <- entitiesInRange entityWorld (plPos player) 3.0
+              let villagers = filter (\e -> entTag e == "Villager") nearby
+              case villagers of
+                [] -> pure ()
+                _  -> do
+                  let closest = closestTo (plPos player) villagers
+                      profIdx = entId closest `mod` length allProfessions
+                      prof = allProfessions !! profIdx
+                      trades = generateTrades prof
+                  writeIORef villagerProfRef (Just prof)
+                  writeIORef villagerTradesRef trades
+                  writeIORef gameModeRef VillagerTrading
+                  GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
+                  writeIORef lastCursorRef Nothing
+                  putStrLn $ "Opened trading with " ++ professionName prof
 
             -- RMB: interact with boat entity (ride)
             when (button == GLFW.MouseButton'2) $ do
@@ -1456,6 +1518,9 @@ main = do
                       writeIORef enchantItemRef Nothing
                     Nothing -> pure ()
                   clearEnchantments enchantMapRef 0
+                when (curMode == VillagerTrading) $ do
+                  writeIORef villagerProfRef Nothing
+                  writeIORef villagerTradesRef []
                 -- Switch back to playing
                 writeIORef gameModeRef Playing
                 GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
@@ -2469,7 +2534,9 @@ main = do
             spawnPos <- readIORef spawnPointRef
             playerXP <- readIORef playerXPRef
             chatState <- readIORef chatStateRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState
+            mVillProf <- readIORef villagerProfRef
+            villTrades <- readIORef villagerTradesRef
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -2587,6 +2654,24 @@ showF1 = showFloatN 1
 -- | Show a float with 2 decimal places
 showF2 :: Float -> String
 showF2 = showFloatN 2
+
+showItemShort :: Item -> String
+showItemShort (BlockItem bt) = show bt
+showItemShort (ToolItem tt tm _) = show tm ++ " " ++ show tt
+showItemShort StickItem = "Stick"
+showItemShort (FoodItem ft) = foodName ft
+showItemShort (MaterialItem mt) = materialName mt
+showItemShort (ArmorItem slot mat _) = show mat ++ " " ++ show slot
+showItemShort (ShearsItem _) = "Shears"
+showItemShort (FlintAndSteelItem _) = "Flint & Steel"
+showItemShort CompassItem = "Compass"
+showItemShort ClockItem = "Clock"
+showItemShort (FishingRodItem _) = "Fishing Rod"
+showItemShort GlassBottleItem = "Glass Bottle"
+showItemShort (PotionItem pt) = potionName pt
+showItemShort BoatItem = "Boat"
+showItemShort MinecartItem = "Minecart"
+showItemShort (BucketItem bt) = show bt
 
 -- | Check if a GLFW key is pressed
 isKeyDown :: GLFW.Window -> GLFW.Key -> IO Bool
@@ -2893,6 +2978,7 @@ readMobType "Chicken"  = Chicken
 readMobType "Wolf"     = Wolf
 readMobType "TamedWolf" = Wolf
 readMobType "TamedWolfSitting" = Wolf
+readMobType "Villager" = Villager
 readMobType _          = Pig
 
 -- | Whether a block is flammable (can catch fire from adjacent fire blocks)
@@ -2937,8 +3023,8 @@ tryTriggerAchievement achRef toastRef trigger = do
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- sleepMsgText: Just "message" when a bed-related message should be shown
 -- achToastText: Just "name" when an achievement toast should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
@@ -2950,6 +3036,7 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
     FurnaceOpen   -> furnaceScreenVerts ++ cursorVerts
     DispenserOpen -> dispenserScreenVerts ++ cursorVerts
     EnchantingOpen -> enchantScreenVerts ++ cursorVerts
+    VillagerTrading -> villagerTradeScreenVerts ++ cursorVerts
     DeathScreen   -> deathScreenVerts
   where
     -- Crosshair: white + at center
@@ -3674,6 +3761,56 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
               col = if idx < 9 then idx else (idx - 9) `mod` 9
               x = invGridX0 + fromIntegral col * invSlotW + invSlotPad
               y = 0.22 + fromIntegral row * invSlotH + invSlotPad
+              sw = invSlotW - 2 * invSlotPad
+              sh = invSlotH - 2 * invSlotPad
+              slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
+          in case getSlot inv idx of
+            Nothing -> slotBg
+            Just (ItemStack item _) ->
+              let colors = itemMiniIcon item
+                  pixW = sw / 3; pixH = sh / 3
+              in slotBg ++ concatMap (\(r, c, clr) ->
+                   quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                        (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
+    -- Villager trading screen
+    villagerTradeScreenVerts =
+      quad (-1) (-1) 1 1 (0, 0, 0, 0.5)
+      ++ renderTextCentered (-0.42) 0.9 (0.2, 0.8, 0.2, 1.0) titleText
+      ++ quad (-0.65) (-0.30) 0.65 tradeEndY (0.2, 0.15, 0.1, 0.9)
+      ++ concatMap renderTradeRow (zip [0..] villTrades)
+      ++ quad (invGridX0 - 0.02) villInvY0 (invGridX0 + 9 * invSlotW + 0.02) (villInvY0 + 4 * invSlotH + 0.02) (0.3, 0.3, 0.3, 0.9)
+      ++ concatMap renderVillInvSlot [0..35]
+      where
+        titleText = case mVillProf of
+          Just prof -> professionName prof ++ " - TRADES"
+          Nothing   -> "VILLAGER TRADES"
+        vtRowH = 0.12 :: Float
+        vtRowGap = 0.02 :: Float
+        vtY0Base = -0.25 :: Float
+        vtX0 = -0.60 :: Float
+        vtX1 = 0.60 :: Float
+        tradeEndY = vtY0Base + fromIntegral (length villTrades) * (vtRowH + vtRowGap) + 0.05
+        villInvY0 = tradeEndY + 0.08
+        renderTradeRow (i, trade) =
+          let y0 = vtY0Base + fromIntegral i * (vtRowH + vtRowGap)
+              inStock = toUsesLeft trade > 0
+              bgColor = if inStock then (0.25, 0.2, 0.15, 0.9) else (0.4, 0.2, 0.2, 0.6)
+              rowBg = quad vtX0 y0 vtX1 (y0 + vtRowH) bgColor
+              inputStr = show (toInputCount trade) ++ "x " ++ showItemShort (toInputItem trade)
+              inputText = renderText (vtX0 + 0.02) (y0 + 0.02) 0.55 (1.0, 0.9, 0.7, 1.0) inputStr
+              arrowText = renderText 0.0 (y0 + 0.02) 0.55 (1.0, 1.0, 1.0, 0.8) "=>"
+              outputStr = show (toOutputCount trade) ++ "x " ++ showItemShort (toOutputItem trade)
+              outputText = renderText 0.15 (y0 + 0.02) 0.55 (0.9, 1.0, 0.5, 1.0) outputStr
+              stockStr = "(" ++ show (toUsesLeft trade) ++ "/" ++ show (toMaxUses trade) ++ ")"
+              stockColor = if inStock then (0.6, 0.8, 0.6, 0.8) else (0.8, 0.3, 0.3, 0.8)
+              stockText = renderText (vtX1 - 0.22) (y0 + 0.02) 0.45 stockColor stockStr
+          in rowBg ++ inputText ++ arrowText ++ outputText ++ stockText
+        renderVillInvSlot idx =
+          let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
+              col = if idx < 9 then idx else (idx - 9) `mod` 9
+              x = invGridX0 + fromIntegral col * invSlotW + invSlotPad
+              y = villInvY0 + 0.02 + fromIntegral row * invSlotH + invSlotPad
               sw = invSlotW - 2 * invSlotPad
               sh = invSlotH - 2 * invSlotPad
               slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
