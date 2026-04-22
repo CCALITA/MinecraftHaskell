@@ -251,6 +251,13 @@ blockDrops = \case
   Rose             -> [(BlockItem Rose, 1)]
   BrownMushroom    -> [(BlockItem BrownMushroom, 1)]
   RedMushroom      -> [(BlockItem RedMushroom, 1)]
+  WheatCrop1       -> [(MaterialItem WheatSeeds, 1)]
+  WheatCrop2       -> [(MaterialItem WheatSeeds, 1)]
+  WheatCrop3       -> [(MaterialItem WheatSeeds, 1)]
+  WheatCrop4       -> [(MaterialItem WheatSeeds, 1)]
+  WheatCrop5       -> [(MaterialItem WheatSeeds, 1)]
+  WheatCrop6       -> [(MaterialItem WheatSeeds, 1)]
+  WheatCrop7       -> [(MaterialItem Wheat, 1), (MaterialItem WheatSeeds, 1)]
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
