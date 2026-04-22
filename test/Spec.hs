@@ -52,7 +52,7 @@ import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
 
 import Data.Binary (encode, decode)
 import Data.IORef (newIORef, readIORef, modifyIORef')
-import Data.List (nub)
+import Data.List (nub, isPrefixOf, isInfixOf)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..))
@@ -116,6 +116,9 @@ main = hspec $ do
   xpSpec
   wheatCropGrowthSpec
   structurePlacementSpec
+  executeCommandSpec
+  chatStateSpec
+  lookupItemByNameSpec
 
 -- =========================================================================
 -- Block
@@ -4488,3 +4491,170 @@ allBlocksSame v1 v2 total i
       b <- MUV.read v2 i
       if a /= b then pure False else allBlocksSame v1 v2 total (i + 1)
 
+-- =========================================================================
+-- Command execution
+-- =========================================================================
+executeCommandSpec :: Spec
+executeCommandSpec = describe "Game.Command.executeCommand" $ do
+  it "/give returns CmdSuccess with item and count" $ do
+    executeCommand (CmdGive "stone" 64) `shouldBe` CmdSuccess "Gave 64 stone"
+
+  it "/give with count 1 shows count" $ do
+    executeCommand (CmdGive "diamond" 1) `shouldBe` CmdSuccess "Gave 1 diamond"
+
+  it "/tp returns CmdSuccess with coordinates" $ do
+    let result = executeCommand (CmdTeleport 100 65 (-200))
+    case result of
+      CmdSuccess msg -> do
+        msg `shouldSatisfy` \m -> "Teleported to" `isPrefixOf` m
+      CmdError _ -> expectationFailure "Expected CmdSuccess"
+
+  it "/time returns CmdSuccess" $ do
+    executeCommand (CmdTime "day") `shouldBe` CmdSuccess "Time set to day"
+
+  it "/time night returns CmdSuccess" $ do
+    executeCommand (CmdTime "night") `shouldBe` CmdSuccess "Time set to night"
+
+  it "/weather returns CmdSuccess" $ do
+    executeCommand (CmdWeather "clear") `shouldBe` CmdSuccess "Weather set to clear"
+
+  it "/weather rain returns CmdSuccess" $ do
+    executeCommand (CmdWeather "rain") `shouldBe` CmdSuccess "Weather set to rain"
+
+  it "/gamemode returns CmdSuccess" $ do
+    executeCommand (CmdGamemode "creative") `shouldBe` CmdSuccess "Game mode set to creative"
+
+  it "/gamemode survival returns CmdSuccess" $ do
+    executeCommand (CmdGamemode "survival") `shouldBe` CmdSuccess "Game mode set to survival"
+
+  it "/kill returns CmdSuccess" $ do
+    executeCommand CmdKill `shouldBe` CmdSuccess "Killed player"
+
+  it "/seed returns CmdSuccess" $ do
+    executeCommand CmdSeed `shouldBe` CmdSuccess "Seed: 12345"
+
+  it "/help returns CmdSuccess with command list" $ do
+    let result = executeCommand CmdHelp
+    case result of
+      CmdSuccess msg -> msg `shouldSatisfy` \m -> "/give" `isInfixOf` m
+      CmdError _ -> expectationFailure "Expected CmdSuccess"
+
+  it "/summon returns CmdSuccess" $ do
+    executeCommand (CmdSpawnMob "zombie") `shouldBe` CmdSuccess "Summoned zombie"
+
+-- =========================================================================
+-- Chat state
+-- =========================================================================
+chatStateSpec :: Spec
+chatStateSpec = describe "Game.Command.ChatState" $ do
+  it "emptyChatState has empty buffer" $ do
+    chatGetBuffer emptyChatState `shouldBe` ""
+
+  it "emptyChatState has no messages" $ do
+    csMessages emptyChatState `shouldBe` []
+
+  it "chatAddChar appends character to buffer" $ do
+    let s = chatAddChar 'a' emptyChatState
+    chatGetBuffer s `shouldBe` "a"
+
+  it "chatAddChar builds up string correctly" $ do
+    let s = chatAddChar 'c' $ chatAddChar 'b' $ chatAddChar 'a' emptyChatState
+    chatGetBuffer s `shouldBe` "abc"
+
+  it "chatDeleteChar removes last character" $ do
+    let s = chatDeleteChar $ chatAddChar 'b' $ chatAddChar 'a' emptyChatState
+    chatGetBuffer s `shouldBe` "a"
+
+  it "chatDeleteChar on empty buffer is no-op" $ do
+    let s = chatDeleteChar emptyChatState
+    chatGetBuffer s `shouldBe` ""
+
+  it "chatClear empties the buffer" $ do
+    let s = chatClear $ chatAddChar 'x' emptyChatState
+    chatGetBuffer s `shouldBe` ""
+
+  it "chatClear preserves messages" $ do
+    let s = addChatMessage "hello" 3.0 emptyChatState
+        s' = chatClear $ chatAddChar 'x' s
+    length (csMessages s') `shouldBe` 1
+
+  it "addChatMessage adds a message" $ do
+    let s = addChatMessage "test" 3.0 emptyChatState
+    length (csMessages s) `shouldBe` 1
+    cmText (head (csMessages s)) `shouldBe` "test"
+    cmTimer (head (csMessages s)) `shouldBe` 3.0
+
+  it "addChatMessage preserves existing messages" $ do
+    let s = addChatMessage "b" 2.0 $ addChatMessage "a" 3.0 emptyChatState
+    length (csMessages s) `shouldBe` 2
+
+  it "updateChatMessages decrements timers" $ do
+    let s = addChatMessage "test" 3.0 emptyChatState
+        s' = updateChatMessages 1.0 s
+    cmTimer (head (csMessages s')) `shouldBe` 2.0
+
+  it "updateChatMessages removes expired messages" $ do
+    let s = addChatMessage "test" 1.0 emptyChatState
+        s' = updateChatMessages 1.5 s
+    csMessages s' `shouldBe` []
+
+  it "updateChatMessages keeps fresh messages" $ do
+    let s = addChatMessage "old" 1.0 $ addChatMessage "new" 5.0 emptyChatState
+        s' = updateChatMessages 2.0 s
+    length (csMessages s') `shouldBe` 1
+    cmText (head (csMessages s')) `shouldBe` "new"
+
+  it "slash pre-fill sets buffer to /" $ do
+    let s = chatAddChar '/' (chatClear emptyChatState)
+    chatGetBuffer s `shouldBe` "/"
+
+-- =========================================================================
+-- Item name lookup
+-- =========================================================================
+lookupItemByNameSpec :: Spec
+lookupItemByNameSpec = describe "Game.Item.lookupItemByName" $ do
+  it "looks up stone block" $ do
+    lookupItemByName "stone" `shouldBe` Just (BlockItem Stone)
+
+  it "looks up dirt block" $ do
+    lookupItemByName "dirt" `shouldBe` Just (BlockItem Dirt)
+
+  it "looks up diamond material" $ do
+    lookupItemByName "diamond" `shouldBe` Just (MaterialItem DiamondGem)
+
+  it "looks up coal material" $ do
+    lookupItemByName "coal" `shouldBe` Just (MaterialItem Coal)
+
+  it "looks up iron_ingot" $ do
+    lookupItemByName "iron_ingot" `shouldBe` Just (MaterialItem IronIngot)
+
+  it "looks up diamond_pickaxe" $ do
+    lookupItemByName "diamond_pickaxe" `shouldBe` Just (ToolItem Pickaxe Diamond 1561)
+
+  it "looks up wooden_sword" $ do
+    lookupItemByName "wooden_sword" `shouldBe` Just (ToolItem Sword Wood 59)
+
+  it "looks up stick" $ do
+    lookupItemByName "stick" `shouldBe` Just StickItem
+
+  it "looks up apple food" $ do
+    lookupItemByName "apple" `shouldBe` Just (FoodItem Apple)
+
+  it "looks up bread food" $ do
+    lookupItemByName "bread" `shouldBe` Just (FoodItem Bread)
+
+  it "returns Nothing for unknown item" $ do
+    lookupItemByName "unobtainium" `shouldBe` Nothing
+
+  it "is case-insensitive" $ do
+    lookupItemByName "Stone" `shouldBe` Just (BlockItem Stone)
+    lookupItemByName "DIAMOND" `shouldBe` Just (MaterialItem DiamondGem)
+
+  it "looks up torch block" $ do
+    lookupItemByName "torch" `shouldBe` Just (BlockItem Torch)
+
+  it "looks up compass" $ do
+    lookupItemByName "compass" `shouldBe` Just CompassItem
+
+  it "looks up glass_bottle" $ do
+    lookupItemByName "glass_bottle" `shouldBe` Just GlassBottleItem
