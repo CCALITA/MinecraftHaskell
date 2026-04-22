@@ -43,6 +43,9 @@ import UI.Screen
 
 import Game.PotionEffect
 
+import Game.Bucket (BucketAction(..), determineBucketAction, bucketTypeToFluidBlock, fluidBlockToBucketType)
+import World.Fluid (FluidState, FluidType(..), newFluidState, addFluidSource, removeFluid, getFluid, FluidBlock(..))
+
 import Entity.Pathfinding (findPath, pathDistance)
 import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
 import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, getTimeOfDay, TimeOfDay(..))
@@ -121,6 +124,7 @@ main = hspec $ do
   xpSpec
   utilityBlockSpec
   bucketItemSpec
+  bucketMechanicsSpec
   wheatCropGrowthSpec
   structurePlacementSpec
   executeCommandSpec
@@ -4685,6 +4689,186 @@ bucketItemSpec = describe "Bucket items" $ do
             & \g -> setCraftingSlot g 0 2 (Just (MaterialItem IronIngot))
             & \g -> setCraftingSlot g 1 1 (Just (MaterialItem IronIngot))
       tryCraft grid `shouldBe` CraftSuccess (BucketItem BucketEmpty) 1
+
+-- =========================================================================
+-- Bucket Mechanics (pickup / place water and lava)
+-- =========================================================================
+bucketMechanicsSpec :: Spec
+bucketMechanicsSpec = describe "Bucket mechanics" $ do
+
+  -- Pure logic: determineBucketAction
+  describe "determineBucketAction" $ do
+    it "empty bucket on Water -> pickup water" $
+      determineBucketAction BucketEmpty Water
+        `shouldBe` BucketPickup Water BucketWater
+
+    it "empty bucket on Lava -> pickup lava" $
+      determineBucketAction BucketEmpty Lava
+        `shouldBe` BucketPickup Lava BucketLava
+
+    it "empty bucket on Stone -> no action" $
+      determineBucketAction BucketEmpty Stone
+        `shouldBe` BucketNoAction
+
+    it "empty bucket on Air -> no action" $
+      determineBucketAction BucketEmpty Air
+        `shouldBe` BucketNoAction
+
+    it "water bucket on any block -> place water" $
+      determineBucketAction BucketWater Stone
+        `shouldBe` BucketPlace Water BucketEmpty
+
+    it "water bucket on Air -> place water" $
+      determineBucketAction BucketWater Air
+        `shouldBe` BucketPlace Water BucketEmpty
+
+    it "lava bucket on any block -> place lava" $
+      determineBucketAction BucketLava Dirt
+        `shouldBe` BucketPlace Lava BucketEmpty
+
+    it "lava bucket on Air -> place lava" $
+      determineBucketAction BucketLava Air
+        `shouldBe` BucketPlace Lava BucketEmpty
+
+    it "milk bucket -> no action" $
+      determineBucketAction BucketMilk Water
+        `shouldBe` BucketNoAction
+
+    it "milk bucket on Stone -> no action" $
+      determineBucketAction BucketMilk Stone
+        `shouldBe` BucketNoAction
+
+  -- Helper conversion functions
+  describe "bucketTypeToFluidBlock" $ do
+    it "BucketWater -> Just Water" $
+      bucketTypeToFluidBlock BucketWater `shouldBe` Just Water
+
+    it "BucketLava -> Just Lava" $
+      bucketTypeToFluidBlock BucketLava `shouldBe` Just Lava
+
+    it "BucketEmpty -> Nothing" $
+      bucketTypeToFluidBlock BucketEmpty `shouldBe` Nothing
+
+    it "BucketMilk -> Nothing" $
+      bucketTypeToFluidBlock BucketMilk `shouldBe` Nothing
+
+  describe "fluidBlockToBucketType" $ do
+    it "Water -> Just BucketWater" $
+      fluidBlockToBucketType Water `shouldBe` Just BucketWater
+
+    it "Lava -> Just BucketLava" $
+      fluidBlockToBucketType Lava `shouldBe` Just BucketLava
+
+    it "Stone -> Nothing" $
+      fluidBlockToBucketType Stone `shouldBe` Nothing
+
+    it "Air -> Nothing" $
+      fluidBlockToBucketType Air `shouldBe` Nothing
+
+  -- Inventory integration: picking up fluid replaces bucket in slot
+  describe "inventory integration" $ do
+    it "picking up water: empty bucket becomes water bucket in inventory" $ do
+      let inv0 = setSlot emptyInventory 0 (Just (ItemStack (BucketItem BucketEmpty) 1))
+          sel  = 0
+          inv1 = setSlot inv0 sel (Just (ItemStack (BucketItem BucketWater) 1))
+      selectedItem inv1 `shouldBe` Just (ItemStack (BucketItem BucketWater) 1)
+
+    it "placing water: water bucket becomes empty bucket in inventory" $ do
+      let inv0 = setSlot emptyInventory 0 (Just (ItemStack (BucketItem BucketWater) 1))
+          sel  = 0
+          inv1 = setSlot inv0 sel (Just (ItemStack (BucketItem BucketEmpty) 1))
+      selectedItem inv1 `shouldBe` Just (ItemStack (BucketItem BucketEmpty) 1)
+
+    it "picking up lava: empty bucket becomes lava bucket in inventory" $ do
+      let inv0 = setSlot emptyInventory 0 (Just (ItemStack (BucketItem BucketEmpty) 1))
+          sel  = 0
+          inv1 = setSlot inv0 sel (Just (ItemStack (BucketItem BucketLava) 1))
+      selectedItem inv1 `shouldBe` Just (ItemStack (BucketItem BucketLava) 1)
+
+    it "placing lava: lava bucket becomes empty bucket in inventory" $ do
+      let inv0 = setSlot emptyInventory 0 (Just (ItemStack (BucketItem BucketLava) 1))
+          sel  = 0
+          inv1 = setSlot inv0 sel (Just (ItemStack (BucketItem BucketEmpty) 1))
+      selectedItem inv1 `shouldBe` Just (ItemStack (BucketItem BucketEmpty) 1)
+
+  -- World integration: fluid source placement and removal
+  describe "world integration" $ do
+    it "removeFluid sets block to Air" $ withTestWorld $ \world -> do
+      fs <- newFluidState
+      let pos = V3 5 64 5
+      addFluidSource fs world pos FluidWater
+      block <- worldGetBlock world pos
+      block `shouldBe` Water
+      removeFluid fs world pos
+      block' <- worldGetBlock world pos
+      block' `shouldBe` Air
+
+    it "addFluidSource sets Water block" $ withTestWorld $ \world -> do
+      fs <- newFluidState
+      let pos = V3 3 64 3
+      addFluidSource fs world pos FluidWater
+      block <- worldGetBlock world pos
+      block `shouldBe` Water
+
+    it "addFluidSource sets Lava block" $ withTestWorld $ \world -> do
+      fs <- newFluidState
+      let pos = V3 3 64 3
+      addFluidSource fs world pos FluidLava
+      block <- worldGetBlock world pos
+      block `shouldBe` Lava
+
+    it "removeFluid removes fluid tracking" $ withTestWorld $ \world -> do
+      fs <- newFluidState
+      let pos = V3 5 64 5
+      addFluidSource fs world pos FluidWater
+      mFluid <- getFluid fs pos
+      mFluid `shouldSatisfy` (/= Nothing)
+      removeFluid fs world pos
+      mFluid' <- getFluid fs pos
+      mFluid' `shouldBe` Nothing
+
+    it "pickup water: world block becomes Air" $ withTestWorld $ \world -> do
+      fs <- newFluidState
+      let pos = V3 4 64 4
+      addFluidSource fs world pos FluidWater
+      -- Simulate bucket pickup
+      let action = determineBucketAction BucketEmpty Water
+      action `shouldBe` BucketPickup Water BucketWater
+      removeFluid fs world pos
+      block <- worldGetBlock world pos
+      block `shouldBe` Air
+
+    it "place water: world block becomes Water" $ withTestWorld $ \world -> do
+      fs <- newFluidState
+      let pos = V3 6 64 6
+      -- Simulate bucket placement
+      let action = determineBucketAction BucketWater Air
+      action `shouldBe` BucketPlace Water BucketEmpty
+      addFluidSource fs world pos FluidWater
+      block <- worldGetBlock world pos
+      block `shouldBe` Water
+
+    it "place lava: world block becomes Lava" $ withTestWorld $ \world -> do
+      fs <- newFluidState
+      let pos = V3 7 64 7
+      let action = determineBucketAction BucketLava Air
+      action `shouldBe` BucketPlace Lava BucketEmpty
+      addFluidSource fs world pos FluidLava
+      block <- worldGetBlock world pos
+      block `shouldBe` Lava
+
+    it "pickup lava: world block becomes Air" $ withTestWorld $ \world -> do
+      fs <- newFluidState
+      let pos = V3 8 64 8
+      addFluidSource fs world pos FluidLava
+      block <- worldGetBlock world pos
+      block `shouldBe` Lava
+      let action = determineBucketAction BucketEmpty Lava
+      action `shouldBe` BucketPickup Lava BucketLava
+      removeFluid fs world pos
+      block' <- worldGetBlock world pos
+      block' `shouldBe` Air
+
 -- Wheat Crop Growth Stages
 -- =========================================================================
 wheatCropGrowthSpec :: Spec
