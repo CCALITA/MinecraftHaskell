@@ -46,7 +46,7 @@ import Game.PotionEffect
 import Game.Bucket (BucketAction(..), determineBucketAction, bucketTypeToFluidBlock, fluidBlockToBucketType)
 import World.Fluid (FluidState, FluidType(..), newFluidState, addFluidSource, removeFluid, getFluid, FluidBlock(..))
 
-import Engine.Mesh (MeshData(..), NeighborData(..), meshChunkWithLight, emptyNeighborData, BlockVertex(..))
+import Engine.Mesh (MeshData(..), NeighborData(..), meshChunk, meshChunkWithLight, emptyNeighborData, BlockVertex(..))
 import Entity.Pathfinding (findPath, pathDistance)
 import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
 import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, getTimeOfDay, TimeOfDay(..))
@@ -5657,6 +5657,20 @@ greedyMeshingSpec = describe "Engine.Mesh greedy meshing" $ do
     let vertCount = VS.length (mdVertices mesh)
     -- Top, bottom, and 4 sides each merge to a single quad = 6 * 4 = 24
     vertCount `shouldBe` 24
+
+  it "greedy meshing produces strictly fewer vertices than naive per-face for uniform layer" $ do
+    -- A 16x16 flat layer: naive would emit 1 quad per exposed face.
+    -- Naive count: 16*16 top + 16*16 bottom + 4*16 sides = 576 faces = 2304 verts
+    -- Greedy: 6 merged quads = 24 verts
+    chunk <- newChunk (V2 0 0)
+    forM_ [0..15] $ \x ->
+      forM_ [0..15] $ \z ->
+        setBlock chunk x 64 z Stone
+    mesh <- meshChunk chunk
+    let greedyVerts = VS.length (mdVertices mesh)
+        naiveVertCount = 576 * 4  -- 576 exposed faces x 4 verts each
+    greedyVerts `shouldSatisfy` (< naiveVertCount)
+    greedyVerts `shouldBe` 24
 
 -- Dimension wiring (sky color, GameState fields, coordinate mapping)
 -- =========================================================================

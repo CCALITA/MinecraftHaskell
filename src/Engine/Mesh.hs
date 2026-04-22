@@ -17,7 +17,6 @@ import Data.Word (Word8, Word32)
 import Data.IORef
 import Control.Monad (when, forM_)
 import qualified Data.Vector.Storable as VS
-import qualified Data.Vector.Storable.Mutable as VSM
 import qualified Data.Vector.Unboxed as UV
 import qualified Data.Vector.Unboxed.Mutable as MUV
 import Foreign.Storable (Storable(..))
@@ -82,465 +81,297 @@ tileUV (V2 tx ty) =
       v1 = (fromIntegral ty + 1) / atlasSize
   in (V2 u0 v0, V2 u1 v1)
 
--- | Greedy-mesh key: identifies a face cell for merging.
---   Encodes block type (Word8), texture tile (u8, u8), and quantised light (Word8).
---   Zero means "no face" (empty cell).
-type FaceKey = Word32
+-- | Key for greedy meshing: block type and quantized light must match to merge.
+data FaceKey = FaceKey
+  { fkBlockType :: !BlockType
+  , fkLightQ    :: !Word8
+  } deriving stock (Eq)
 
--- | Pack a face key from block type, tile coords, and light.
-packFaceKey :: BlockType -> V2 Int -> Float -> FaceKey
-packFaceKey bt (V2 tu tv) lightVal =
-  let b = fromIntegral (fromEnum bt) :: Word32
-      u = fromIntegral tu :: Word32
-      v = fromIntegral tv :: Word32
-      l = round (lightVal * 255) :: Word32
-  in (b `shiftL24`) .|. (u `shiftL16`) .|. (v `shiftL8`) .|. l
-  where
-    shiftL24 x = x * 16777216    -- 2^24
-    shiftL16 x = x * 65536       -- 2^16
-    shiftL8  x = x * 256         -- 2^8
-    (.|.)       = (+)             -- fields don't overlap since each < 256
-{-# INLINE packFaceKey #-}
+fkLightVal :: FaceKey -> Float
+fkLightVal fk = max 0.1 (fromIntegral (fkLightQ fk) / 15.0)
 
--- | Unpack block type from a face key.
-unpackBlockType :: FaceKey -> BlockType
-unpackBlockType k = toEnum (fromIntegral (k `div` 16777216))
-{-# INLINE unpackBlockType #-}
+-- | Neighbor coordinate for a given face direction.
+neighborCoord :: Int -> Int -> Int -> BlockFace -> (Int, Int, Int)
+neighborCoord x y z FaceTop    = (x, y+1, z)
+neighborCoord x y z FaceBottom = (x, y-1, z)
+neighborCoord x y z FaceNorth  = (x, y, z+1)
+neighborCoord x y z FaceSouth  = (x, y, z-1)
+neighborCoord x y z FaceEast   = (x+1, y, z)
+neighborCoord x y z FaceWest   = (x-1, y, z)
+{-# INLINE neighborCoord #-}
 
--- | Unpack light value (0.0-1.0) from a face key.
-unpackLight :: FaceKey -> Float
-unpackLight k = fromIntegral (k `mod` 256) / 255.0
-{-# INLINE unpackLight #-}
-
--- | Generate mesh for a chunk using naive face culling (no light data).
+-- | Generate mesh for a chunk using greedy meshing (no lighting).
+--   Merges adjacent coplanar faces with the same block type into larger quads.
 meshChunk :: Chunk -> IO MeshData
 meshChunk chunk = do
-  vertsRef   <- newIORef ([] :: [[BlockVertex]])
-  indicesRef <- newIORef ([] :: [[Word32]])
-  vertCount  <- newIORef (0 :: Word32)
-
-  let addFace :: V3 Float -> BlockFace -> BlockType -> IO ()
-      addFace (V3 bx by bz) face bt = do
-        let (uv0, uv1) = tileUV (blockFaceTexCoords bt face)
-            V2 u0 v0 = uv0
-            V2 u1 v1 = uv1
-            ao = 1.0
-            (verts, _normal) = faceVertices bx by bz face u0 v0 u1 v1 ao
-        vc <- readIORef vertCount
-        let newIndices = [ vc, vc+1, vc+2, vc+2, vc+3, vc ]
-        modifyIORef' vertsRef (verts :)
-        modifyIORef' indicesRef (newIndices :)
-        writeIORef vertCount (vc + 4)
-
   blocksVec <- freezeBlocks chunk
-  let go !x !y !z
-        | y >= chunkHeight = pure ()
-        | z >= chunkDepth  = go 0 (y + 1) 0
-        | x >= chunkWidth  = go 0 y (z + 1)
-        | otherwise = do
-            let bt = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex x y z
-            if bt == Air
-              then go (x + 1) y z
-              else do
-                let bx = fromIntegral x
-                    by = fromIntegral y
-                    bz = fromIntegral z
-                    pos = V3 bx by bz
-                checkFaceVec blocksVec pos FaceTop    bt (x, y+1, z) addFace
-                checkFaceVec blocksVec pos FaceBottom bt (x, y-1, z) addFace
-                checkFaceVec blocksVec pos FaceNorth  bt (x, y, z+1) addFace
-                checkFaceVec blocksVec pos FaceSouth  bt (x, y, z-1) addFace
-                checkFaceVec blocksVec pos FaceEast   bt (x+1, y, z) addFace
-                checkFaceVec blocksVec pos FaceWest   bt (x-1, y, z) addFace
-                go (x + 1) y z
-  go 0 0 0
-
-  verts   <- VS.fromList . concat . reverse <$> readIORef vertsRef
-  indices <- VS.fromList . concat . reverse <$> readIORef indicesRef
-  pure $ MeshData verts indices
+  let lightLookup _ _ _ _ = 15 :: Word8
+      lookupBlockFn = lookupBlockSimple blocksVec
+  greedyMeshAll blocksVec lookupBlockFn lightLookup
 
 -- | Generate mesh for a chunk with light map data using greedy meshing.
---   Adjacent faces with the same block type, texture, and light level are
---   merged into larger quads. UVs scale with quad size so the texture tiles.
---   Neighbor data enables cross-chunk face culling at chunk boundaries.
+--   Merges adjacent faces with the same block type and light level.
+--   Light levels are passed through the AO vertex attribute (0.0 = dark, 1.0 = full light).
+--   Neighbor data enables cross-chunk face culling at chunk edges.
 meshChunkWithLight :: Chunk -> LightMap -> NeighborData -> IO MeshData
-meshChunkWithLight chunk lm neighbors = do
+meshChunkWithLight chunk lm nd = do
+  blocksVec <- freezeBlocks chunk
+
+  -- Precompute light values for each face direction into frozen vectors.
+  lightTop    <- precomputeLight lm (\x y z -> (x, y+1, z))
+  lightBottom <- precomputeLight lm (\x y z -> (x, y-1, z))
+  lightNorth  <- precomputeLight lm (\x y z -> (x, y, z+1))
+  lightSouth  <- precomputeLight lm (\x y z -> (x, y, z-1))
+  lightEast   <- precomputeLight lm (\x y z -> (x+1, y, z))
+  lightWest   <- precomputeLight lm (\x y z -> (x-1, y, z))
+
+  let lightLookup :: Int -> Int -> Int -> BlockFace -> Word8
+      lightLookup x y z face =
+        let idx = blockIndex x y z
+        in case face of
+             FaceTop    -> lightTop    `UV.unsafeIndex` idx
+             FaceBottom -> lightBottom `UV.unsafeIndex` idx
+             FaceNorth  -> lightNorth  `UV.unsafeIndex` idx
+             FaceSouth  -> lightSouth  `UV.unsafeIndex` idx
+             FaceEast   -> lightEast   `UV.unsafeIndex` idx
+             FaceWest   -> lightWest   `UV.unsafeIndex` idx
+
+      lookupBlockFn = lookupBlockWithNeighbors blocksVec nd
+
+  greedyMeshAll blocksVec lookupBlockFn lightLookup
+
+-- | Look up block type with neighbor chunk data for cross-boundary faces.
+lookupBlockWithNeighbors :: UV.Vector Word8 -> NeighborData -> Int -> Int -> Int -> BlockType
+lookupBlockWithNeighbors blocksVec nd' nx ny nz
+  | ny < 0 || ny >= chunkHeight = Air
+  | nx >= chunkWidth = case ndEast nd' of
+      Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex 0 ny nz
+      Nothing -> Air
+  | nx < 0 = case ndWest nd' of
+      Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex (chunkWidth - 1) ny nz
+      Nothing -> Air
+  | nz >= chunkDepth = case ndNorth nd' of
+      Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex nx ny 0
+      Nothing -> Air
+  | nz < 0 = case ndSouth nd' of
+      Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex nx ny (chunkDepth - 1)
+      Nothing -> Air
+  | otherwise = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex nx ny nz
+{-# INLINE lookupBlockWithNeighbors #-}
+
+-- | Simple block lookup: treats out-of-bounds as Air.
+lookupBlockSimple :: UV.Vector Word8 -> Int -> Int -> Int -> BlockType
+lookupBlockSimple blocksVec nx ny nz
+  | not (isInBounds nx ny nz) = Air
+  | otherwise = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex nx ny nz
+{-# INLINE lookupBlockSimple #-}
+
+-- | Precompute light values for one face direction.
+precomputeLight :: LightMap -> (Int -> Int -> Int -> (Int, Int, Int)) -> IO (UV.Vector Word8)
+precomputeLight lm offsetFn = do
+  let size = chunkWidth * chunkDepth * chunkHeight
+  mv <- MUV.new size
+  let go !y
+        | y >= chunkHeight = pure ()
+        | otherwise = do
+            let goZ !z
+                  | z >= chunkDepth = go (y + 1)
+                  | otherwise = do
+                      let goX !x
+                            | x >= chunkWidth = goZ (z + 1)
+                            | otherwise = do
+                                let (nx, ny, nz) = offsetFn x y z
+                                ll <- getTotalLight lm nx ny nz
+                                MUV.unsafeWrite mv (blockIndex x y z) ll
+                                goX (x + 1)
+                      goX 0
+            goZ 0
+  go 0
+  UV.unsafeFreeze mv
+
+-- | Dimensions for greedy meshing slices: (sliceCount, uSize, vSize).
+sliceDimensions :: BlockFace -> (Int, Int, Int)
+sliceDimensions FaceTop    = (chunkHeight, chunkWidth, chunkDepth)
+sliceDimensions FaceBottom = (chunkHeight, chunkWidth, chunkDepth)
+sliceDimensions FaceNorth  = (chunkDepth,  chunkWidth, chunkHeight)
+sliceDimensions FaceSouth  = (chunkDepth,  chunkWidth, chunkHeight)
+sliceDimensions FaceEast   = (chunkWidth,  chunkDepth, chunkHeight)
+sliceDimensions FaceWest   = (chunkWidth,  chunkDepth, chunkHeight)
+
+-- | Convert slice coordinates (face, depth, u, v) to world coordinates (x, y, z).
+sliceToWorld :: BlockFace -> Int -> Int -> Int -> (Int, Int, Int)
+sliceToWorld FaceTop    d u v = (u, d, v)
+sliceToWorld FaceBottom d u v = (u, d, v)
+sliceToWorld FaceNorth  d u v = (u, v, d)
+sliceToWorld FaceSouth  d u v = (u, v, d)
+sliceToWorld FaceEast   d u v = (d, v, u)
+sliceToWorld FaceWest   d u v = (d, v, u)
+{-# INLINE sliceToWorld #-}
+
+-- | Core greedy meshing for all 6 face directions.
+--   For each 2D slice perpendicular to the face normal, scan left-to-right and
+--   bottom-to-top, expanding each unvisited exposed face into the largest
+--   rectangle of matching block type + light level, then emit a single quad.
+greedyMeshAll
+  :: UV.Vector Word8
+  -> (Int -> Int -> Int -> BlockType)
+  -> (Int -> Int -> Int -> BlockFace -> Word8)
+  -> IO MeshData
+greedyMeshAll blocksVec lookupBlockFn lightLookup = do
   vertsRef   <- newIORef ([] :: [[BlockVertex]])
   indicesRef <- newIORef ([] :: [[Word32]])
   vertCount  <- newIORef (0 :: Word32)
 
-  blocksVec <- freezeBlocks chunk
-
-  let -- | Look up a block type at the given local coords, consulting neighbor
-      -- data when the coordinate falls outside this chunk's bounds.
-      lookupBlock :: Int -> Int -> Int -> BlockType
-      lookupBlock nx ny nz
-        | ny < 0 || ny >= chunkHeight = Air
-        | nx >= chunkWidth = case ndEast neighbors of
-            Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex 0 ny nz
-            Nothing -> Air
-        | nx < 0 = case ndWest neighbors of
-            Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex (chunkWidth - 1) ny nz
-            Nothing -> Air
-        | nz >= chunkDepth = case ndNorth neighbors of
-            Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex nx ny 0
-            Nothing -> Air
-        | nz < 0 = case ndSouth neighbors of
-            Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex nx ny (chunkDepth - 1)
-            Nothing -> Air
-        | otherwise = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex nx ny nz
-      {-# INLINE lookupBlock #-}
-
-  -- Emit a merged quad: given face, origin in block coords, width/height along
-  -- the two axes of the face plane, block type, and light value.
-  let emitGreedyQuad :: BlockFace -> Int -> Int -> Int -> Int -> Int -> BlockType -> Float -> IO ()
-      emitGreedyQuad face sliceCoord u0i v0i du dv bt lightVal = do
-        let tileCoords = blockFaceTexCoords bt face
-            (V2 tu0 tv0, V2 tu1 tv1) = tileUV tileCoords
-            -- Scale UVs by quad size so texture tiles across merged faces
-            tileW = tu1 - tu0
-            tileH = tv1 - tv0
-            su1 = tu0 + tileW * fromIntegral du
-            sv1 = tv0 + tileH * fromIntegral dv
-            -- Build the 4 corner positions depending on face direction
-            (verts, _) = greedyFaceVertices face sliceCoord u0i v0i du dv tu0 tv0 su1 sv1 lightVal
+  let emitQuad :: [BlockVertex] -> IO ()
+      emitQuad verts = do
         vc <- readIORef vertCount
         let newIndices = [ vc, vc+1, vc+2, vc+2, vc+3, vc ]
         modifyIORef' vertsRef (verts :)
         modifyIORef' indicesRef (newIndices :)
         writeIORef vertCount (vc + 4)
 
-  -- Process each face direction with greedy meshing
-  -- For each face, iterate over slices perpendicular to the face normal.
-  -- Within each slice, build a 2D mask and greedily merge rectangles.
+      isAirAt :: Int -> Int -> Int -> Bool
+      isAirAt x y z =
+        (toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex x y z :: BlockType) == Air
+      {-# INLINE isAirAt #-}
 
-  -- FaceTop (+Y): slices along Y, grid is X x Z
-  greedyMeshFace blocksVec lm lookupBlock FaceTop
-    chunkHeight chunkWidth chunkDepth
-    (\slice u v -> (u, slice, v))    -- (x, y, z) from (slice, u, v)
-    (\x y z -> (x, y+1, z))         -- neighbor to check
-    emitGreedyQuad
+      isExposedAt :: Int -> Int -> Int -> Bool
+      isExposedAt nx ny nz = isTransparent (lookupBlockFn nx ny nz)
+      {-# INLINE isExposedAt #-}
 
-  -- FaceBottom (-Y): slices along Y, grid is X x Z
-  greedyMeshFace blocksVec lm lookupBlock FaceBottom
-    chunkHeight chunkWidth chunkDepth
-    (\slice u v -> (u, slice, v))
-    (\x y z -> (x, y-1, z))
-    emitGreedyQuad
+      mkKey :: Int -> Int -> Int -> BlockFace -> FaceKey
+      mkKey x y z face =
+        let bt = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex x y z
+            ll = lightLookup x y z face
+        in FaceKey bt ll
+      {-# INLINE mkKey #-}
 
-  -- FaceEast (+X): slices along X, grid is Z x Y
-  greedyMeshFace blocksVec lm lookupBlock FaceEast
-    chunkWidth chunkDepth chunkHeight
-    (\slice u v -> (slice, v, u))    -- (x, y, z) = (slice, v, u)
-    (\x y z -> (x+1, y, z))
-    emitGreedyQuad
+  forM_ allBlockFaces $ \face -> do
+    let (sliceCount, uSize, vSize) = sliceDimensions face
+    visited <- MUV.new (uSize * vSize)
+    forM_ [0..sliceCount-1] $ \d -> do
+      MUV.set visited False
+      forM_ [0..vSize-1] $ \v ->
+        forM_ [0..uSize-1] $ \u -> do
+          let visIdx = u + v * uSize
+          alreadyVisited <- MUV.unsafeRead visited visIdx
+          when (not alreadyVisited) $ do
+            let (x, y, z) = sliceToWorld face d u v
+            when (isInBounds x y z) $ do
+              let (nx, ny, nz) = neighborCoord x y z face
+              when (not (isAirAt x y z) && isExposedAt nx ny nz) $ do
+                let key = mkKey x y z face
 
-  -- FaceWest (-X): slices along X, grid is Z x Y
-  greedyMeshFace blocksVec lm lookupBlock FaceWest
-    chunkWidth chunkDepth chunkHeight
-    (\slice u v -> (slice, v, u))
-    (\x y z -> (x-1, y, z))
-    emitGreedyQuad
+                -- Greedy expand along u (width)
+                let findWidth !wu
+                      | wu >= uSize = wu
+                      | otherwise =
+                          let (wx, wy, wz) = sliceToWorld face d wu v
+                              (wnx, wny, wnz) = neighborCoord wx wy wz face
+                          in if not (isInBounds wx wy wz)
+                                || isAirAt wx wy wz
+                                || not (isExposedAt wnx wny wnz)
+                                || mkKey wx wy wz face /= key
+                             then wu
+                             else findWidth (wu + 1)
+                    width = findWidth u - u
 
-  -- FaceNorth (+Z): slices along Z, grid is X x Y
-  greedyMeshFace blocksVec lm lookupBlock FaceNorth
-    chunkDepth chunkWidth chunkHeight
-    (\slice u v -> (u, v, slice))    -- (x, y, z) = (u, v, slice)
-    (\x y z -> (x, y, z+1))
-    emitGreedyQuad
+                -- Greedy expand along v (height)
+                let findHeight !hv
+                      | hv >= vSize = hv
+                      | otherwise =
+                          let rowOk = checkRow u
+                              checkRow !cu
+                                | cu >= u + width = True
+                                | otherwise =
+                                    let (cx, cy, cz) = sliceToWorld face d cu hv
+                                        (cnx, cny, cnz) = neighborCoord cx cy cz face
+                                    in isInBounds cx cy cz
+                                       && not (isAirAt cx cy cz)
+                                       && isExposedAt cnx cny cnz
+                                       && mkKey cx cy cz face == key
+                                       && checkRow (cu + 1)
+                          in if rowOk then findHeight (hv + 1) else hv
+                    height = findHeight v - v
 
-  -- FaceSouth (-Z): slices along Z, grid is X x Y
-  greedyMeshFace blocksVec lm lookupBlock FaceSouth
-    chunkDepth chunkWidth chunkHeight
-    (\slice u v -> (u, v, slice))
-    (\x y z -> (x, y, z-1))
-    emitGreedyQuad
+                -- Mark merged cells as visited
+                forM_ [v..v+height-1] $ \mv' ->
+                  forM_ [u..u+width-1] $ \mu ->
+                    MUV.unsafeWrite visited (mu + mv' * uSize) True
+
+                -- Emit the merged quad with tiled UVs
+                let bt = fkBlockType key
+                    lightVal = fkLightVal key
+                    (uv0, uv1) = tileUV (blockFaceTexCoords bt face)
+                    V2 u0' v0' = uv0
+                    V2 u1' v1' = uv1
+                    tileW = u1' - u0'
+                    tileH = v1' - v0'
+                    su1 = u0' + tileW * fromIntegral width
+                    sv1 = v0' + tileH * fromIntegral height
+                    (bx, by, bz) = sliceToWorld face d u v
+
+                emitQuad (greedyFaceVertices
+                            (fromIntegral bx) (fromIntegral by) (fromIntegral bz)
+                            face (fromIntegral width) (fromIntegral height)
+                            u0' v0' su1 sv1 lightVal)
 
   verts   <- VS.fromList . concat . reverse <$> readIORef vertsRef
   indices <- VS.fromList . concat . reverse <$> readIORef indicesRef
   pure $ MeshData verts indices
 
--- | Run greedy meshing for a single face direction.
---   Parameters:
---     blocksVec   - frozen chunk blocks
---     lm          - light map
---     lookupBlock - function to look up block type (with neighbor support)
---     face        - which face direction
---     sliceCount  - number of slices perpendicular to face normal
---     gridW       - width of the 2D grid within each slice
---     gridH       - height of the 2D grid within each slice
---     toXYZ       - convert (slice, u, v) to (x, y, z)
---     neighborOf  - given (x,y,z) return the neighbor coords to check
---     emitQuad    - callback to emit a merged quad
-greedyMeshFace
-  :: UV.Vector Word8
-  -> LightMap
-  -> (Int -> Int -> Int -> BlockType)
-  -> BlockFace
-  -> Int -> Int -> Int
-  -> (Int -> Int -> Int -> (Int, Int, Int))
-  -> (Int -> Int -> Int -> (Int, Int, Int))
-  -> (BlockFace -> Int -> Int -> Int -> Int -> Int -> BlockType -> Float -> IO ())
-  -> IO ()
-greedyMeshFace blocksVec lm lookupBlock face sliceCount gridW gridH toXYZ neighborOf emitQuad = do
-  -- Allocate a mutable mask array for one slice (gridW * gridH)
-  mask <- MUV.new (gridW * gridH) :: IO (MUV.IOVector Word32)
-
-  forM_ [0 .. sliceCount - 1] $ \slice -> do
-    -- Fill the mask for this slice
-    let fillMask !u !v
-          | v >= gridH = pure ()
-          | u >= gridW = fillMask 0 (v + 1)
-          | otherwise = do
-              let (x, y, z) = toXYZ slice u v
-                  bt = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex x y z
-              if bt == Air
-                then do
-                  MUV.unsafeWrite mask (u + v * gridW) 0
-                  fillMask (u + 1) v
-                else do
-                  let (nx, ny, nz) = neighborOf x y z
-                      neighbor = lookupBlock nx ny nz
-                  if isTransparent neighbor
-                    then do
-                      lightLevel <- getTotalLight lm nx ny nz
-                      let lightVal = max 0.1 (fromIntegral lightLevel / 15.0)
-                          tile = blockFaceTexCoords bt face
-                          key = packFaceKey bt tile lightVal
-                      MUV.unsafeWrite mask (u + v * gridW) key
-                      fillMask (u + 1) v
-                    else do
-                      MUV.unsafeWrite mask (u + v * gridW) 0
-                      fillMask (u + 1) v
-    fillMask 0 0
-
-    -- Greedy merge: scan the mask and extract maximal rectangles
-    let greedyScan !u !v
-          | v >= gridH = pure ()
-          | u >= gridW = greedyScan 0 (v + 1)
-          | otherwise = do
-              key <- MUV.unsafeRead mask (u + v * gridW)
-              if key == 0
-                then greedyScan (u + 1) v
-                else do
-                  -- Expand width: find max du where all cells in row v from u..u+du-1 match key
-                  du <- expandWidth mask gridW key u v gridW
-                  -- Expand height: find max dv where all rows v..v+dv-1 have matching cells
-                  dv <- expandHeight mask gridW gridH key u v du
-                  -- Clear the merged region in the mask
-                  clearMask mask gridW u v du dv
-                  -- Emit the merged quad
-                  let bt = unpackBlockType key
-                      lightVal = unpackLight key
-                  emitQuad face slice u v du dv bt lightVal
-                  greedyScan (u + du) v
-    greedyScan 0 0
-{-# INLINE greedyMeshFace #-}
-
--- | Find the maximum width of matching cells starting at (u, v).
-expandWidth :: MUV.IOVector Word32 -> Int -> Word32 -> Int -> Int -> Int -> IO Int
-expandWidth mask gridW key u0 v maxW = go u0
-  where
-    go !u
-      | u >= maxW = pure (u - u0)
-      | otherwise = do
-          k <- MUV.unsafeRead mask (u + v * gridW)
-          if k == key
-            then go (u + 1)
-            else pure (u - u0)
-{-# INLINE expandWidth #-}
-
--- | Find the maximum height of matching rows starting at (u, v) with width du.
-expandHeight :: MUV.IOVector Word32 -> Int -> Int -> Word32 -> Int -> Int -> Int -> IO Int
-expandHeight mask gridW gridH key u0 v0 du = go (v0 + 1)
-  where
-    go !v
-      | v >= gridH = pure (v - v0)
-      | otherwise = do
-          ok <- checkRow mask gridW key u0 v du
-          if ok
-            then go (v + 1)
-            else pure (v - v0)
-{-# INLINE expandHeight #-}
-
--- | Check if all cells in a row match the key.
-checkRow :: MUV.IOVector Word32 -> Int -> Word32 -> Int -> Int -> Int -> IO Bool
-checkRow mask gridW key u0 v du = go u0
-  where
-    go !u
-      | u >= u0 + du = pure True
-      | otherwise = do
-          k <- MUV.unsafeRead mask (u + v * gridW)
-          if k == key
-            then go (u + 1)
-            else pure False
-{-# INLINE checkRow #-}
-
--- | Clear a rectangular region in the mask.
-clearMask :: MUV.IOVector Word32 -> Int -> Int -> Int -> Int -> Int -> IO ()
-clearMask mask gridW u0 v0 du dv = go v0
-  where
-    go !v
-      | v >= v0 + dv = pure ()
-      | otherwise = do
-          clearRow v u0
-          go (v + 1)
-    clearRow !v !u
-      | u >= u0 + du = pure ()
-      | otherwise = do
-          MUV.unsafeWrite mask (u + v * gridW) 0
-          clearRow v (u + 1)
-{-# INLINE clearMask #-}
-
-checkFaceVec :: UV.Vector Word8 -> V3 Float -> BlockFace -> BlockType
-             -> (Int, Int, Int) -> (V3 Float -> BlockFace -> BlockType -> IO ()) -> IO ()
-checkFaceVec blocksVec pos face bt (nx, ny, nz) addFace = do
-  let neighbor
-        | not (isInBounds nx ny nz) = Air
-        | otherwise = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex nx ny nz
-  if isTransparent neighbor
-    then addFace pos face bt
-    else pure ()
-{-# INLINE checkFaceVec #-}
-
--- | Generate 4 vertices for a single-block face (used by meshChunk).
-faceVertices :: Float -> Float -> Float -> BlockFace
-             -> Float -> Float -> Float -> Float  -- u0 v0 u1 v1
-             -> Float                              -- ao
-             -> ([BlockVertex], V3 Float)
-faceVertices x y z face u0 v0 u1 v1 ao = case face of
-  FaceTop ->
-    ( [ BlockVertex (V3 x     (y+1) z    ) normal (V2 u0 v0) ao
-      , BlockVertex (V3 (x+1) (y+1) z    ) normal (V2 u1 v0) ao
-      , BlockVertex (V3 (x+1) (y+1) (z+1)) normal (V2 u1 v1) ao
-      , BlockVertex (V3 x     (y+1) (z+1)) normal (V2 u0 v1) ao
-      ], normal)
+-- | Generate 4 vertices for a greedy-merged face quad.
+--   w = extent along the slice u-axis, h = extent along the slice v-axis.
+greedyFaceVertices :: Float -> Float -> Float -> BlockFace
+                   -> Float -> Float
+                   -> Float -> Float -> Float -> Float
+                   -> Float
+                   -> [BlockVertex]
+greedyFaceVertices x y z face w h u0 v0 u1 v1 ao = case face of
+  FaceTop -> -- +Y face (y+1 plane), u=X, v=Z
+    [ BlockVertex (V3 x       (y+1) z      ) normal (V2 u0 v0) ao
+    , BlockVertex (V3 (x+w)   (y+1) z      ) normal (V2 u1 v0) ao
+    , BlockVertex (V3 (x+w)   (y+1) (z+h)  ) normal (V2 u1 v1) ao
+    , BlockVertex (V3 x       (y+1) (z+h)  ) normal (V2 u0 v1) ao
+    ]
     where normal = V3 0 1 0
 
-  FaceBottom ->
-    ( [ BlockVertex (V3 x     y (z+1)) normal (V2 u0 v0) ao
-      , BlockVertex (V3 (x+1) y (z+1)) normal (V2 u1 v0) ao
-      , BlockVertex (V3 (x+1) y z    ) normal (V2 u1 v1) ao
-      , BlockVertex (V3 x     y z    ) normal (V2 u0 v1) ao
-      ], normal)
+  FaceBottom -> -- -Y face (y plane), u=X, v=Z
+    [ BlockVertex (V3 x       y (z+h)  ) normal (V2 u0 v0) ao
+    , BlockVertex (V3 (x+w)   y (z+h)  ) normal (V2 u1 v0) ao
+    , BlockVertex (V3 (x+w)   y z      ) normal (V2 u1 v1) ao
+    , BlockVertex (V3 x       y z      ) normal (V2 u0 v1) ao
+    ]
     where normal = V3 0 (-1) 0
 
-  FaceNorth ->
-    ( [ BlockVertex (V3 (x+1) y     (z+1)) normal (V2 u0 v1) ao
-      , BlockVertex (V3 x     y     (z+1)) normal (V2 u1 v1) ao
-      , BlockVertex (V3 x     (y+1) (z+1)) normal (V2 u1 v0) ao
-      , BlockVertex (V3 (x+1) (y+1) (z+1)) normal (V2 u0 v0) ao
-      ], normal)
+  FaceNorth -> -- +Z face (z+1 plane), u=X, v=Y
+    [ BlockVertex (V3 (x+w) y       (z+1)) normal (V2 u0 v1) ao
+    , BlockVertex (V3 x     y       (z+1)) normal (V2 u1 v1) ao
+    , BlockVertex (V3 x     (y+h)   (z+1)) normal (V2 u1 v0) ao
+    , BlockVertex (V3 (x+w) (y+h)   (z+1)) normal (V2 u0 v0) ao
+    ]
     where normal = V3 0 0 1
 
-  FaceSouth ->
-    ( [ BlockVertex (V3 x     y     z) normal (V2 u0 v1) ao
-      , BlockVertex (V3 (x+1) y     z) normal (V2 u1 v1) ao
-      , BlockVertex (V3 (x+1) (y+1) z) normal (V2 u1 v0) ao
-      , BlockVertex (V3 x     (y+1) z) normal (V2 u0 v0) ao
-      ], normal)
+  FaceSouth -> -- -Z face (z plane), u=X, v=Y
+    [ BlockVertex (V3 x     y       z) normal (V2 u0 v1) ao
+    , BlockVertex (V3 (x+w) y       z) normal (V2 u1 v1) ao
+    , BlockVertex (V3 (x+w) (y+h)   z) normal (V2 u1 v0) ao
+    , BlockVertex (V3 x     (y+h)   z) normal (V2 u0 v0) ao
+    ]
     where normal = V3 0 0 (-1)
 
-  FaceEast ->
-    ( [ BlockVertex (V3 (x+1) y     z    ) normal (V2 u0 v1) ao
-      , BlockVertex (V3 (x+1) y     (z+1)) normal (V2 u1 v1) ao
-      , BlockVertex (V3 (x+1) (y+1) (z+1)) normal (V2 u1 v0) ao
-      , BlockVertex (V3 (x+1) (y+1) z    ) normal (V2 u0 v0) ao
-      ], normal)
+  FaceEast -> -- +X face (x+1 plane), u=Z, v=Y
+    [ BlockVertex (V3 (x+1) y       z    ) normal (V2 u0 v1) ao
+    , BlockVertex (V3 (x+1) y       (z+w)) normal (V2 u1 v1) ao
+    , BlockVertex (V3 (x+1) (y+h)   (z+w)) normal (V2 u1 v0) ao
+    , BlockVertex (V3 (x+1) (y+h)   z    ) normal (V2 u0 v0) ao
+    ]
     where normal = V3 1 0 0
 
-  FaceWest ->
-    ( [ BlockVertex (V3 x y     (z+1)) normal (V2 u0 v1) ao
-      , BlockVertex (V3 x y     z    ) normal (V2 u1 v1) ao
-      , BlockVertex (V3 x (y+1) z    ) normal (V2 u1 v0) ao
-      , BlockVertex (V3 x (y+1) (z+1)) normal (V2 u0 v0) ao
-      ], normal)
+  FaceWest -> -- -X face (x plane), u=Z, v=Y
+    [ BlockVertex (V3 x y       (z+w)) normal (V2 u0 v1) ao
+    , BlockVertex (V3 x y       z    ) normal (V2 u1 v1) ao
+    , BlockVertex (V3 x (y+h)   z    ) normal (V2 u1 v0) ao
+    , BlockVertex (V3 x (y+h)   (z+w)) normal (V2 u0 v1) ao
+    ]
     where normal = V3 (-1) 0 0
-
--- | Generate 4 vertices for a greedy-merged quad.
---   Parameters:
---     face       - face direction
---     sliceCoord - coordinate along the face normal
---     u0, v0     - origin in the 2D slice grid
---     du, dv     - width and height of the merged quad
---     tu0, tv0   - UV origin (tile base)
---     tu1, tv1   - UV end (scaled by quad size)
---     lightVal   - light/AO value
-greedyFaceVertices :: BlockFace -> Int -> Int -> Int -> Int -> Int
-                   -> Float -> Float -> Float -> Float -> Float
-                   -> ([BlockVertex], V3 Float)
-greedyFaceVertices face sliceCoord u0 v0 du dv tu0 tv0 tu1 tv1 lightVal =
-  let fi = fromIntegral
-      -- The slice coord, u, and v map differently to (x,y,z) depending on face
-  in case face of
-    FaceTop ->
-      -- slice=Y, u=X, v=Z; face plane at y+1
-      let y1 = fi (sliceCoord + 1)
-          x0 = fi u0; x1 = fi (u0 + du)
-          z0 = fi v0; z1 = fi (v0 + dv)
-          normal = V3 0 1 0
-      in ( [ BlockVertex (V3 x0 y1 z0) normal (V2 tu0 tv0) lightVal
-           , BlockVertex (V3 x1 y1 z0) normal (V2 tu1 tv0) lightVal
-           , BlockVertex (V3 x1 y1 z1) normal (V2 tu1 tv1) lightVal
-           , BlockVertex (V3 x0 y1 z1) normal (V2 tu0 tv1) lightVal
-           ], normal)
-
-    FaceBottom ->
-      -- slice=Y, u=X, v=Z; face plane at y
-      let y0f = fi sliceCoord
-          x0 = fi u0; x1 = fi (u0 + du)
-          z0 = fi v0; z1 = fi (v0 + dv)
-          normal = V3 0 (-1) 0
-      in ( [ BlockVertex (V3 x0 y0f z1) normal (V2 tu0 tv0) lightVal
-           , BlockVertex (V3 x1 y0f z1) normal (V2 tu1 tv0) lightVal
-           , BlockVertex (V3 x1 y0f z0) normal (V2 tu1 tv1) lightVal
-           , BlockVertex (V3 x0 y0f z0) normal (V2 tu0 tv1) lightVal
-           ], normal)
-
-    FaceEast ->
-      -- slice=X, u=Z, v=Y; face plane at x+1
-      let x1 = fi (sliceCoord + 1)
-          z0 = fi u0; z1 = fi (u0 + du)
-          y0f = fi v0; y1 = fi (v0 + dv)
-          normal = V3 1 0 0
-      in ( [ BlockVertex (V3 x1 y0f z0) normal (V2 tu0 tv1) lightVal
-           , BlockVertex (V3 x1 y0f z1) normal (V2 tu1 tv1) lightVal
-           , BlockVertex (V3 x1 y1  z1) normal (V2 tu1 tv0) lightVal
-           , BlockVertex (V3 x1 y1  z0) normal (V2 tu0 tv0) lightVal
-           ], normal)
-
-    FaceWest ->
-      -- slice=X, u=Z, v=Y; face plane at x
-      let x0 = fi sliceCoord
-          z0 = fi u0; z1 = fi (u0 + du)
-          y0f = fi v0; y1 = fi (v0 + dv)
-          normal = V3 (-1) 0 0
-      in ( [ BlockVertex (V3 x0 y0f z1) normal (V2 tu0 tv1) lightVal
-           , BlockVertex (V3 x0 y0f z0) normal (V2 tu1 tv1) lightVal
-           , BlockVertex (V3 x0 y1  z0) normal (V2 tu1 tv0) lightVal
-           , BlockVertex (V3 x0 y1  z1) normal (V2 tu0 tv0) lightVal
-           ], normal)
-
-    FaceNorth ->
-      -- slice=Z, u=X, v=Y; face plane at z+1
-      let z1 = fi (sliceCoord + 1)
-          x0 = fi u0; x1 = fi (u0 + du)
-          y0f = fi v0; y1 = fi (v0 + dv)
-          normal = V3 0 0 1
-      in ( [ BlockVertex (V3 x1 y0f z1) normal (V2 tu0 tv1) lightVal
-           , BlockVertex (V3 x0 y0f z1) normal (V2 tu1 tv1) lightVal
-           , BlockVertex (V3 x0 y1  z1) normal (V2 tu1 tv0) lightVal
-           , BlockVertex (V3 x1 y1  z1) normal (V2 tu0 tv0) lightVal
-           ], normal)
-
-    FaceSouth ->
-      -- slice=Z, u=X, v=Y; face plane at z
-      let z0 = fi sliceCoord
-          x0 = fi u0; x1 = fi (u0 + du)
-          y0f = fi v0; y1 = fi (v0 + dv)
-          normal = V3 0 0 (-1)
-      in ( [ BlockVertex (V3 x0 y0f z0) normal (V2 tu0 tv1) lightVal
-           , BlockVertex (V3 x1 y0f z0) normal (V2 tu1 tv1) lightVal
-           , BlockVertex (V3 x1 y1  z0) normal (V2 tu1 tv0) lightVal
-           , BlockVertex (V3 x0 y1  z0) normal (V2 tu0 tv0) lightVal
-           ], normal)
