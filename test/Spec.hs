@@ -46,7 +46,7 @@ import Game.PotionEffect
 import Game.Bucket (BucketAction(..), determineBucketAction, bucketTypeToFluidBlock, fluidBlockToBucketType)
 import World.Fluid (FluidState, FluidType(..), newFluidState, addFluidSource, removeFluid, getFluid, FluidBlock(..))
 
-import Engine.Mesh (MeshData(..), NeighborData(..), meshChunkWithLight, emptyNeighborData, BlockVertex(..))
+import Engine.Mesh (MeshData(..), NeighborData(..), meshChunkWithLight, emptyNeighborData, BlockVertex(..), calculateAO)
 import Entity.Pathfinding (findPath, pathDistance)
 import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
 import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, getTimeOfDay, TimeOfDay(..))
@@ -137,6 +137,7 @@ main = hspec $ do
   lookupItemByNameSpec
   netherPortalSpec
   crossChunkCullingSpec
+  ambientOcclusionSpec
   dimensionWiringSpec
 
 -- =========================================================================
@@ -5554,6 +5555,116 @@ crossChunkCullingSpec = describe "Engine.Mesh cross-chunk face culling" $ do
     VS.length (mdVertices mesh) `shouldBe` 24
 -- Dimension wiring (sky color, GameState fields, coordinate mapping)
 -- =========================================================================
+
+-- =========================================================================
+-- Ambient Occlusion
+-- =========================================================================
+ambientOcclusionSpec :: Spec
+ambientOcclusionSpec = describe "Engine.Mesh ambient occlusion" $ do
+
+  describe "calculateAO" $ do
+    it "no solid neighbors: AO = 1.0 (fully lit)" $ do
+      calculateAO False False False `shouldBe` 1.0
+
+    it "one side solid: AO = 2/3" $ do
+      calculateAO True False False `shouldBe` (2.0 / 3.0)
+      calculateAO False True False `shouldBe` (2.0 / 3.0)
+
+    it "corner only solid: AO = 2/3" $ do
+      calculateAO False False True `shouldBe` (2.0 / 3.0)
+
+    it "one side + corner solid: AO = 1/3" $ do
+      calculateAO True False True `shouldBe` (1.0 / 3.0)
+      calculateAO False True True `shouldBe` (1.0 / 3.0)
+
+    it "both sides solid: AO = 0.0 (fully occluded, corner forced)" $ do
+      calculateAO True True False `shouldBe` 0.0
+      calculateAO True True True `shouldBe` 0.0
+
+    it "two sides solid always forces 0 regardless of corner" $ do
+      -- This is the key rule: both sides solid → corner is forced solid
+      calculateAO True True False `shouldBe` calculateAO True True True
+
+  describe "per-vertex AO in meshChunkWithLight" $ do
+    it "isolated block: all vertices have AO = 1.0 (no neighboring solids)" $ do
+      -- A single stone block at y=1 (air above, sides, below except bedrock-less)
+      chunk <- newChunk (V2 0 0)
+      setBlock chunk 8 1 8 Stone
+      lm <- newLightMap
+      propagateBlockLight chunk lm
+      propagateSkyLight chunk lm
+      mesh <- meshChunkWithLight chunk lm emptyNeighborData
+      -- 6 faces * 4 verts = 24 vertices, all should have AO > 0
+      let verts = [VS.unsafeIndex (mdVertices mesh) i | i <- [0 .. VS.length (mdVertices mesh) - 1]]
+          aoVals = map bvAO verts
+      -- All AO values should be positive (light * 1.0 since no solid neighbors)
+      all (> 0) aoVals `shouldBe` True
+
+    it "corner block gets reduced AO on vertices near solid neighbors" $ do
+      -- Place a stone block with two solid neighbors forming an L-shape on top face
+      chunk <- newChunk (V2 0 0)
+      setBlock chunk 5 0 5 Stone  -- target block
+      setBlock chunk 4 1 5 Stone  -- neighbor above to the -X side
+      setBlock chunk 5 1 4 Stone  -- neighbor above to the -Z side
+      lm <- newLightMap
+      propagateBlockLight chunk lm
+      propagateSkyLight chunk lm
+      mesh <- meshChunkWithLight chunk lm emptyNeighborData
+      -- The top face of block at (5,0,5) should have vertex (5,1,5) with reduced AO
+      -- because neighbors at (4,1,5) and (5,1,4) are solid
+      let verts = [VS.unsafeIndex (mdVertices mesh) i | i <- [0 .. VS.length (mdVertices mesh) - 1]]
+          topFaceVerts = filter (\v -> bvNormal v == V3 0 1 0 &&
+                                      bvPosition v == V3 5 1 5) verts
+      -- The vertex at (5,1,5) on top face should have reduced AO (< light * 1.0)
+      case topFaceVerts of
+        []    -> expectationFailure "Expected to find top face vertex at (5,1,5)"
+        (v:_) -> bvAO v `shouldSatisfy` (< 0.1)  -- light * (1/3) since two sides solid
+
+    it "fully occluded corner: both sides solid forces AO = 0" $ do
+      chunk <- newChunk (V2 0 0)
+      setBlock chunk 5 0 5 Stone  -- target
+      setBlock chunk 4 1 5 Stone  -- -X above (side1 for top face vertex 0)
+      setBlock chunk 5 1 4 Stone  -- -Z above (side2 for top face vertex 0)
+      setBlock chunk 4 1 4 Stone  -- corner (diagonal)
+      lm <- newLightMap
+      propagateBlockLight chunk lm
+      propagateSkyLight chunk lm
+      mesh <- meshChunkWithLight chunk lm emptyNeighborData
+      let verts = [VS.unsafeIndex (mdVertices mesh) i | i <- [0 .. VS.length (mdVertices mesh) - 1]]
+          topCornerVert = filter (\v -> bvNormal v == V3 0 1 0 &&
+                                       bvPosition v == V3 5 1 5) verts
+      -- Both sides solid → AO forced to 0 → bvAO = light * 0.0 = 0.0
+      case topCornerVert of
+        []    -> expectationFailure "Expected to find top face vertex at (5,1,5)"
+        (v:_) -> bvAO v `shouldBe` 0.0
+
+    it "vertex count unchanged: AO does not add/remove faces" $ do
+      -- Same block layout as cross-chunk test: single block should still have 6 faces
+      chunk <- newChunk (V2 0 0)
+      setBlock chunk 8 0 8 Stone
+      lm <- newLightMap
+      propagateBlockLight chunk lm
+      propagateSkyLight chunk lm
+      mesh <- meshChunkWithLight chunk lm emptyNeighborData
+      VS.length (mdVertices mesh) `shouldBe` 24
+      VS.length (mdIndices mesh) `shouldBe` 36
+
+    it "AO values are in [0.0, 1.0] range for all vertices" $ do
+      -- Build a small 2x2 column to exercise AO
+      chunk <- newChunk (V2 0 0)
+      setBlock chunk 5 0 5 Stone
+      setBlock chunk 6 0 5 Stone
+      setBlock chunk 5 0 6 Stone
+      setBlock chunk 6 0 6 Stone
+      lm <- newLightMap
+      propagateBlockLight chunk lm
+      propagateSkyLight chunk lm
+      mesh <- meshChunkWithLight chunk lm emptyNeighborData
+      let verts = [VS.unsafeIndex (mdVertices mesh) i | i <- [0 .. VS.length (mdVertices mesh) - 1]]
+          aoVals = map bvAO verts
+      all (\a -> a >= 0.0 && a <= 1.0) aoVals `shouldBe` True
+
+
 dimensionWiringSpec :: Spec
 dimensionWiringSpec = describe "Dimension wiring" $ do
   -- dimensionSkyColor

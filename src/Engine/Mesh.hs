@@ -6,6 +6,7 @@ module Engine.Mesh
   , meshChunk
   , meshChunkWithLight
   , BlockVertex(..)
+  , calculateAO
   ) where
 
 import World.Block
@@ -132,8 +133,10 @@ meshChunk chunk = do
   indices <- VS.fromList . concat . reverse <$> readIORef indicesRef
   pure $ MeshData verts indices
 
--- | Generate mesh for a chunk with light map data.
---   Light levels are passed through the AO vertex attribute (0.0 = dark, 1.0 = full light).
+-- | Generate mesh for a chunk with light map data and per-vertex AO.
+--   Light levels and ambient occlusion are combined in the bvAO vertex attribute.
+--   For each face vertex, AO is calculated from 3 neighbor blocks (side1, side2, corner).
+--   The final value is lightVal * aoFactor, giving smooth shadow in corners.
 --   Neighbor data enables cross-chunk face culling: at chunk edges, looks up the
 --   adjacent block in the neighbor chunk instead of treating it as Air.
 meshChunkWithLight :: Chunk -> LightMap -> NeighborData -> IO MeshData
@@ -142,12 +145,12 @@ meshChunkWithLight chunk lm neighbors = do
   indicesRef <- newIORef ([] :: [[Word32]])
   vertCount  <- newIORef (0 :: Word32)
 
-  let addFace :: V3 Float -> BlockFace -> BlockType -> Float -> IO ()
-      addFace (V3 bx by bz) face bt lightVal = do
+  let addFace :: V3 Float -> BlockFace -> BlockType -> Float -> Float -> Float -> Float -> IO ()
+      addFace (V3 bx by bz) face bt ao0 ao1 ao2 ao3 = do
         let (uv0, uv1) = tileUV (blockFaceTexCoords bt face)
             V2 u0 v0 = uv0
             V2 u1 v1 = uv1
-            (verts, _normal) = faceVertices bx by bz face u0 v0 u1 v1 lightVal
+            (verts, _normal) = faceVerticesAO bx by bz face u0 v0 u1 v1 ao0 ao1 ao2 ao3
         vc <- readIORef vertCount
         let newIndices = [ vc, vc+1, vc+2, vc+2, vc+3, vc ]
         modifyIORef' vertsRef (verts :)
@@ -160,6 +163,8 @@ meshChunkWithLight chunk lm neighbors = do
       lookupBlock :: Int -> Int -> Int -> BlockType
       lookupBlock nx ny nz
         | ny < 0 || ny >= chunkHeight = Air
+        -- If both x and z are out of bounds, treat as Air (diagonal across chunk corners)
+        | (nx < 0 || nx >= chunkWidth) && (nz < 0 || nz >= chunkDepth) = Air
         -- +X boundary: look in east neighbor
         | nx >= chunkWidth = case ndEast neighbors of
             Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex 0 ny nz
@@ -180,6 +185,95 @@ meshChunkWithLight chunk lm neighbors = do
         | otherwise = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex nx ny nz
       {-# INLINE lookupBlock #-}
 
+      -- | Check if a block at given coords is solid (for AO calculation).
+      isSolidAt :: Int -> Int -> Int -> Bool
+      isSolidAt nx ny nz = isSolid (lookupBlock nx ny nz)
+      {-# INLINE isSolidAt #-}
+
+      -- | Compute per-vertex AO for a face. Returns (ao0, ao1, ao2, ao3)
+      --   corresponding to the 4 corner vertices in winding order.
+      --   Each corner checks its 2 adjacent side neighbors and 1 diagonal corner.
+      faceAO :: Int -> Int -> Int -> BlockFace -> (Float, Float, Float, Float)
+      faceAO bx by bz face = case face of
+        FaceTop ->
+          -- +Y face at (bx, by+1, bz). Neighbors are in the y+1 plane.
+          let ny = by + 1
+              -- vertex 0: (bx, by+1, bz) — sides: -X, -Z; corner: -X,-Z
+              a0 = calculateAO (isSolidAt (bx-1) ny bz) (isSolidAt bx ny (bz-1)) (isSolidAt (bx-1) ny (bz-1))
+              -- vertex 1: (bx+1, by+1, bz) — sides: +X, -Z; corner: +X,-Z
+              a1 = calculateAO (isSolidAt (bx+1) ny bz) (isSolidAt bx ny (bz-1)) (isSolidAt (bx+1) ny (bz-1))
+              -- vertex 2: (bx+1, by+1, bz+1) — sides: +X, +Z; corner: +X,+Z
+              a2 = calculateAO (isSolidAt (bx+1) ny bz) (isSolidAt bx ny (bz+1)) (isSolidAt (bx+1) ny (bz+1))
+              -- vertex 3: (bx, by+1, bz+1) — sides: -X, +Z; corner: -X,+Z
+              a3 = calculateAO (isSolidAt (bx-1) ny bz) (isSolidAt bx ny (bz+1)) (isSolidAt (bx-1) ny (bz+1))
+          in (a0, a1, a2, a3)
+
+        FaceBottom ->
+          -- -Y face at (bx, by-1, bz). Neighbors are in the y-1 plane.
+          let ny = by - 1
+              -- vertex 0: (bx, by, bz+1) — sides: -X, +Z; corner: -X,+Z
+              a0 = calculateAO (isSolidAt (bx-1) ny bz) (isSolidAt bx ny (bz+1)) (isSolidAt (bx-1) ny (bz+1))
+              -- vertex 1: (bx+1, by, bz+1) — sides: +X, +Z; corner: +X,+Z
+              a1 = calculateAO (isSolidAt (bx+1) ny bz) (isSolidAt bx ny (bz+1)) (isSolidAt (bx+1) ny (bz+1))
+              -- vertex 2: (bx+1, by, bz) — sides: +X, -Z; corner: +X,-Z
+              a2 = calculateAO (isSolidAt (bx+1) ny bz) (isSolidAt bx ny (bz-1)) (isSolidAt (bx+1) ny (bz-1))
+              -- vertex 3: (bx, by, bz) — sides: -X, -Z; corner: -X,-Z
+              a3 = calculateAO (isSolidAt (bx-1) ny bz) (isSolidAt bx ny (bz-1)) (isSolidAt (bx-1) ny (bz-1))
+          in (a0, a1, a2, a3)
+
+        FaceNorth ->
+          -- +Z face at bz+1. Neighbors are in the z+1 plane.
+          let nz = bz + 1
+              -- vertex 0: (bx+1, by, bz+1) — sides: +X, -Y; corner: +X,-Y
+              a0 = calculateAO (isSolidAt (bx+1) by nz) (isSolidAt bx (by-1) nz) (isSolidAt (bx+1) (by-1) nz)
+              -- vertex 1: (bx, by, bz+1) — sides: -X, -Y; corner: -X,-Y
+              a1 = calculateAO (isSolidAt (bx-1) by nz) (isSolidAt bx (by-1) nz) (isSolidAt (bx-1) (by-1) nz)
+              -- vertex 2: (bx, by+1, bz+1) — sides: -X, +Y; corner: -X,+Y
+              a2 = calculateAO (isSolidAt (bx-1) by nz) (isSolidAt bx (by+1) nz) (isSolidAt (bx-1) (by+1) nz)
+              -- vertex 3: (bx+1, by+1, bz+1) — sides: +X, +Y; corner: +X,+Y
+              a3 = calculateAO (isSolidAt (bx+1) by nz) (isSolidAt bx (by+1) nz) (isSolidAt (bx+1) (by+1) nz)
+          in (a0, a1, a2, a3)
+
+        FaceSouth ->
+          -- -Z face at bz-1. Neighbors are in the z-1 plane.
+          let nz = bz - 1
+              -- vertex 0: (bx, by, bz) — sides: -X, -Y; corner: -X,-Y
+              a0 = calculateAO (isSolidAt (bx-1) by nz) (isSolidAt bx (by-1) nz) (isSolidAt (bx-1) (by-1) nz)
+              -- vertex 1: (bx+1, by, bz) — sides: +X, -Y; corner: +X,-Y
+              a1 = calculateAO (isSolidAt (bx+1) by nz) (isSolidAt bx (by-1) nz) (isSolidAt (bx+1) (by-1) nz)
+              -- vertex 2: (bx+1, by+1, bz) — sides: +X, +Y; corner: +X,+Y
+              a2 = calculateAO (isSolidAt (bx+1) by nz) (isSolidAt bx (by+1) nz) (isSolidAt (bx+1) (by+1) nz)
+              -- vertex 3: (bx, by+1, bz) — sides: -X, +Y; corner: -X,+Y
+              a3 = calculateAO (isSolidAt (bx-1) by nz) (isSolidAt bx (by+1) nz) (isSolidAt (bx-1) (by+1) nz)
+          in (a0, a1, a2, a3)
+
+        FaceEast ->
+          -- +X face at bx+1. Neighbors are in the x+1 plane.
+          let nx = bx + 1
+              -- vertex 0: (bx+1, by, bz) — sides: -Z, -Y; corner: -Z,-Y
+              a0 = calculateAO (isSolidAt nx by (bz-1)) (isSolidAt nx (by-1) bz) (isSolidAt nx (by-1) (bz-1))
+              -- vertex 1: (bx+1, by, bz+1) — sides: +Z, -Y; corner: +Z,-Y
+              a1 = calculateAO (isSolidAt nx by (bz+1)) (isSolidAt nx (by-1) bz) (isSolidAt nx (by-1) (bz+1))
+              -- vertex 2: (bx+1, by+1, bz+1) — sides: +Z, +Y; corner: +Z,+Y
+              a2 = calculateAO (isSolidAt nx by (bz+1)) (isSolidAt nx (by+1) bz) (isSolidAt nx (by+1) (bz+1))
+              -- vertex 3: (bx+1, by+1, bz) — sides: -Z, +Y; corner: -Z,+Y
+              a3 = calculateAO (isSolidAt nx by (bz-1)) (isSolidAt nx (by+1) bz) (isSolidAt nx (by+1) (bz-1))
+          in (a0, a1, a2, a3)
+
+        FaceWest ->
+          -- -X face at bx-1. Neighbors are in the x-1 plane.
+          let nx = bx - 1
+              -- vertex 0: (bx, by, bz+1) — sides: +Z, -Y; corner: +Z,-Y
+              a0 = calculateAO (isSolidAt nx by (bz+1)) (isSolidAt nx (by-1) bz) (isSolidAt nx (by-1) (bz+1))
+              -- vertex 1: (bx, by, bz) — sides: -Z, -Y; corner: -Z,-Y
+              a1 = calculateAO (isSolidAt nx by (bz-1)) (isSolidAt nx (by-1) bz) (isSolidAt nx (by-1) (bz-1))
+              -- vertex 2: (bx, by+1, bz) — sides: -Z, +Y; corner: -Z,+Y
+              a2 = calculateAO (isSolidAt nx by (bz-1)) (isSolidAt nx (by+1) bz) (isSolidAt nx (by+1) (bz-1))
+              -- vertex 3: (bx, by+1, bz+1) — sides: +Z, +Y; corner: +Z,+Y
+              a3 = calculateAO (isSolidAt nx by (bz+1)) (isSolidAt nx (by+1) bz) (isSolidAt nx (by+1) (bz+1))
+          in (a0, a1, a2, a3)
+      {-# INLINE faceAO #-}
+
       go !x !y !z
         | y >= chunkHeight = pure ()
         | z >= chunkDepth  = go 0 (y + 1) 0
@@ -198,7 +292,8 @@ meshChunkWithLight chunk lm neighbors = do
                       when (isTransparent neighbor) $ do
                         lightLevel <- getTotalLight lm nx ny nz
                         let lightVal = max 0.1 (fromIntegral lightLevel / 15.0)
-                        addFace pos face bt lightVal
+                            (a0, a1, a2, a3) = faceAO x y z face
+                        addFace pos face bt (lightVal * a0) (lightVal * a1) (lightVal * a2) (lightVal * a3)
                 checkFaceLight x (y+1) z FaceTop
                 checkFaceLight x (y-1) z FaceBottom
                 checkFaceLight x y (z+1) FaceNorth
@@ -222,56 +317,79 @@ checkFaceVec blocksVec pos face bt (nx, ny, nz) addFace = do
     else pure ()
 {-# INLINE checkFaceVec #-}
 
--- | Generate 4 vertices for a block face
-faceVertices :: Float -> Float -> Float -> BlockFace
-             -> Float -> Float -> Float -> Float  -- u0 v0 u1 v1
-             -> Float                              -- ao
-             -> ([BlockVertex], V3 Float)
-faceVertices x y z face u0 v0 u1 v1 ao = case face of
+-- | Calculate ambient occlusion for a single vertex corner.
+--   Takes three neighbor solidity flags: side1, side2, and the diagonal corner.
+--   If both sides are solid, the corner is forced solid (fully occluded).
+--   Returns a value in [0.0, 1.0] where 1.0 = no occlusion, 0.0 = fully occluded.
+calculateAO :: Bool -> Bool -> Bool -> Float
+calculateAO side1 side2 corner
+  | side1 && side2 = 0.0   -- both sides solid → force corner solid
+  | otherwise      = fromIntegral (3 - solidCount) / 3.0
+  where
+    solidCount :: Int
+    solidCount = fromEnum side1 + fromEnum side2 + fromEnum corner
+{-# INLINE calculateAO #-}
+
+-- | Generate 4 vertices for a block face with per-vertex AO.
+--   ao0..ao3 correspond to the four corner vertices in winding order.
+faceVerticesAO :: Float -> Float -> Float -> BlockFace
+               -> Float -> Float -> Float -> Float  -- u0 v0 u1 v1
+               -> Float -> Float -> Float -> Float   -- ao0 ao1 ao2 ao3
+               -> ([BlockVertex], V3 Float)
+faceVerticesAO x y z face u0 v0 u1 v1 ao0 ao1 ao2 ao3 = case face of
   FaceTop -> -- +Y face (y+1 plane)
-    ( [ BlockVertex (V3 x     (y+1) z    ) normal (V2 u0 v0) ao
-      , BlockVertex (V3 (x+1) (y+1) z    ) normal (V2 u1 v0) ao
-      , BlockVertex (V3 (x+1) (y+1) (z+1)) normal (V2 u1 v1) ao
-      , BlockVertex (V3 x     (y+1) (z+1)) normal (V2 u0 v1) ao
+    ( [ BlockVertex (V3 x     (y+1) z    ) normal (V2 u0 v0) ao0
+      , BlockVertex (V3 (x+1) (y+1) z    ) normal (V2 u1 v0) ao1
+      , BlockVertex (V3 (x+1) (y+1) (z+1)) normal (V2 u1 v1) ao2
+      , BlockVertex (V3 x     (y+1) (z+1)) normal (V2 u0 v1) ao3
       ], normal)
     where normal = V3 0 1 0
 
   FaceBottom -> -- -Y face (y plane)
-    ( [ BlockVertex (V3 x     y (z+1)) normal (V2 u0 v0) ao
-      , BlockVertex (V3 (x+1) y (z+1)) normal (V2 u1 v0) ao
-      , BlockVertex (V3 (x+1) y z    ) normal (V2 u1 v1) ao
-      , BlockVertex (V3 x     y z    ) normal (V2 u0 v1) ao
+    ( [ BlockVertex (V3 x     y (z+1)) normal (V2 u0 v0) ao0
+      , BlockVertex (V3 (x+1) y (z+1)) normal (V2 u1 v0) ao1
+      , BlockVertex (V3 (x+1) y z    ) normal (V2 u1 v1) ao2
+      , BlockVertex (V3 x     y z    ) normal (V2 u0 v1) ao3
       ], normal)
     where normal = V3 0 (-1) 0
 
   FaceNorth -> -- +Z face
-    ( [ BlockVertex (V3 (x+1) y     (z+1)) normal (V2 u0 v1) ao
-      , BlockVertex (V3 x     y     (z+1)) normal (V2 u1 v1) ao
-      , BlockVertex (V3 x     (y+1) (z+1)) normal (V2 u1 v0) ao
-      , BlockVertex (V3 (x+1) (y+1) (z+1)) normal (V2 u0 v0) ao
+    ( [ BlockVertex (V3 (x+1) y     (z+1)) normal (V2 u0 v1) ao0
+      , BlockVertex (V3 x     y     (z+1)) normal (V2 u1 v1) ao1
+      , BlockVertex (V3 x     (y+1) (z+1)) normal (V2 u1 v0) ao2
+      , BlockVertex (V3 (x+1) (y+1) (z+1)) normal (V2 u0 v0) ao3
       ], normal)
     where normal = V3 0 0 1
 
   FaceSouth -> -- -Z face
-    ( [ BlockVertex (V3 x     y     z) normal (V2 u0 v1) ao
-      , BlockVertex (V3 (x+1) y     z) normal (V2 u1 v1) ao
-      , BlockVertex (V3 (x+1) (y+1) z) normal (V2 u1 v0) ao
-      , BlockVertex (V3 x     (y+1) z) normal (V2 u0 v0) ao
+    ( [ BlockVertex (V3 x     y     z) normal (V2 u0 v1) ao0
+      , BlockVertex (V3 (x+1) y     z) normal (V2 u1 v1) ao1
+      , BlockVertex (V3 (x+1) (y+1) z) normal (V2 u1 v0) ao2
+      , BlockVertex (V3 x     (y+1) z) normal (V2 u0 v0) ao3
       ], normal)
     where normal = V3 0 0 (-1)
 
   FaceEast -> -- +X face
-    ( [ BlockVertex (V3 (x+1) y     z    ) normal (V2 u0 v1) ao
-      , BlockVertex (V3 (x+1) y     (z+1)) normal (V2 u1 v1) ao
-      , BlockVertex (V3 (x+1) (y+1) (z+1)) normal (V2 u1 v0) ao
-      , BlockVertex (V3 (x+1) (y+1) z    ) normal (V2 u0 v0) ao
+    ( [ BlockVertex (V3 (x+1) y     z    ) normal (V2 u0 v1) ao0
+      , BlockVertex (V3 (x+1) y     (z+1)) normal (V2 u1 v1) ao1
+      , BlockVertex (V3 (x+1) (y+1) (z+1)) normal (V2 u1 v0) ao2
+      , BlockVertex (V3 (x+1) (y+1) z    ) normal (V2 u0 v0) ao3
       ], normal)
     where normal = V3 1 0 0
 
   FaceWest -> -- -X face
-    ( [ BlockVertex (V3 x y     (z+1)) normal (V2 u0 v1) ao
-      , BlockVertex (V3 x y     z    ) normal (V2 u1 v1) ao
-      , BlockVertex (V3 x (y+1) z    ) normal (V2 u1 v0) ao
-      , BlockVertex (V3 x (y+1) (z+1)) normal (V2 u0 v0) ao
+    ( [ BlockVertex (V3 x y     (z+1)) normal (V2 u0 v1) ao0
+      , BlockVertex (V3 x y     z    ) normal (V2 u1 v1) ao1
+      , BlockVertex (V3 x (y+1) z    ) normal (V2 u1 v0) ao2
+      , BlockVertex (V3 x (y+1) (z+1)) normal (V2 u0 v0) ao3
       ], normal)
     where normal = V3 (-1) 0 0
+
+-- | Generate 4 vertices for a block face (uniform AO for all vertices).
+--   Kept for backward compatibility with meshChunk.
+faceVertices :: Float -> Float -> Float -> BlockFace
+             -> Float -> Float -> Float -> Float  -- u0 v0 u1 v1
+             -> Float                              -- ao
+             -> ([BlockVertex], V3 Float)
+faceVertices x y z face u0 v0 u1 v1 ao =
+  faceVerticesAO x y z face u0 v0 u1 v1 ao ao ao ao
