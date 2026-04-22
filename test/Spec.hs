@@ -21,6 +21,7 @@ import World.Weather
 import Entity.ECS
 import Entity.Component
 import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), AIState(..), mobInfo)
+import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpForNextLevel, xpProgress)
 import World.Redstone
 import World.BlockRegistry
 import Game.RecipeRegistry
@@ -108,6 +109,7 @@ main = hspec $ do
   bedSleepSpec
   mobLootDropSpec
   woodVariantsAndFloraSpec
+  xpSpec
 
 -- =========================================================================
 -- Block
@@ -4203,3 +4205,80 @@ woodVariantsAndFloraSpec = describe "Wood variants and flora blocks" $ do
       blockDrops Dandelion `shouldBe` [(BlockItem Dandelion, 1)]
     it "RedMushroom drops itself" $
       blockDrops RedMushroom `shouldBe` [(BlockItem RedMushroom, 1)]
+
+-- =========================================================================
+-- XP System
+-- =========================================================================
+xpSpec :: Spec
+xpSpec = describe "Game.XP" $ do
+  it "level 0 at 0 XP" $
+    xpLevel 0 `shouldBe` 0
+
+  it "level 0 at 9 XP (not yet enough for level 1)" $
+    xpLevel 9 `shouldBe` 0
+
+  it "level 1 at 10 XP" $
+    xpLevel 10 `shouldBe` 1
+
+  it "level 2 at 40 XP" $
+    xpLevel 40 `shouldBe` 2
+
+  it "level 3 at 90 XP" $
+    xpLevel 90 `shouldBe` 3
+
+  it "level calculation: floor(sqrt(xp / 10))" $ do
+    xpLevel 25 `shouldBe` 1  -- sqrt(2.5) = 1.58 -> floor = 1
+    xpLevel 39 `shouldBe` 1  -- sqrt(3.9) = 1.97 -> floor = 1
+    xpLevel 100 `shouldBe` 3  -- sqrt(10) = 3.16 -> floor = 3
+
+  it "xpForNextLevel returns correct thresholds" $ do
+    xpForNextLevel 0 `shouldBe` 10   -- level 1 requires 10 XP total
+    xpForNextLevel 1 `shouldBe` 40   -- level 2 requires 40 XP total
+    xpForNextLevel 2 `shouldBe` 90   -- level 3 requires 90 XP total
+
+  it "xpProgress is 0.0 at start of level" $ do
+    xpProgress 0 `shouldSatisfy` (< 0.01)
+    xpProgress 10 `shouldSatisfy` (< 0.01)
+    xpProgress 40 `shouldSatisfy` (< 0.01)
+
+  it "xpProgress approaches 1.0 near end of level" $ do
+    xpProgress 9 `shouldSatisfy` (> 0.85)
+    xpProgress 39 `shouldSatisfy` (> 0.95)
+
+  it "xpProgress is between 0 and 1" $
+    property $ \n -> let xp = abs n `mod` 10000
+                         p = xpProgress xp
+                     in p >= 0.0 && p <= 1.0
+
+  it "CoalOre gives 1 XP" $
+    xpForBlock CoalOre `shouldBe` 1
+
+  it "DiamondOre gives 7 XP" $
+    xpForBlock DiamondOre `shouldBe` 7
+
+  it "GoldOre gives 3 XP" $
+    xpForBlock GoldOre `shouldBe` 3
+
+  it "IronOre gives 1 XP" $
+    xpForBlock IronOre `shouldBe` 1
+
+  it "Stone gives 0 XP" $
+    xpForBlock Stone `shouldBe` 0
+
+  it "Dirt gives 0 XP" $
+    xpForBlock Dirt `shouldBe` 0
+
+  it "Hostile mobs give 5 XP" $ do
+    xpForMobKill Zombie `shouldBe` 5
+    xpForMobKill Skeleton `shouldBe` 5
+    xpForMobKill Creeper `shouldBe` 5
+
+  it "Passive mobs give 1-3 XP" $ do
+    xpForMobKill Pig `shouldSatisfy` (\x -> x >= 1 && x <= 3)
+    xpForMobKill Cow `shouldSatisfy` (\x -> x >= 1 && x <= 3)
+    xpForMobKill Sheep `shouldSatisfy` (\x -> x >= 1 && x <= 3)
+    xpForMobKill Chicken `shouldSatisfy` (\x -> x >= 1 && x <= 3)
+
+  it "Neutral mobs give 3 XP" $ do
+    xpForMobKill Spider `shouldBe` 3
+    xpForMobKill Wolf `shouldBe` 3
