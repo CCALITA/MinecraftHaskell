@@ -253,6 +253,13 @@ blockTypeName Dandelion        = "Dandelion"
 blockTypeName Rose             = "Rose"
 blockTypeName BrownMushroom    = "Brown Mushroom"
 blockTypeName RedMushroom      = "Red Mushroom"
+blockTypeName WheatCrop1       = "Wheat (Stage 1)"
+blockTypeName WheatCrop2       = "Wheat (Stage 2)"
+blockTypeName WheatCrop3       = "Wheat (Stage 3)"
+blockTypeName WheatCrop4       = "Wheat (Stage 4)"
+blockTypeName WheatCrop5       = "Wheat (Stage 5)"
+blockTypeName WheatCrop6       = "Wheat (Stage 6)"
+blockTypeName WheatCrop7       = "Wheat (Stage 7)"
 
 toolTypeName :: ToolType -> String
 toolTypeName Pickaxe = "Pickaxe"

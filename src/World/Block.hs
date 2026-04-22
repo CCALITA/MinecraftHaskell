@@ -7,6 +7,7 @@ module World.Block
   , isSolid
   , isGravityAffected
   , isLeafBlock
+  , isWheatCropBlock
   , blockCollisionHeight
   , blockFaceTexCoords
   , allBlockFaces
@@ -98,6 +99,13 @@ data BlockType
   | Rose
   | BrownMushroom
   | RedMushroom
+  | WheatCrop1
+  | WheatCrop2
+  | WheatCrop3
+  | WheatCrop4
+  | WheatCrop5
+  | WheatCrop6
+  | WheatCrop7
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -212,6 +220,13 @@ blockProperties = \case
   Rose             -> BlockProperties False True  0  0.0
   BrownMushroom    -> BlockProperties False True  0  0.0
   RedMushroom      -> BlockProperties False True  0  0.0
+  WheatCrop1       -> BlockProperties False True  0  0.0
+  WheatCrop2       -> BlockProperties False True  0  0.0
+  WheatCrop3       -> BlockProperties False True  0  0.0
+  WheatCrop4       -> BlockProperties False True  0  0.0
+  WheatCrop5       -> BlockProperties False True  0  0.0
+  WheatCrop6       -> BlockProperties False True  0  0.0
+  WheatCrop7       -> BlockProperties False True  0  0.0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -232,6 +247,18 @@ isLeafBlock BirchLeaves  = True
 isLeafBlock SpruceLeaves = True
 isLeafBlock JungleLeaves = True
 isLeafBlock _            = False
+
+-- | Whether a block is a wheat crop at any growth stage
+isWheatCropBlock :: BlockType -> Bool
+isWheatCropBlock WheatCrop  = True
+isWheatCropBlock WheatCrop1 = True
+isWheatCropBlock WheatCrop2 = True
+isWheatCropBlock WheatCrop3 = True
+isWheatCropBlock WheatCrop4 = True
+isWheatCropBlock WheatCrop5 = True
+isWheatCropBlock WheatCrop6 = True
+isWheatCropBlock WheatCrop7 = True
+isWheatCropBlock _          = False
 
 -- | Collision height for a block type. Slabs are half-height (0.5), all others are 1.0.
 blockCollisionHeight :: BlockType -> Float
@@ -363,3 +390,10 @@ blockFaceTexCoords blockType face = case blockType of
   Rose         -> V2 14 6
   BrownMushroom -> V2 15 6
   RedMushroom  -> V2 0 7
+  WheatCrop1   -> V2 1 7
+  WheatCrop2   -> V2 2 7
+  WheatCrop3   -> V2 3 7
+  WheatCrop4   -> V2 4 7
+  WheatCrop5   -> V2 5 7
+  WheatCrop6   -> V2 6 7
+  WheatCrop7   -> V2 7 7

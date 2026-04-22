@@ -52,6 +52,7 @@ import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
 
 import Data.Binary (encode, decode)
 import Data.IORef (newIORef, readIORef, modifyIORef')
+import Data.List (nub)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..))
@@ -113,6 +114,7 @@ main = hspec $ do
   mobLootDropSpec
   woodVariantsAndFloraSpec
   xpSpec
+  wheatCropGrowthSpec
   structurePlacementSpec
 
 -- =========================================================================
@@ -4288,6 +4290,99 @@ xpSpec = describe "Game.XP" $ do
     xpForMobKill Wolf `shouldBe` 3
 
 -- =========================================================================
+-- Wheat Crop Growth Stages
+-- =========================================================================
+wheatCropGrowthSpec :: Spec
+wheatCropGrowthSpec = describe "Wheat crop growth stages" $ do
+  -- Block properties
+  it "all wheat crop stages are non-solid" $ do
+    isSolid WheatCrop  `shouldBe` False
+    isSolid WheatCrop1 `shouldBe` False
+    isSolid WheatCrop2 `shouldBe` False
+    isSolid WheatCrop3 `shouldBe` False
+    isSolid WheatCrop4 `shouldBe` False
+    isSolid WheatCrop5 `shouldBe` False
+    isSolid WheatCrop6 `shouldBe` False
+    isSolid WheatCrop7 `shouldBe` False
+
+  it "all wheat crop stages are transparent" $ do
+    isTransparent WheatCrop  `shouldBe` True
+    isTransparent WheatCrop1 `shouldBe` True
+    isTransparent WheatCrop2 `shouldBe` True
+    isTransparent WheatCrop3 `shouldBe` True
+    isTransparent WheatCrop4 `shouldBe` True
+    isTransparent WheatCrop5 `shouldBe` True
+    isTransparent WheatCrop6 `shouldBe` True
+    isTransparent WheatCrop7 `shouldBe` True
+
+  it "all wheat crop stages have hardness 0" $ do
+    bpHardness (blockProperties WheatCrop)  `shouldBe` 0
+    bpHardness (blockProperties WheatCrop1) `shouldBe` 0
+    bpHardness (blockProperties WheatCrop2) `shouldBe` 0
+    bpHardness (blockProperties WheatCrop3) `shouldBe` 0
+    bpHardness (blockProperties WheatCrop4) `shouldBe` 0
+    bpHardness (blockProperties WheatCrop5) `shouldBe` 0
+    bpHardness (blockProperties WheatCrop6) `shouldBe` 0
+    bpHardness (blockProperties WheatCrop7) `shouldBe` 0
+
+  it "isWheatCropBlock identifies all stages" $ do
+    isWheatCropBlock WheatCrop  `shouldBe` True
+    isWheatCropBlock WheatCrop1 `shouldBe` True
+    isWheatCropBlock WheatCrop2 `shouldBe` True
+    isWheatCropBlock WheatCrop3 `shouldBe` True
+    isWheatCropBlock WheatCrop4 `shouldBe` True
+    isWheatCropBlock WheatCrop5 `shouldBe` True
+    isWheatCropBlock WheatCrop6 `shouldBe` True
+    isWheatCropBlock WheatCrop7 `shouldBe` True
+
+  it "isWheatCropBlock rejects non-wheat blocks" $ do
+    isWheatCropBlock Air       `shouldBe` False
+    isWheatCropBlock Farmland  `shouldBe` False
+    isWheatCropBlock Dirt      `shouldBe` False
+    isWheatCropBlock OakSapling `shouldBe` False
+
+  -- Texture coordinates are valid atlas positions
+  it "all wheat crop stages have valid texture coords" $ do
+    let checkCoords bt = do
+          let V2 u v = blockFaceTexCoords bt FaceTop
+          u `shouldSatisfy` (>= 0)
+          v `shouldSatisfy` (>= 0)
+          u `shouldSatisfy` (< 16)
+          v `shouldSatisfy` (< 16)
+    checkCoords WheatCrop1
+    checkCoords WheatCrop2
+    checkCoords WheatCrop3
+    checkCoords WheatCrop4
+    checkCoords WheatCrop5
+    checkCoords WheatCrop6
+    checkCoords WheatCrop7
+
+  it "each wheat crop stage has distinct texture coords" $ do
+    let coords = map (\bt -> blockFaceTexCoords bt FaceTop)
+          [WheatCrop, WheatCrop1, WheatCrop2, WheatCrop3,
+           WheatCrop4, WheatCrop5, WheatCrop6, WheatCrop7]
+    length coords `shouldBe` length (nub coords)
+
+  -- Drops
+  it "WheatCrop (stage 0) drops WheatSeeds only" $
+    blockDrops WheatCrop `shouldBe` [(MaterialItem Wheat, 1)]
+
+  it "intermediate stages drop WheatSeeds only" $ do
+    blockDrops WheatCrop1 `shouldBe` [(MaterialItem WheatSeeds, 1)]
+    blockDrops WheatCrop2 `shouldBe` [(MaterialItem WheatSeeds, 1)]
+    blockDrops WheatCrop3 `shouldBe` [(MaterialItem WheatSeeds, 1)]
+    blockDrops WheatCrop4 `shouldBe` [(MaterialItem WheatSeeds, 1)]
+    blockDrops WheatCrop5 `shouldBe` [(MaterialItem WheatSeeds, 1)]
+    blockDrops WheatCrop6 `shouldBe` [(MaterialItem WheatSeeds, 1)]
+
+  it "WheatCrop7 (fully mature) drops Wheat and WheatSeeds" $
+    blockDrops WheatCrop7 `shouldBe` [(MaterialItem Wheat, 1), (MaterialItem WheatSeeds, 1)]
+
+  -- Enum ordering (added at the end)
+  it "wheat crop stages are at end of BlockType enum" $ do
+    fromEnum WheatCrop1 `shouldBe` fromEnum RedMushroom + 1
+    fromEnum WheatCrop7 `shouldBe` fromEnum RedMushroom + 7
+    fromEnum WheatCrop7 `shouldBe` fromEnum (maxBound :: BlockType)
 -- Structure Placement in World Generation
 -- =========================================================================
 structurePlacementSpec :: Spec
@@ -4392,3 +4487,4 @@ allBlocksSame v1 v2 total i
       a <- MUV.read v1 i
       b <- MUV.read v2 i
       if a /= b then pure False else allBlocksSame v1 v2 total (i + 1)
+

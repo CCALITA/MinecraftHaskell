@@ -1,9 +1,19 @@
 module Game.Command
   ( Command(..)
   , CommandResult(..)
+  , ChatState(..)
+  , ChatMessage(..)
   , parseCommand
+  , executeCommand
   , commandHelp
   , allCommands
+  , emptyChatState
+  , chatAddChar
+  , chatDeleteChar
+  , chatGetBuffer
+  , chatClear
+  , addChatMessage
+  , updateChatMessages
   ) where
 
 import Data.Char (toLower, isSpace)
@@ -114,3 +124,85 @@ allCommands =
   , "/help"
   , "/summon"
   ]
+
+-- | Execute a parsed command and produce a result message.
+-- This is a pure function that describes what the command does;
+-- the caller applies the side effects.
+executeCommand :: Command -> CommandResult
+executeCommand cmd = case cmd of
+  CmdGive item count ->
+    CmdSuccess $ "Gave " ++ show count ++ " " ++ item
+  CmdTeleport x y z ->
+    CmdSuccess $ "Teleported to " ++ showF x ++ " " ++ showF y ++ " " ++ showF z
+  CmdTime val ->
+    CmdSuccess $ "Time set to " ++ val
+  CmdWeather val ->
+    CmdSuccess $ "Weather set to " ++ val
+  CmdGamemode val ->
+    CmdSuccess $ "Game mode set to " ++ val
+  CmdKill ->
+    CmdSuccess "Killed player"
+  CmdSeed ->
+    CmdSuccess "Seed: 12345"
+  CmdHelp ->
+    CmdSuccess $ "Commands: " ++ unwords (map fst commandHelp)
+  CmdSpawnMob mobType ->
+    CmdSuccess $ "Summoned " ++ mobType
+  where
+    showF :: Float -> String
+    showF f = let n = round (f * 100) :: Int
+                  whole = div (abs n) 100
+                  frac  = mod (abs n) 100
+                  sign  = if f < 0 && n /= 0 then "-" else ""
+                  pad   = if frac < 10 then "0" else ""
+              in sign ++ show whole ++ "." ++ pad ++ show frac
+
+-- | A timed message displayed in the HUD
+data ChatMessage = ChatMessage
+  { cmText    :: !String
+  , cmTimer   :: !Float    -- ^ seconds remaining before fade
+  } deriving stock (Show, Eq)
+
+-- | Chat input state (immutable value, stored in an IORef)
+data ChatState = ChatState
+  { csBuffer   :: !String          -- ^ current input buffer
+  , csMessages :: ![ChatMessage]   -- ^ visible output messages
+  } deriving stock (Show, Eq)
+
+-- | Empty chat state
+emptyChatState :: ChatState
+emptyChatState = ChatState
+  { csBuffer   = ""
+  , csMessages = []
+  }
+
+-- | Append a character to the chat buffer
+chatAddChar :: Char -> ChatState -> ChatState
+chatAddChar c cs = cs { csBuffer = csBuffer cs ++ [c] }
+
+-- | Delete the last character from the chat buffer
+chatDeleteChar :: ChatState -> ChatState
+chatDeleteChar cs = case csBuffer cs of
+  [] -> cs
+  s  -> cs { csBuffer = init s }
+
+-- | Get the current buffer contents
+chatGetBuffer :: ChatState -> String
+chatGetBuffer = csBuffer
+
+-- | Clear the buffer
+chatClear :: ChatState -> ChatState
+chatClear cs = cs { csBuffer = "" }
+
+-- | Add a message with a display duration
+addChatMessage :: String -> Float -> ChatState -> ChatState
+addChatMessage text duration cs =
+  cs { csMessages = csMessages cs ++ [ChatMessage text duration] }
+
+-- | Tick message timers, removing expired ones
+updateChatMessages :: Float -> ChatState -> ChatState
+updateChatMessages dt cs =
+  cs { csMessages = filter (\m -> cmTimer m > 0)
+                    $ map (\m -> m { cmTimer = cmTimer m - dt })
+                    $ csMessages cs
+     }

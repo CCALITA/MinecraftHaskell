@@ -16,7 +16,7 @@ import Engine.Vulkan.Command
 import Engine.Vulkan.Memory
 import Engine.Vulkan.Descriptor
 import Engine.Vulkan.Texture
-import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid, isGravityAffected, isLeafBlock, blockCollisionHeight)
+import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid, isGravityAffected, isLeafBlock, isWheatCropBlock, blockCollisionHeight)
 import World.Chunk
 import World.Generation
 import World.World
@@ -39,6 +39,7 @@ import Game.Save
 import Game.DroppedItem
 import Game.BlockEntity
 import Game.State (GameState(..), GameMode(..), Projectile(..), newGameState)
+import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
 import Game.ItemDisplay (itemColor, itemMiniIcon)
 import Engine.Sound
 import Game.Particle
@@ -71,6 +72,7 @@ import qualified System.Random
 import System.Random (randomRIO)
 import System.Environment (getArgs)
 import Data.Char (isDigit)
+import Text.Read (readMaybe)
 
 -- | Debug overlay information shown when F3 is active
 data DebugInfo = DebugInfo
@@ -236,6 +238,7 @@ main = do
         fpsCounterRef       = gsFpsCounter gs
         fpsTimerRef         = gsFpsTimer gs
         fpsDisplayRef       = gsFpsDisplay gs
+        chatStateRef        = gsChatState gs
 
     -- World save management: use world1 as default
     let defaultSaveDir = savesRoot </> "world1"
@@ -2011,6 +2014,33 @@ main = do
                         when (roll == 1) $ do  -- 5% chance
                           worldSetBlock world (V3 wx (ly + 1) wz) Cactus
                           modifyIORef' dirtyChunks (chunkPos chunk :)
+              remeshDirtyChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef dirtyChunks
+
+            -- Wheat crop growth tick (every 600 frames / ~10 seconds)
+            when (frameIdx > 0 && frameIdx `mod` 600 == 0) $ do
+              chunks <- HM.toList <$> readTVarIO (worldChunks world)
+              dirtyChunks <- newIORef ([] :: [ChunkPos])
+              forM_ chunks $ \(V2 cx' cz', chunk) ->
+                forEachBlock chunk $ \lx ly lz bt ->
+                  when (isWheatCropBlock bt && bt /= WheatCrop7) $ do
+                    let wx = cx' * chunkWidth + lx
+                        wz = cz' * chunkDepth + lz
+                    -- Check that Farmland is below the crop
+                    belowBlock <- worldGetBlock world (V3 wx (ly - 1) wz)
+                    when (belowBlock == Farmland) $ do
+                      roll <- randomRIO (1 :: Int, 80)
+                      when (roll == 1) $ do  -- ~1/80 chance
+                        let nextStage = case bt of
+                              WheatCrop  -> WheatCrop1
+                              WheatCrop1 -> WheatCrop2
+                              WheatCrop2 -> WheatCrop3
+                              WheatCrop3 -> WheatCrop4
+                              WheatCrop4 -> WheatCrop5
+                              WheatCrop5 -> WheatCrop6
+                              WheatCrop6 -> WheatCrop7
+                              _          -> bt
+                        worldSetBlock world (V3 wx ly wz) nextStage
+                        modifyIORef' dirtyChunks (chunkPos chunk :)
               remeshDirtyChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef dirtyChunks
 
             -- Sugar cane growth tick (every 600 frames / ~10 seconds)
