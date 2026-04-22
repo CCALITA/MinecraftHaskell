@@ -43,6 +43,9 @@ import Game.ItemDisplay (itemColor, itemMiniIcon)
 import Engine.Sound
 import Game.Particle
 
+import Game.Config (GameConfig(..), defaultConfig)
+import Game.Event (emit, GameEvent(..))
+
 import World.Redstone (RedstoneState, newRedstoneState, setPower, getPower, propagateRedstone)
 
 import Control.Monad (unless, when, forM_, forM, void)
@@ -87,13 +90,17 @@ data DebugInfo = DebugInfo
   , dbgDayTime     :: !Float
   }
 
--- | Fixed timestep for physics (20 ticks per second, like Minecraft)
+-- | Game configuration
+gameConfig :: GameConfig
+gameConfig = defaultConfig
+
+-- | Fixed timestep for physics
 tickRate :: Float
-tickRate = 1.0 / 20.0
+tickRate = 1.0 / cfgTickRate gameConfig
 
 -- | Max reach distance for block interaction
 maxReach :: Float
-maxReach = 5.0
+maxReach = cfgMaxReach gameConfig
 
 -- | Default save directory root
 savesRoot :: FilePath
@@ -489,11 +496,32 @@ main = do
             case mSlot of
               Nothing -> pure ()
               Just slotIdx -> do
+                -- Shift-click: equip armor items to matching player armor slot
+                shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
                 inv <- readIORef inventoryRef
-                cursor <- readIORef cursorItemRef
                 let slotContent = getSlot inv slotIdx
-                writeIORef inventoryRef (setSlot inv slotIdx cursor)
-                writeIORef cursorItemRef slotContent
+                if shiftHeld
+                  then case slotContent of
+                    Just (ItemStack (ArmorItem aSlot aMat aDur) cnt) -> do
+                      let armorIdx = fromEnum aSlot  -- Helmet=0, Chestplate=1, Leggings=2, Boots=3
+                      player <- readIORef playerRef
+                      let currentArmor = plArmorSlots player
+                          existing = currentArmor !! armorIdx
+                          newArmorSlots = take armorIdx currentArmor
+                                       ++ [Just (ItemStack (ArmorItem aSlot aMat aDur) cnt)]
+                                       ++ drop (armorIdx + 1) currentArmor
+                      -- Put any existing armor piece back into the inventory slot
+                      writeIORef inventoryRef (setSlot inv slotIdx existing)
+                      modifyIORef' playerRef (\p -> p { plArmorSlots = newArmorSlots })
+                    _ -> do
+                      -- Not an armor item: normal swap with cursor
+                      cursor <- readIORef cursorItemRef
+                      writeIORef inventoryRef (setSlot inv slotIdx cursor)
+                      writeIORef cursorItemRef slotContent
+                  else do
+                    cursor <- readIORef cursorItemRef
+                    writeIORef inventoryRef (setSlot inv slotIdx cursor)
+                    writeIORef cursorItemRef slotContent
 
         CraftingOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef

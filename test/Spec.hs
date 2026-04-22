@@ -98,6 +98,7 @@ main = hspec $ do
   blockRegistrySpec
   biomeFeaturesSpec
   itemRegistrySpec
+  armorDamageReductionSpec
   dimensionSpec
   screenRegistrySpec
   componentSpec
@@ -105,6 +106,7 @@ main = hspec $ do
   saveV3Spec
   recipeRegistrySpec
   bedSleepSpec
+  mobLootDropSpec
 
 -- =========================================================================
 -- Block
@@ -3855,3 +3857,214 @@ bedSleepSpec = describe "Bed sleep logic" $ do
       dncTime dnc' `shouldBe` 0.25
       dncDayCount dnc' `shouldBe` 1
       isNight dnc' `shouldBe` False
+
+-- =========================================================================
+-- Armor damage reduction
+-- =========================================================================
+armorDamageReductionSpec :: Spec
+armorDamageReductionSpec = describe "Armor damage reduction" $ do
+  it "no armor: full damage applied (minimum 1)" $ do
+    let player = defaultPlayer (V3 0 80 0)
+    plHealth (damagePlayer 4 player) `shouldBe` (maxHealth - 4)
+
+  it "no armor: 1 raw damage stays 1" $ do
+    let player = defaultPlayer (V3 0 80 0)
+    plHealth (damagePlayer 1 player) `shouldBe` (maxHealth - 1)
+
+  it "full iron armor reduces damage" $ do
+    -- Iron armor total defense: helmet(2) + chestplate(6) + leggings(5) + boots(2) = 15
+    let ironArmor = [ Just (ItemStack (ArmorItem Helmet IronArmor 100) 1)
+                    , Just (ItemStack (ArmorItem Chestplate IronArmor 100) 1)
+                    , Just (ItemStack (ArmorItem Leggings IronArmor 100) 1)
+                    , Just (ItemStack (ArmorItem Boots IronArmor 100) 1)
+                    ]
+        player = (defaultPlayer (V3 0 80 0)) { plArmorSlots = ironArmor }
+    -- 10 raw damage - 15/2 = 10 - 7 = 3; max(1, 3) = 3
+    plHealth (damagePlayer 10 player) `shouldBe` (maxHealth - 3)
+
+  it "full diamond armor reduces damage further" $ do
+    -- Diamond armor total defense: helmet(3) + chestplate(8) + leggings(6) + boots(3) = 20
+    let diamondArmor = [ Just (ItemStack (ArmorItem Helmet DiamondArmor 100) 1)
+                       , Just (ItemStack (ArmorItem Chestplate DiamondArmor 100) 1)
+                       , Just (ItemStack (ArmorItem Leggings DiamondArmor 100) 1)
+                       , Just (ItemStack (ArmorItem Boots DiamondArmor 100) 1)
+                       ]
+        player = (defaultPlayer (V3 0 80 0)) { plArmorSlots = diamondArmor }
+    -- 10 raw damage - 20/2 = 10 - 10 = 0; max(1, 0) = 1
+    plHealth (damagePlayer 10 player) `shouldBe` (maxHealth - 1)
+
+  it "damage reduction never reduces below 1" $ do
+    -- Even with full diamond armor, minimum 1 damage
+    let diamondArmor = [ Just (ItemStack (ArmorItem Helmet DiamondArmor 100) 1)
+                       , Just (ItemStack (ArmorItem Chestplate DiamondArmor 100) 1)
+                       , Just (ItemStack (ArmorItem Leggings DiamondArmor 100) 1)
+                       , Just (ItemStack (ArmorItem Boots DiamondArmor 100) 1)
+                       ]
+        player = (defaultPlayer (V3 0 80 0)) { plArmorSlots = diamondArmor }
+    -- 5 raw damage - 20/2 = 5 - 10 = -5; max(1, -5) = 1
+    plHealth (damagePlayer 5 player) `shouldBe` (maxHealth - 1)
+
+  it "partial armor (only chestplate) provides partial defense" $ do
+    -- Iron chestplate: 6 defense
+    let partialArmor = [ Nothing
+                       , Just (ItemStack (ArmorItem Chestplate IronArmor 100) 1)
+                       , Nothing
+                       , Nothing
+                       ]
+        player = (defaultPlayer (V3 0 80 0)) { plArmorSlots = partialArmor }
+    -- 10 raw damage - 6/2 = 10 - 3 = 7
+    plHealth (damagePlayer 10 player) `shouldBe` (maxHealth - 7)
+
+  it "armor durability decreases on hit" $ do
+    let armor = [ Just (ItemStack (ArmorItem Helmet IronArmor 50) 1)
+                , Just (ItemStack (ArmorItem Chestplate IronArmor 50) 1)
+                , Nothing
+                , Nothing
+                ]
+        player = (defaultPlayer (V3 0 80 0)) { plArmorSlots = armor }
+        player' = damagePlayer 4 player
+    -- Both equipped pieces lose 1 durability
+    plArmorSlots player' `shouldBe`
+      [ Just (ItemStack (ArmorItem Helmet IronArmor 49) 1)
+      , Just (ItemStack (ArmorItem Chestplate IronArmor 49) 1)
+      , Nothing
+      , Nothing
+      ]
+
+  it "armor breaks when durability reaches 0" $ do
+    let armor = [ Just (ItemStack (ArmorItem Helmet IronArmor 1) 1)
+                , Just (ItemStack (ArmorItem Chestplate IronArmor 50) 1)
+                , Nothing
+                , Nothing
+                ]
+        player = (defaultPlayer (V3 0 80 0)) { plArmorSlots = armor }
+        player' = damagePlayer 4 player
+    -- Helmet breaks (durability was 1), chestplate loses 1
+    plArmorSlots player' `shouldBe`
+      [ Nothing
+      , Just (ItemStack (ArmorItem Chestplate IronArmor 49) 1)
+      , Nothing
+      , Nothing
+      ]
+
+  it "no armor worn: armor slots unchanged on hit" $ do
+    let player = defaultPlayer (V3 0 80 0)
+        player' = damagePlayer 4 player
+    plArmorSlots player' `shouldBe` [Nothing, Nothing, Nothing, Nothing]
+
+  it "totalArmorDefense computes correctly for mixed armor" $ do
+    let armor = [ Just (ItemStack (ArmorItem Helmet LeatherArmor 50) 1)    -- 1
+                , Just (ItemStack (ArmorItem Chestplate DiamondArmor 50) 1) -- 8
+                , Nothing                                                    -- 0
+                , Just (ItemStack (ArmorItem Boots IronArmor 50) 1)         -- 2
+                ]
+    totalArmorDefense armor `shouldBe` 11
+
+  it "calcArmorDamageReduction formula: max(1, raw - defense/2)" $ do
+    calcArmorDamageReduction 10 0 `shouldBe` 10
+    calcArmorDamageReduction 10 6 `shouldBe` 7
+    calcArmorDamageReduction 10 20 `shouldBe` 1
+    calcArmorDamageReduction 1 0 `shouldBe` 1
+    calcArmorDamageReduction 1 20 `shouldBe` 1
+
+-- =========================================================================
+-- Mob loot drops
+-- =========================================================================
+mobLootDropSpec :: Spec
+mobLootDropSpec = describe "Mob loot drops" $ do
+
+  -- Helper: run mobDrops many times and collect all results
+  let collectDrops tag n = concat <$> mapM (\_ -> mobDrops tag) [1..n :: Int]
+      -- Check that every (item, count) in a drop list satisfies a predicate
+      allDropsSatisfy p drops = all p drops
+
+  it "Pig drops RawPorkchop (1-3)" $ do
+    drops <- collectDrops "Pig" 50
+    let porkDrops = filter (\(i, _) -> i == FoodItem RawPorkchop) drops
+    length porkDrops `shouldSatisfy` (> 0)
+    allDropsSatisfy (\(_, c) -> c >= 1 && c <= 3) porkDrops `shouldBe` True
+
+  it "Cow drops RawBeef (1-3) and Leather (0-2)" $ do
+    drops <- collectDrops "Cow" 50
+    let beefDrops = filter (\(i, _) -> i == FoodItem RawBeef) drops
+        leatherDrops = filter (\(i, _) -> i == MaterialItem Leather) drops
+    length beefDrops `shouldSatisfy` (> 0)
+    allDropsSatisfy (\(_, c) -> c >= 1 && c <= 3) beefDrops `shouldBe` True
+    -- Leather can be 0 (filtered out), so only check upper bound
+    allDropsSatisfy (\(_, c) -> c >= 1 && c <= 2) leatherDrops `shouldBe` True
+
+  it "Chicken drops RawChicken (1) and Feather (0-2)" $ do
+    drops <- collectDrops "Chicken" 50
+    let chickenDrops = filter (\(i, _) -> i == FoodItem RawChicken) drops
+        featherDrops = filter (\(i, _) -> i == MaterialItem Feather) drops
+    length chickenDrops `shouldSatisfy` (> 0)
+    allDropsSatisfy (\(_, c) -> c == 1) chickenDrops `shouldBe` True
+    allDropsSatisfy (\(_, c) -> c >= 1 && c <= 2) featherDrops `shouldBe` True
+
+  it "Sheep drops 1 Wool" $ do
+    drops <- mobDrops "Sheep"
+    drops `shouldBe` [(BlockItem Wool, 1)]
+
+  it "Zombie drops RottenFlesh (0-2)" $ do
+    drops <- collectDrops "Zombie" 50
+    let fleshDrops = filter (\(i, _) -> i == FoodItem RottenFlesh) drops
+    allDropsSatisfy (\(_, c) -> c >= 1 && c <= 2) fleshDrops `shouldBe` True
+
+  it "Skeleton drops Bone (0-2) and Arrow (0-2)" $ do
+    drops <- collectDrops "Skeleton" 50
+    let boneDrops = filter (\(i, _) -> i == MaterialItem Bone) drops
+        arrowDrops = filter (\(i, _) -> i == MaterialItem ArrowMat) drops
+    allDropsSatisfy (\(_, c) -> c >= 1 && c <= 2) boneDrops `shouldBe` True
+    allDropsSatisfy (\(_, c) -> c >= 1 && c <= 2) arrowDrops `shouldBe` True
+
+  it "Creeper drops Gunpowder (0-2)" $ do
+    drops <- collectDrops "Creeper" 50
+    let gunpowderDrops = filter (\(i, _) -> i == MaterialItem Gunpowder) drops
+    allDropsSatisfy (\(_, c) -> c >= 1 && c <= 2) gunpowderDrops `shouldBe` True
+
+  it "Spider drops String (0-2)" $ do
+    drops <- collectDrops "Spider" 50
+    let stringDrops = filter (\(i, _) -> i == MaterialItem StringMat) drops
+    allDropsSatisfy (\(_, c) -> c >= 1 && c <= 2) stringDrops `shouldBe` True
+
+  it "Wolf drops Bone (0-2)" $ do
+    drops <- collectDrops "Wolf" 50
+    let boneDrops = filter (\(i, _) -> i == MaterialItem Bone) drops
+    allDropsSatisfy (\(_, c) -> c >= 1 && c <= 2) boneDrops `shouldBe` True
+
+  it "TamedWolf drops Bone (0-2)" $ do
+    drops <- collectDrops "TamedWolf" 50
+    let boneDrops = filter (\(i, _) -> i == MaterialItem Bone) drops
+    allDropsSatisfy (\(_, c) -> c >= 1 && c <= 2) boneDrops `shouldBe` True
+
+  it "Unknown mob type drops nothing" $ do
+    drops <- mobDrops "UnknownMob"
+    drops `shouldBe` []
+
+  it "Mob death spawns drops at entity position" $ do
+    ew <- newEntityWorld
+    eid <- spawnEntity ew (V3 10.0 65.0 10.0) 20.0 "Zombie"
+    -- Simulate killing the entity
+    updateEntity ew eid (\e -> e { entHealth = 0, entAlive = False })
+    mEnt <- getEntity ew eid
+    case mEnt of
+      Just ent -> do
+        entHealth ent `shouldBe` 0
+        entAlive ent `shouldBe` False
+        -- Verify drops can be spawned at entity position
+        di <- newDroppedItems
+        drops <- mobDrops (entTag ent)
+        mapM_ (\(item, count) -> spawnDrop di item count (entPosition ent)) drops
+        items <- readIORef di
+        -- Zombie drops 0-2 rotten flesh, so items could be empty or have 1 entry
+        length items `shouldSatisfy` (<= 1)
+      Nothing -> expectationFailure "Expected zombie entity"
+
+  it "Drop counts are within loot table bounds across many samples" $ do
+    -- Pig: RawPorkchop 1-3, run 200 times to ensure range is covered
+    drops <- collectDrops "Pig" 200
+    let counts = map snd $ filter (\(i, _) -> i == FoodItem RawPorkchop) drops
+        minC = minimum counts
+        maxC = maximum counts
+    minC `shouldBe` 1
+    maxC `shouldBe` 3
