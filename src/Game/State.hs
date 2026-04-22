@@ -20,6 +20,7 @@ import Game.Furnace (FurnaceState, newFurnaceState)
 import Game.Enchanting (EnchantmentType, EnchantmentMap, newEnchantmentMap)
 import Game.PotionEffect (ActiveEffect)
 import Game.Event (EventBus, newEventBus)
+import Game.Command (ChatState, emptyChatState)
 import Game.DayNight (DayNightCycle, newDayNightCycle)
 import World.Weather (WeatherState, newWeatherState)
 import World.Redstone (RedstoneState, newRedstoneState)
@@ -30,7 +31,7 @@ import Engine.Vulkan.Memory (BufferAllocation)
 import Entity.Mob (AIState)
 
 -- | Game UI mode
-data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen | FurnaceOpen | DispenserOpen | EnchantingOpen | DeathScreen
+data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen | FurnaceOpen | DispenserOpen | EnchantingOpen | DeathScreen | ChatInput
   deriving stock (Show, Eq)
 
 -- | Arrow projectile fired by Skeletons
@@ -107,6 +108,8 @@ data GameState = GameState
     -- Achievement system
   , gsAchievements     :: !(IORef AchievementState)
   , gsAchievementToast :: !(IORef (Maybe (String, Float)))
+    -- Chat system
+  , gsChatState        :: !(IORef ChatState)
   }
 
 -- | Create a fresh GameState with default initial values.
@@ -180,3 +183,5 @@ newGameState spawnPos = do
     -- Achievement system
     <*> newIORef newAchievementState
     <*> newIORef Nothing
+    -- Chat system
+    <*> newIORef emptyChatState

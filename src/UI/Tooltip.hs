@@ -47,6 +47,7 @@ itemName GlassBottleItem        = "Glass Bottle"
 itemName (PotionItem pt)        = potionName pt
 itemName BoatItem               = "Boat"
 itemName MinecartItem           = "Minecart"
+itemName (BucketItem bt)        = bucketTypeName bt
 
 -- | Extra description lines (lore) for certain item categories.
 itemLore :: Item -> [String]
@@ -253,6 +254,20 @@ blockTypeName Dandelion        = "Dandelion"
 blockTypeName Rose             = "Rose"
 blockTypeName BrownMushroom    = "Brown Mushroom"
 blockTypeName RedMushroom      = "Red Mushroom"
+blockTypeName Bookshelf        = "Bookshelf"
+blockTypeName Anvil            = "Anvil"
+blockTypeName BrewingStand     = "Brewing Stand"
+blockTypeName Ice              = "Ice"
+blockTypeName PackedIce        = "Packed Ice"
+blockTypeName RedstoneLamp     = "Redstone Lamp"
+blockTypeName Hopper           = "Hopper"
+blockTypeName WheatCrop1       = "Wheat (Stage 1)"
+blockTypeName WheatCrop2       = "Wheat (Stage 2)"
+blockTypeName WheatCrop3       = "Wheat (Stage 3)"
+blockTypeName WheatCrop4       = "Wheat (Stage 4)"
+blockTypeName WheatCrop5       = "Wheat (Stage 5)"
+blockTypeName WheatCrop6       = "Wheat (Stage 6)"
+blockTypeName WheatCrop7       = "Wheat (Stage 7)"
 
 toolTypeName :: ToolType -> String
 toolTypeName Pickaxe = "Pickaxe"
@@ -278,6 +293,12 @@ armorSlotName Helmet     = "Helmet"
 armorSlotName Chestplate = "Chestplate"
 armorSlotName Leggings   = "Leggings"
 armorSlotName Boots      = "Boots"
+
+bucketTypeName :: BucketType -> String
+bucketTypeName BucketEmpty = "Bucket"
+bucketTypeName BucketWater = "Water Bucket"
+bucketTypeName BucketLava  = "Lava Bucket"
+bucketTypeName BucketMilk  = "Milk Bucket"
 
 -- | Format an enchantment as "Name LEVEL" using roman numerals.
 formatEnchantment :: Enchantment -> String

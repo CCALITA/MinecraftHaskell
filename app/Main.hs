@@ -16,7 +16,7 @@ import Engine.Vulkan.Command
 import Engine.Vulkan.Memory
 import Engine.Vulkan.Descriptor
 import Engine.Vulkan.Texture
-import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid, isGravityAffected, isLeafBlock, blockCollisionHeight)
+import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid, isGravityAffected, isLeafBlock, isWheatCropBlock, blockCollisionHeight)
 import World.Chunk
 import World.Generation
 import World.World
@@ -40,6 +40,7 @@ import Game.DroppedItem
 import Game.BlockEntity
 import Game.State (GameState(..), GameMode(..), Projectile(..), newGameState)
 import Game.Achievement (AchievementState, checkAchievement, unlockAchievement, achievementName, AchievementTrigger(..))
+import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), ChatMessage(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
 import Game.ItemDisplay (itemColor, itemMiniIcon)
 import Engine.Sound
 import Game.Particle
@@ -72,6 +73,7 @@ import qualified System.Random
 import System.Random (randomRIO)
 import System.Environment (getArgs)
 import Data.Char (isDigit)
+import Text.Read (readMaybe)
 
 -- | Debug overlay information shown when F3 is active
 data DebugInfo = DebugInfo
@@ -239,6 +241,7 @@ main = do
         fpsDisplayRef       = gsFpsDisplay gs
         achievementsRef     = gsAchievements gs
         achievementToastRef = gsAchievementToast gs
+        chatStateRef        = gsChatState gs
 
     -- World save management: use world1 as default
     let defaultSaveDir = savesRoot </> "world1"
@@ -757,6 +760,8 @@ main = do
             GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
             writeIORef lastCursorRef Nothing
 
+        ChatInput -> pure ()  -- ignore mouse clicks during chat input
+
         Playing -> do
           when (button == GLFW.MouseButton'1) $
             writeIORef lmbHeldRef (action == GLFW.MouseButtonState'Pressed)
@@ -1256,6 +1261,12 @@ main = do
               writeIORef craftingGridRef (emptyCraftingGrid 2)  -- 2x2 for inventory crafting
               GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
               writeIORef lastCursorRef Nothing
+            GLFW.Key'T -> do
+              modifyIORef' chatStateRef chatClear
+              writeIORef gameModeRef ChatInput
+            GLFW.Key'Slash -> do
+              modifyIORef' chatStateRef (\cs -> chatAddChar '/' (chatClear cs))
+              writeIORef gameModeRef ChatInput
             GLFW.Key'1 -> selectSlot 0
             GLFW.Key'2 -> selectSlot 1
             GLFW.Key'3 -> selectSlot 2
@@ -1281,6 +1292,62 @@ main = do
                   restoreFromSave playerRef inventoryRef dayNightRef savedData
                   putStrLn "Quick-loaded!"
                 Nothing -> putStrLn "No save found."
+            _ -> pure ()
+          ChatInput -> case key of
+            GLFW.Key'Escape -> do
+              modifyIORef' chatStateRef chatClear
+              writeIORef gameModeRef Playing
+            GLFW.Key'Enter -> do
+              cs <- readIORef chatStateRef
+              let buf = chatGetBuffer cs
+              modifyIORef' chatStateRef chatClear
+              writeIORef gameModeRef Playing
+              unless (null buf) $ case parseCommand buf of
+                Just cmd -> do
+                  let result = executeCommand cmd
+                  case result of
+                    CmdSuccess msg -> do
+                      modifyIORef' chatStateRef (addChatMessage msg 3.0)
+                      case cmd of
+                        CmdGive itemName count -> do
+                          let mItem = lookupItemByName itemName
+                          case mItem of
+                            Just item -> do
+                              modifyIORef' inventoryRef (\i -> fst $ addItem i item count)
+                              putStrLn $ "Gave " ++ show count ++ " " ++ itemName
+                            Nothing ->
+                              modifyIORef' chatStateRef (addChatMessage ("Unknown item: " ++ itemName) 3.0)
+                        CmdTeleport x y z -> do
+                          modifyIORef' playerRef (\p -> p { plPos = V3 x y z })
+                          _ <- updateLoadedChunks world (V3 x y z)
+                          rebuildAllChunkMeshes world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef
+                          putStrLn $ "Teleported to " ++ show (V3 x y z :: V3 Float)
+                        CmdTime val -> do
+                          let mTime = case val of
+                                "day"   -> Just 0.25
+                                "night" -> Just 0.75
+                                "noon"  -> Just 0.5
+                                s       -> readMaybe s :: Maybe Float
+                          case mTime of
+                            Just t -> modifyIORef' dayNightRef (\d -> d { dncTime = t })
+                            Nothing -> modifyIORef' chatStateRef (addChatMessage ("Invalid time: " ++ val) 3.0)
+                        CmdWeather val -> case val of
+                          "clear" -> modifyIORef' weatherRef (\w -> w { wsType = Clear })
+                          "rain"  -> modifyIORef' weatherRef (\w -> w { wsType = Rain })
+                          _       -> modifyIORef' chatStateRef (addChatMessage ("Unknown weather: " ++ val) 3.0)
+                        CmdGamemode val -> case val of
+                          "creative" -> writeIORef gameModeRef Playing
+                          "survival" -> writeIORef gameModeRef Playing
+                          _          -> modifyIORef' chatStateRef (addChatMessage ("Unknown mode: " ++ val) 3.0)
+                        CmdKill ->
+                          modifyIORef' playerRef (\p -> p { plHealth = 0 })
+                        _ -> pure ()
+                    CmdError msg ->
+                      modifyIORef' chatStateRef (addChatMessage msg 3.0)
+                Nothing ->
+                  modifyIORef' chatStateRef (addChatMessage ("Unknown command: " ++ buf) 3.0)
+            GLFW.Key'Backspace ->
+              modifyIORef' chatStateRef chatDeleteChar
             _ -> pure ()
           Paused -> case key of
             GLFW.Key'Escape -> do
@@ -1335,6 +1402,12 @@ main = do
                 writeIORef gameModeRef Playing
                 GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
                 writeIORef lastCursorRef Nothing
+
+    -- Character input callback for chat typing
+    GLFW.setCharCallback (whWindow wh) $ Just $ \_win codepoint -> do
+      mode <- readIORef gameModeRef
+      when (mode == ChatInput) $
+        modifyIORef' chatStateRef (chatAddChar codepoint)
 
     -- Initialize last-time ref from GLFW clock (overrides default 0)
     writeIORef lastTimeRef =<< maybe 0 id <$> GLFW.getTime
@@ -2024,6 +2097,33 @@ main = do
                           modifyIORef' dirtyChunks (chunkPos chunk :)
               remeshDirtyChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef dirtyChunks
 
+            -- Wheat crop growth tick (every 600 frames / ~10 seconds)
+            when (frameIdx > 0 && frameIdx `mod` 600 == 0) $ do
+              chunks <- HM.toList <$> readTVarIO (worldChunks world)
+              dirtyChunks <- newIORef ([] :: [ChunkPos])
+              forM_ chunks $ \(V2 cx' cz', chunk) ->
+                forEachBlock chunk $ \lx ly lz bt ->
+                  when (isWheatCropBlock bt && bt /= WheatCrop7) $ do
+                    let wx = cx' * chunkWidth + lx
+                        wz = cz' * chunkDepth + lz
+                    -- Check that Farmland is below the crop
+                    belowBlock <- worldGetBlock world (V3 wx (ly - 1) wz)
+                    when (belowBlock == Farmland) $ do
+                      roll <- randomRIO (1 :: Int, 80)
+                      when (roll == 1) $ do  -- ~1/80 chance
+                        let nextStage = case bt of
+                              WheatCrop  -> WheatCrop1
+                              WheatCrop1 -> WheatCrop2
+                              WheatCrop2 -> WheatCrop3
+                              WheatCrop3 -> WheatCrop4
+                              WheatCrop4 -> WheatCrop5
+                              WheatCrop5 -> WheatCrop6
+                              WheatCrop6 -> WheatCrop7
+                              _          -> bt
+                        worldSetBlock world (V3 wx ly wz) nextStage
+                        modifyIORef' dirtyChunks (chunkPos chunk :)
+              remeshDirtyChunks world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef dirtyChunks
+
             -- Sugar cane growth tick (every 600 frames / ~10 seconds)
             when (frameIdx > 0 && frameIdx `mod` 600 == 0) $ do
               chunks <- HM.toList <$> readTVarIO (worldChunks world)
@@ -2211,6 +2311,8 @@ main = do
             case achToast of
               Just (name, t) -> writeIORef achievementToastRef (if t - dt > 0 then Just (name, t - dt) else Nothing)
               Nothing        -> pure ()
+            -- Update chat message timers
+            modifyIORef' chatStateRef (updateChatMessages dt)
             debugInfo <- if showDebug
                   then do
                     let V3 px' _ pz' = plPos player'
@@ -2274,6 +2376,8 @@ main = do
             spawnPos <- readIORef spawnPointRef
             playerXP <- readIORef playerXPRef
             let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText
+            chatState <- readIORef chatStateRef
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP chatState
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -2722,10 +2826,14 @@ tryTriggerAchievement achRef toastRef trigger = do
 -- achToastText: Just "name" when an achievement toast should be shown
 buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> VS.Vector Float
 buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> ChatState -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP chatState = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
     Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ achToastVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ chatMessageVerts
+    ChatInput -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ healthVerts ++ hungerVerts ++ chatInputVerts ++ chatMessageVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts
     ChestOpen     -> chestScreenVerts ++ cursorVerts
@@ -2985,6 +3093,29 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
     damageFlashVerts
       | damageFlash > 0 = quad (-1) (-1) 1 1 (0.8, 0.0, 0.0, damageFlash * 0.5)
       | otherwise = []
+
+    -- Chat input bar: shown when ChatInput mode is active
+    chatInputVerts =
+      let inputY = 0.80 :: Float  -- near bottom of screen
+          inputH = 0.10 :: Float
+          inputBg = quad (-0.98) inputY 0.98 (inputY + inputH) (0.0, 0.0, 0.0, 0.7)
+          buf = chatGetBuffer chatState
+          prompt = "> " ++ buf ++ "_"
+          inputText = renderText (-0.95) (inputY + 0.015) 0.7 (1.0, 1.0, 1.0, 1.0) prompt
+      in inputBg ++ inputText
+
+    -- Chat messages: visible output messages above the hotbar
+    chatMessageVerts =
+      let msgs = csMessages chatState
+          baseY = 0.70 :: Float
+          lineH = 0.08 :: Float
+          renderMsg idx (ChatMessage text timer) =
+            let y = baseY - fromIntegral idx * lineH
+                alpha = min 1.0 timer
+                msgBg = quad (-0.98) y 0.98 (y + lineH) (0.0, 0.0, 0.0, 0.4 * alpha)
+                msgText = renderText (-0.95) (y + 0.01) 0.6 (1.0, 1.0, 1.0, alpha) text
+            in msgBg ++ msgText
+      in concatMap (uncurry renderMsg) (zip [0 :: Int ..] (reverse (take 5 (reverse msgs))))
 
     -- Compass/clock info text above hotbar when selected
     compassClockVerts = case getSlot inv sel of
