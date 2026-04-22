@@ -80,6 +80,13 @@ itemColor (BlockItem bt) = case bt of
   Rose             -> (0.85, 0.15, 0.15, 1.0)
   BrownMushroom    -> (0.55, 0.4, 0.25, 1.0)
   RedMushroom      -> (0.8, 0.15, 0.15, 1.0)
+  Bookshelf        -> (0.55, 0.35, 0.2, 1.0)
+  Anvil            -> (0.45, 0.45, 0.48, 1.0)
+  BrewingStand     -> (0.5, 0.5, 0.55, 1.0)
+  Ice              -> (0.6, 0.75, 0.9, 0.7)
+  PackedIce        -> (0.5, 0.65, 0.85, 1.0)
+  RedstoneLamp     -> (0.85, 0.6, 0.25, 1.0)
+  Hopper           -> (0.4, 0.4, 0.42, 1.0)
   WheatCrop1       -> (0.55, 0.68, 0.2, 1.0)
   WheatCrop2       -> (0.58, 0.68, 0.22, 1.0)
   WheatCrop3       -> (0.62, 0.7, 0.24, 1.0)
@@ -140,6 +147,11 @@ itemColor GlassBottleItem = (0.7, 0.85, 0.95, 0.6)
 itemColor (PotionItem pt) = potionColor pt
 itemColor BoatItem = (0.6, 0.4, 0.2, 1.0)
 itemColor MinecartItem          = (0.6, 0.6, 0.6, 1.0)
+itemColor (BucketItem bt) = case bt of
+  BucketEmpty -> (0.7, 0.7, 0.7, 1.0)
+  BucketWater -> (0.3, 0.5, 0.9, 1.0)
+  BucketLava  -> (0.9, 0.4, 0.1, 1.0)
+  BucketMilk  -> (0.95, 0.95, 0.9, 1.0)
 
 -- | 3x3 mini-icon for item (row, col, color) — used in hotbar slot rendering
 itemMiniIcon :: Item -> [(Int, Int, (Float, Float, Float, Float))]

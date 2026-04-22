@@ -12,6 +12,7 @@ module Game.ItemRegistry
 import Game.Item
   ( Item(..), ToolMaterial(..)
   , ArmorSlot(..), ArmorMaterial(..)
+  , BucketType(..)
   , itemStackLimit, itemToBlock
   , toolInfo, ToolInfo(..)
   )
@@ -85,6 +86,7 @@ allRepresentativeItems = concat
   , [ (100, 13, BoatItem)
     , (101, 14, MinecartItem)
     ]
+  , bucketItems
   ]
   where
     blockItems =
@@ -122,6 +124,10 @@ allRepresentativeItems = concat
     potionItems =
       [ (fromIntegral (110 + fromEnum pt), 12, PotionItem pt)
       | pt <- [minBound .. maxBound]
+      ]
+    bucketItems =
+      [ (fromIntegral (120 + fromEnum bt), 15, BucketItem bt)
+      | bt <- [minBound .. maxBound]
       ]
 
 -- | Pre-populate a registry with all representative item types.

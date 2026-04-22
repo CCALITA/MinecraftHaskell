@@ -59,6 +59,7 @@ import Linear (V2(..), V3(..), V4(..))
 import qualified Data.Vector as V
 import Control.Concurrent.STM (atomically, readTVar)
 import qualified Data.HashMap.Strict as HM
+import Data.Function ((&))
 import qualified Data.Vector.Unboxed.Mutable as MUV
 
 main :: IO ()
@@ -114,6 +115,8 @@ main = hspec $ do
   mobLootDropSpec
   woodVariantsAndFloraSpec
   xpSpec
+  utilityBlockSpec
+  bucketItemSpec
   wheatCropGrowthSpec
   structurePlacementSpec
   executeCommandSpec
@@ -4293,6 +4296,229 @@ xpSpec = describe "Game.XP" $ do
     xpForMobKill Wolf `shouldBe` 3
 
 -- =========================================================================
+-- Utility Blocks
+-- =========================================================================
+utilityBlockSpec :: Spec
+utilityBlockSpec = describe "Utility blocks" $ do
+  -- Block properties
+  describe "blockProperties" $ do
+    it "Bookshelf is solid with hardness 1.5" $ do
+      let bp = blockProperties Bookshelf
+      bpSolid bp `shouldBe` True
+      bpTransparent bp `shouldBe` False
+      bpHardness bp `shouldBe` 1.5
+
+    it "Anvil is solid with hardness 5.0" $ do
+      let bp = blockProperties Anvil
+      bpSolid bp `shouldBe` True
+      bpTransparent bp `shouldBe` False
+      bpHardness bp `shouldBe` 5.0
+
+    it "BrewingStand is solid and transparent with hardness 0.5" $ do
+      let bp = blockProperties BrewingStand
+      bpSolid bp `shouldBe` True
+      bpTransparent bp `shouldBe` True
+      bpHardness bp `shouldBe` 0.5
+
+    it "BrewingStand emits light level 1" $ do
+      bpLightEmit (blockProperties BrewingStand) `shouldBe` 1
+
+    it "Ice is solid and transparent with hardness 0.5" $ do
+      let bp = blockProperties Ice
+      bpSolid bp `shouldBe` True
+      bpTransparent bp `shouldBe` True
+      bpHardness bp `shouldBe` 0.5
+
+    it "PackedIce is solid and opaque with hardness 0.5" $ do
+      let bp = blockProperties PackedIce
+      bpSolid bp `shouldBe` True
+      bpTransparent bp `shouldBe` False
+      bpHardness bp `shouldBe` 0.5
+
+    it "RedstoneLamp is solid and opaque with hardness 0.3" $ do
+      let bp = blockProperties RedstoneLamp
+      bpSolid bp `shouldBe` True
+      bpTransparent bp `shouldBe` False
+      bpHardness bp `shouldBe` 0.3
+
+    it "Hopper is solid and opaque with hardness 3.0" $ do
+      let bp = blockProperties Hopper
+      bpSolid bp `shouldBe` True
+      bpTransparent bp `shouldBe` False
+      bpHardness bp `shouldBe` 3.0
+
+  -- Enum values
+  describe "enum values" $ do
+    it "new utility blocks follow RedMushroom in enum order" $ do
+      fromEnum Bookshelf `shouldBe` fromEnum RedMushroom + 1
+      fromEnum Anvil `shouldBe` fromEnum RedMushroom + 2
+      fromEnum BrewingStand `shouldBe` fromEnum RedMushroom + 3
+      fromEnum Ice `shouldBe` fromEnum RedMushroom + 4
+      fromEnum PackedIce `shouldBe` fromEnum RedMushroom + 5
+      fromEnum RedstoneLamp `shouldBe` fromEnum RedMushroom + 6
+      fromEnum Hopper `shouldBe` fromEnum RedMushroom + 7
+
+    it "enum roundtrip for all new utility blocks" $ do
+      toEnum (fromEnum Bookshelf) `shouldBe` (Bookshelf :: BlockType)
+      toEnum (fromEnum Anvil) `shouldBe` (Anvil :: BlockType)
+      toEnum (fromEnum BrewingStand) `shouldBe` (BrewingStand :: BlockType)
+      toEnum (fromEnum Ice) `shouldBe` (Ice :: BlockType)
+      toEnum (fromEnum PackedIce) `shouldBe` (PackedIce :: BlockType)
+      toEnum (fromEnum RedstoneLamp) `shouldBe` (RedstoneLamp :: BlockType)
+      toEnum (fromEnum Hopper) `shouldBe` (Hopper :: BlockType)
+
+  -- Texture coordinates
+  describe "blockFaceTexCoords" $ do
+    it "Bookshelf has different top and side textures" $ do
+      blockFaceTexCoords Bookshelf FaceTop `shouldNotBe` blockFaceTexCoords Bookshelf FaceEast
+
+    it "Hopper has different top and side textures" $ do
+      blockFaceTexCoords Hopper FaceTop `shouldNotBe` blockFaceTexCoords Hopper FaceEast
+
+    it "all new block texcoords are valid atlas coords" $ do
+      let blocks = [Bookshelf, Anvil, BrewingStand, Ice, PackedIce, RedstoneLamp, Hopper]
+      mapM_ (\bt -> do
+        let V2 u v = blockFaceTexCoords bt FaceTop
+        u `shouldSatisfy` (>= 0)
+        v `shouldSatisfy` (>= 0)
+        u `shouldSatisfy` (< 16)
+        v `shouldSatisfy` (< 16)
+        ) blocks
+
+  -- Block drops
+  describe "blockDrops" $ do
+    it "Bookshelf drops 3 OakPlanks" $
+      blockDrops Bookshelf `shouldBe` [(BlockItem OakPlanks, 3)]
+
+    it "Anvil drops itself" $
+      blockDrops Anvil `shouldBe` [(BlockItem Anvil, 1)]
+
+    it "Ice drops nothing (melts)" $
+      blockDrops Ice `shouldBe` []
+
+    it "PackedIce drops itself" $
+      blockDrops PackedIce `shouldBe` [(BlockItem PackedIce, 1)]
+
+    it "RedstoneLamp drops itself" $
+      blockDrops RedstoneLamp `shouldBe` [(BlockItem RedstoneLamp, 1)]
+
+    it "Hopper drops itself" $
+      blockDrops Hopper `shouldBe` [(BlockItem Hopper, 1)]
+
+  -- Preferred tools
+  describe "blockPreferredTool" $ do
+    it "Bookshelf is mined with axe" $
+      blockPreferredTool Bookshelf `shouldBe` Just Axe
+
+    it "Anvil is mined with pickaxe" $
+      blockPreferredTool Anvil `shouldBe` Just Pickaxe
+
+    it "Ice is mined with pickaxe" $
+      blockPreferredTool Ice `shouldBe` Just Pickaxe
+
+    it "Hopper is mined with pickaxe" $
+      blockPreferredTool Hopper `shouldBe` Just Pickaxe
+
+  -- Harvest levels
+  describe "blockRequiredHarvestLevel" $ do
+    it "Anvil requires wood pickaxe or better" $
+      blockRequiredHarvestLevel Anvil `shouldBe` 1
+
+    it "Hopper requires wood pickaxe or better" $
+      blockRequiredHarvestLevel Hopper `shouldBe` 1
+
+    it "Bookshelf can be harvested by hand" $
+      blockRequiredHarvestLevel Bookshelf `shouldBe` 0
+
+  -- Crafting recipes
+  describe "crafting recipes" $ do
+    it "bookshelf crafts from 6 planks + 3 paper" $ do
+      let grid = emptyCraftingGrid 3
+            & \g -> setCraftingSlot g 0 0 (Just (BlockItem OakPlanks))
+            & \g -> setCraftingSlot g 0 1 (Just (BlockItem OakPlanks))
+            & \g -> setCraftingSlot g 0 2 (Just (BlockItem OakPlanks))
+            & \g -> setCraftingSlot g 1 0 (Just (MaterialItem Paper))
+            & \g -> setCraftingSlot g 1 1 (Just (MaterialItem Paper))
+            & \g -> setCraftingSlot g 1 2 (Just (MaterialItem Paper))
+            & \g -> setCraftingSlot g 2 0 (Just (BlockItem OakPlanks))
+            & \g -> setCraftingSlot g 2 1 (Just (BlockItem OakPlanks))
+            & \g -> setCraftingSlot g 2 2 (Just (BlockItem OakPlanks))
+      tryCraft grid `shouldBe` CraftSuccess (BlockItem Bookshelf) 1
+
+    it "redstone lamp crafts from 4 redstone dust + 1 glowstone" $ do
+      let grid = emptyCraftingGrid 3
+            & \g -> setCraftingSlot g 0 1 (Just (BlockItem RedstoneDust))
+            & \g -> setCraftingSlot g 1 0 (Just (BlockItem RedstoneDust))
+            & \g -> setCraftingSlot g 1 1 (Just (BlockItem Glowstone))
+            & \g -> setCraftingSlot g 1 2 (Just (BlockItem RedstoneDust))
+            & \g -> setCraftingSlot g 2 1 (Just (BlockItem RedstoneDust))
+      tryCraft grid `shouldBe` CraftSuccess (BlockItem RedstoneLamp) 1
+
+  -- Binary roundtrip for block items
+  describe "Binary roundtrip" $ do
+    it "new utility block items roundtrip through Binary" $ do
+      let blocks = [Bookshelf, Anvil, BrewingStand, Ice, PackedIce, RedstoneLamp, Hopper]
+      mapM_ (\bt -> decode (encode bt) `shouldBe` bt) blocks
+
+-- =========================================================================
+-- Bucket Items
+-- =========================================================================
+bucketItemSpec :: Spec
+bucketItemSpec = describe "Bucket items" $ do
+  -- Basic properties
+  describe "itemToBlock" $ do
+    it "BucketItem is not a block item" $
+      itemToBlock (BucketItem BucketEmpty) `shouldBe` Nothing
+
+    it "BucketItem water is not a block item" $
+      itemToBlock (BucketItem BucketWater) `shouldBe` Nothing
+
+  describe "isBlockItem" $ do
+    it "BucketItem is not a block item" $
+      isBlockItem (BucketItem BucketLava) `shouldBe` False
+
+  describe "itemStackLimit" $ do
+    it "empty bucket stacks to 16" $
+      itemStackLimit (BucketItem BucketEmpty) `shouldBe` 16
+
+    it "water bucket stacks to 16" $
+      itemStackLimit (BucketItem BucketWater) `shouldBe` 16
+
+    it "lava bucket stacks to 16" $
+      itemStackLimit (BucketItem BucketLava) `shouldBe` 16
+
+    it "milk bucket stacks to 16" $
+      itemStackLimit (BucketItem BucketMilk) `shouldBe` 16
+
+  -- Binary roundtrip
+  describe "Binary roundtrip" $ do
+    it "all bucket types roundtrip through Binary" $ do
+      let buckets = [BucketEmpty, BucketWater, BucketLava, BucketMilk]
+      mapM_ (\bt -> do
+        let item = BucketItem bt
+        decode (encode item) `shouldBe` item
+        ) buckets
+
+  -- BucketType enum
+  describe "BucketType enum" $ do
+    it "BucketType has correct enum order" $ do
+      fromEnum BucketEmpty `shouldBe` 0
+      fromEnum BucketWater `shouldBe` 1
+      fromEnum BucketLava  `shouldBe` 2
+      fromEnum BucketMilk  `shouldBe` 3
+
+    it "BucketType roundtrips through enum" $ do
+      let types = [BucketEmpty, BucketWater, BucketLava, BucketMilk]
+      mapM_ (\bt -> toEnum (fromEnum bt) `shouldBe` bt) types
+
+  -- Crafting
+  describe "crafting" $ do
+    it "empty bucket crafts from 3 iron ingots in V-shape" $ do
+      let grid = emptyCraftingGrid 3
+            & \g -> setCraftingSlot g 0 0 (Just (MaterialItem IronIngot))
+            & \g -> setCraftingSlot g 0 2 (Just (MaterialItem IronIngot))
+            & \g -> setCraftingSlot g 1 1 (Just (MaterialItem IronIngot))
+      tryCraft grid `shouldBe` CraftSuccess (BucketItem BucketEmpty) 1
 -- Wheat Crop Growth Stages
 -- =========================================================================
 wheatCropGrowthSpec :: Spec
@@ -4382,10 +4608,9 @@ wheatCropGrowthSpec = describe "Wheat crop growth stages" $ do
     blockDrops WheatCrop7 `shouldBe` [(MaterialItem Wheat, 1), (MaterialItem WheatSeeds, 1)]
 
   -- Enum ordering (added at the end)
-  it "wheat crop stages are at end of BlockType enum" $ do
-    fromEnum WheatCrop1 `shouldBe` fromEnum RedMushroom + 1
-    fromEnum WheatCrop7 `shouldBe` fromEnum RedMushroom + 7
-    fromEnum WheatCrop7 `shouldBe` fromEnum (maxBound :: BlockType)
+  it "wheat crop stages follow Hopper in enum" $ do
+    fromEnum WheatCrop1 `shouldBe` fromEnum Hopper + 1
+    fromEnum WheatCrop7 `shouldBe` fromEnum Hopper + 7
 -- Structure Placement in World Generation
 -- =========================================================================
 structurePlacementSpec :: Spec
