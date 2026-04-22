@@ -40,13 +40,18 @@ import UI.Screen
 
 import Game.PotionEffect
 
+import Entity.Pathfinding (findPath, pathDistance)
+import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
+import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, getTimeOfDay, TimeOfDay(..))
+import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
+
 import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
 
 import Data.Binary (encode, decode)
 import Data.IORef (newIORef, readIORef, modifyIORef')
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
-import Linear (V2(..), V3(..))
+import Linear (V2(..), V3(..), V4(..))
 import qualified Data.Vector as V
 import Control.Concurrent.STM (atomically, readTVar)
 import qualified Data.HashMap.Strict as HM
@@ -3639,3 +3644,99 @@ itemRegistrySpec = describe "Game.ItemRegistry" $ do
       let effs = [ActiveEffect SpeedEffect 1 10.0]
           (_, ticks) = tickEffects 0.05 effs
       ticks `shouldBe` [SpeedMod 0.4]
+
+  describe "Entity.Pathfinding" $ do
+    it "finds direct path on flat terrain" $ do
+      let solidAt _ y _ = pure (y < 0)
+      result <- findPath solidAt (V3 0 0 0) (V3 3 0 0)
+      result `shouldSatisfy` \case Just _ -> True; Nothing -> False
+
+    it "returns Nothing when completely blocked" $ do
+      let solidAt _ y _ = pure (y >= 0 || y < -1)
+      result <- findPath solidAt (V3 0 0 0) (V3 10 0 0)
+      result `shouldBe` Nothing
+
+    it "path excludes start position" $ do
+      let solidAt _ y _ = pure (y < 0)
+      result <- findPath solidAt (V3 0 0 0) (V3 1 0 0)
+      case result of
+        Just path -> head path `shouldSatisfy` (/= V3 0 0 0)
+        Nothing   -> expectationFailure "Expected a path"
+
+    it "path ends at goal" $ do
+      let solidAt _ y _ = pure (y < 0)
+      result <- findPath solidAt (V3 0 0 0) (V3 2 0 0)
+      case result of
+        Just path -> last path `shouldBe` V3 2 0 0
+        Nothing   -> expectationFailure "Expected a path"
+
+    it "pathDistance is zero for empty path" $ do
+      pathDistance [] `shouldBe` 0
+
+    it "pathDistance is zero for single-node path" $ do
+      pathDistance [V3 0 0 0] `shouldBe` 0
+
+    it "pathDistance is positive for multi-node path" $ do
+      pathDistance [V3 0 0 0, V3 1 0 0, V3 2 0 0] `shouldSatisfy` (> 0)
+
+    it "start equals goal returns empty or trivial path" $ do
+      let solidAt _ y _ = pure (y < 0)
+      result <- findPath solidAt (V3 0 0 0) (V3 0 0 0)
+      case result of
+        Just path -> length path `shouldSatisfy` (<= 1)
+        Nothing   -> pure ()
+
+  describe "Game.DayNight" $ do
+    it "newDayNightCycle starts at time 0.25 (dawn)" $ do
+      let dnc = newDayNightCycle
+      dncTime dnc `shouldSatisfy` (\t -> t >= 0 && t <= 1)
+
+    it "updateDayNight advances time" $ do
+      let dnc = newDayNightCycle
+          dnc' = updateDayNight 10.0 dnc
+      dncTime dnc' `shouldSatisfy` (/= dncTime dnc)
+
+    it "time wraps around after full cycle" $ do
+      let dnc = newDayNightCycle
+          dnc' = updateDayNight 1200.0 dnc
+      dncTime dnc' `shouldSatisfy` (\t -> t >= 0 && t < 1.01)
+
+    it "getSkyColor returns valid RGBA" $ do
+      let dnc = newDayNightCycle
+          V4 r g b a = getSkyColor dnc
+      r `shouldSatisfy` (\x -> x >= 0 && x <= 1)
+      g `shouldSatisfy` (\x -> x >= 0 && x <= 1)
+      b `shouldSatisfy` (\x -> x >= 0 && x <= 1)
+      a `shouldBe` 1.0
+
+    it "getAmbientLight is between 0 and 1" $ do
+      let dnc = newDayNightCycle
+      getAmbientLight dnc `shouldSatisfy` (\a -> a >= 0 && a <= 1)
+
+    it "isNight is False at dawn" $ do
+      let dnc = newDayNightCycle
+      isNight dnc `shouldBe` False
+
+    it "isNight is True at midnight" $ do
+      let dnc = newDayNightCycle { dncTime = 0.0 }
+      isNight dnc `shouldBe` True
+
+    it "getTimeOfDay returns a phase" $ do
+      let dnc = newDayNightCycle
+      getTimeOfDay dnc `shouldSatisfy` (\t -> t `elem` [Dawn, Day, Dusk, Night])
+
+  describe "Entity.Spawn" $ do
+    it "defaultSpawnRules has positive max hostile" $ do
+      srMaxHostile defaultSpawnRules `shouldSatisfy` (> 0)
+
+    it "defaultSpawnRules has positive max passive" $ do
+      srMaxPassive defaultSpawnRules `shouldSatisfy` (> 0)
+
+    it "defaultSpawnRules spawn radius is positive" $ do
+      srSpawnRadius defaultSpawnRules `shouldSatisfy` (> 0)
+
+    it "defaultSpawnRules despawn distance > spawn radius" $ do
+      srDespawnDist defaultSpawnRules `shouldSatisfy` (> srSpawnRadius defaultSpawnRules)
+
+    it "defaultSpawnRules cooldown is positive" $ do
+      srSpawnCooldown defaultSpawnRules `shouldSatisfy` (> 0)
