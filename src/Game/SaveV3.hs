@@ -5,10 +5,12 @@ module Game.SaveV3
   , encodeSaveV3
   , decodeSaveV3
   , migrateV2toV3
+  , savePlayerV3
+  , loadPlayerV3
   ) where
 
 import Game.Item (Item)
-import Game.Save (SaveData(..))
+import Game.Save (SaveData(..), playerSavePath)
 import Game.Player (maxAirSupply, defaultSaturation)
 
 import Data.Binary (Binary(..), encode, decodeOrFail)
@@ -16,6 +18,7 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import GHC.Generics (Generic)
 import Linear (V2(..))
+import System.Directory (createDirectoryIfMissing, doesFileExist)
 
 -- | Save format version for V3
 savev3Version :: Word8
@@ -101,3 +104,37 @@ migrateV2toV3 v2 = SaveDataV3
   , sv3WorldSeed    = sdWorldSeed v2
   , sv3ChunkMetas   = []
   }
+
+-- | Save player state in V3 format with version prefix.
+savePlayerV3 :: FilePath -> SaveDataV3 -> IO ()
+savePlayerV3 saveDir sd = do
+  createDirectoryIfMissing True saveDir
+  BL.writeFile (playerSavePath saveDir) (encodeSaveV3 sd)
+
+-- | Load player state, auto-detecting version.
+-- V3 saves are loaded directly; V2 saves are migrated via 'migrateV2toV3'.
+-- Returns 'Nothing' when no save file exists or parsing fails.
+loadPlayerV3 :: FilePath -> IO (Maybe SaveDataV3)
+loadPlayerV3 saveDir = do
+  let path = playerSavePath saveDir
+  exists <- doesFileExist path
+  if not exists
+    then pure Nothing
+    else do
+      bytes <- BL.readFile path
+      case decodeOrFail bytes of
+        Left _ -> Nothing <$ pure ()
+        Right (rest, _, version) -> case (version :: Word8) of
+          v | v == savev3Version ->
+              -- V3 format: decode payload directly
+              case decodeOrFail rest of
+                Right (_, _, sd) -> pure (Just sd)
+                Left _ -> pure Nothing
+          2 ->
+              -- V2 format: decode then migrate
+              case decodeOrFail rest of
+                Right (_, _, sd) -> pure (Just (migrateV2toV3 sd))
+                Left _ -> pure Nothing
+          _ ->
+              -- Unknown version: not supported
+              pure Nothing
