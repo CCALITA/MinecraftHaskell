@@ -148,6 +148,25 @@ tileFull tileIdx lx ly = case tileIdx of
   53 -> orePattern lx ly (60, 200, 80)   -- emerald ore (V2 5 3)
   67 -> mossyCobblePattern lx ly     -- mossy cobblestone (V2 3 4)
   68 -> mossyStoneBrickPattern lx ly -- mossy stone brick (V2 4 4)
+  -- Row 6: wood variants and flora (tileIdx 96-111)
+  96 -> birchBark lx ly              -- birch log bark (V2 0 6)
+  97 -> birchLogTop lx ly            -- birch log cross-section (V2 1 6)
+  98 -> birchLeavesPattern lx ly     -- birch leaves (V2 2 6)
+  99 -> birchPlanksPattern lx ly     -- birch planks (V2 3 6)
+  100 -> spruceBark lx ly            -- spruce log bark (V2 4 6)
+  101 -> spruceLogTop lx ly          -- spruce log cross-section (V2 5 6)
+  102 -> spruceLeavesPattern lx ly   -- spruce leaves (V2 6 6)
+  103 -> sprucePlanksPattern lx ly   -- spruce planks (V2 7 6)
+  104 -> jungleBark lx ly            -- jungle log bark (V2 8 6)
+  105 -> jungleLogTop lx ly          -- jungle log cross-section (V2 9 6)
+  106 -> jungleLeavesPattern lx ly   -- jungle leaves (V2 10 6)
+  107 -> junglePlanksPattern lx ly   -- jungle planks (V2 11 6)
+  108 -> tallGrassPattern lx ly      -- tall grass (V2 12 6)
+  109 -> dandelionPattern lx ly      -- dandelion (V2 13 6)
+  110 -> rosePattern lx ly           -- rose (V2 14 6)
+  111 -> brownMushroomPattern lx ly  -- brown mushroom (V2 15 6)
+  -- Row 7: continued flora
+  112 -> redMushroomPattern lx ly    -- red mushroom (V2 0 7)
   -- Fallback: checkerboard pattern so missing tiles are visible
   _  -> let checker = (lx + ly) `mod` 2 == 0
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
@@ -660,6 +679,139 @@ tileFull tileIdx lx ly = case tileIdx of
       in if isMortar && mossy then (60, fromIntegral (120 + n), 40, 255)
          else if isMortar then (100, fromIntegral (100 + n), 100, 255)
          else let v = fromIntegral (130 + n) in (v, v, v, 255)
+
+    -- Birch bark: white-gray with dark horizontal bands
+    birchBark x y =
+      let band = y `mod` 5 == 0 || y `mod` 5 == 1
+          n = pixHash x y 4000 `mod` 20
+          (r, g, b) = if band then (50 + fromIntegral n, 45 + fromIntegral n, 40 + fromIntegral n)
+                      else (200 + fromIntegral (n `div` 2), 195 + fromIntegral (n `div` 2), 185 + fromIntegral (n `div` 2))
+      in (r, g, b, 255)
+
+    -- Birch log cross-section
+    birchLogTop x y =
+      let dist = abs (x - 7) + abs (y - 7)
+          ring = dist `div` 2
+      in if ring <= 1 then (180, 160, 120, 255)
+         else if ring <= 3 then (210, 200, 160, 255)
+         else (200, 195, 185, 255)
+
+    -- Birch leaves: lighter green with yellowish tint
+    birchLeavesPattern x y =
+      let n = pixHash x y 4100 `mod` 100
+          hole = n < 15
+      in if hole then (30, 70, 20, 180)
+         else (60 + fromIntegral (n `mod` 30), 140 + fromIntegral (n `mod` 30), 40 + fromIntegral (n `mod` 20), 255)
+
+    -- Birch planks: lighter than oak, pale yellowish
+    birchPlanksPattern x y =
+      let grain = pixHash x (y `div` 4) 4200 `mod` 100
+          base = if y `mod` 4 == 0 then 190 else if grain < 20 then 210 else 220
+          r = base; g = base * 200 `div` 230; b = base * 160 `div` 230
+      in (fromIntegral r, fromIntegral g, fromIntegral b, 255)
+
+    -- Spruce bark: dark brown, almost black
+    spruceBark x y =
+      let stripe = pixHash (x `div` 2) y 4300 `mod` 100
+          dark = x `mod` 3 == 0 || stripe < 15
+          (r, g, b) = if dark then (35, 25, 15) else (55, 40, 25)
+      in (r, g, b, 255)
+
+    -- Spruce log cross-section
+    spruceLogTop x y =
+      let dist = abs (x - 7) + abs (y - 7)
+          ring = dist `div` 2
+      in if ring <= 1 then (50, 35, 20, 255)
+         else if ring <= 3 then (120, 90, 50, 255)
+         else (55, 40, 25, 255)
+
+    -- Spruce leaves: dark blue-green
+    spruceLeavesPattern x y =
+      let n = pixHash x y 4400 `mod` 100
+          hole = n < 12
+      in if hole then (10, 30, 15, 180)
+         else (20 + fromIntegral (n `mod` 20), 60 + fromIntegral (n `mod` 30), 25 + fromIntegral (n `mod` 15), 255)
+
+    -- Spruce planks: darker than oak
+    sprucePlanksPattern x y =
+      let grain = pixHash x (y `div` 4) 4500 `mod` 100
+          base = if y `mod` 4 == 0 then 110 else if grain < 20 then 130 else 140
+          r = base; g = base * 85 `div` 140; b = base * 55 `div` 140
+      in (fromIntegral r, fromIntegral g, fromIntegral b, 255)
+
+    -- Jungle bark: pale with green-brown tint and vertical lines
+    jungleBark x y =
+      let stripe = pixHash (x `div` 2) y 4600 `mod` 100
+          dark = x `mod` 4 == 0 || stripe < 12
+          (r, g, b) = if dark then (80, 65, 35) else (120, 100, 55)
+      in (r, g, b, 255)
+
+    -- Jungle log cross-section
+    jungleLogTop x y =
+      let dist = abs (x - 7) + abs (y - 7)
+          ring = dist `div` 2
+      in if ring <= 1 then (90, 70, 35, 255)
+         else if ring <= 3 then (150, 130, 70, 255)
+         else (120, 100, 55, 255)
+
+    -- Jungle leaves: vibrant green
+    jungleLeavesPattern x y =
+      let n = pixHash x y 4700 `mod` 100
+          hole = n < 10
+      in if hole then (15, 50, 10, 180)
+         else (30 + fromIntegral (n `mod` 25), 100 + fromIntegral (n `mod` 40), 20 + fromIntegral (n `mod` 15), 255)
+
+    -- Jungle planks: warm reddish-brown
+    junglePlanksPattern x y =
+      let grain = pixHash x (y `div` 4) 4800 `mod` 100
+          base = if y `mod` 4 == 0 then 150 else if grain < 20 then 170 else 180
+          r = base; g = base * 110 `div` 180; b = base * 75 `div` 180
+      in (fromIntegral r, fromIntegral g, fromIntegral b, 255)
+
+    -- Tall grass: green blades on transparent background
+    tallGrassPattern x y =
+      let isBlade = (x `mod` 3 == 1 || x `mod` 5 == 2) && y >= 3
+          n = pixHash x y 4900 `mod` 50
+      in if isBlade then (40 + fromIntegral n, 130 + fromIntegral (n `div` 2), 25, 255)
+         else (0, 0, 0, 0)
+
+    -- Dandelion: yellow flower on green stem
+    dandelionPattern x y =
+      let isFlower = x >= 5 && x <= 10 && y >= 2 && y <= 6
+          isStem = x >= 7 && x <= 8 && y >= 7 && y <= 14
+      in if isFlower then (255, 220, 50, 255)
+         else if isStem then (50, 120, 30, 255)
+         else (0, 0, 0, 0)
+
+    -- Rose: red flower on green stem
+    rosePattern x y =
+      let isFlower = x >= 5 && x <= 10 && y >= 2 && y <= 7
+                     && not (x == 5 && y == 2) && not (x == 10 && y == 2)
+          isStem = x >= 7 && x <= 8 && y >= 8 && y <= 14
+      in if isFlower then (200, 30, 30, 255)
+         else if isStem then (50, 120, 30, 255)
+         else (0, 0, 0, 0)
+
+    -- Brown mushroom: brown cap on thin stem
+    brownMushroomPattern x y =
+      let isCap = x >= 4 && x <= 11 && y >= 3 && y <= 8
+                  && not (x == 4 && y == 3) && not (x == 11 && y == 3)
+          isStem = x >= 7 && x <= 8 && y >= 9 && y <= 14
+          n = pixHash x y 5000 `mod` 20
+      in if isCap then (140 + fromIntegral n, 100 + fromIntegral (n `div` 2), 60, 255)
+         else if isStem then (200, 190, 170, 255)
+         else (0, 0, 0, 0)
+
+    -- Red mushroom: red cap with white spots on thin stem
+    redMushroomPattern x y =
+      let isCap = x >= 4 && x <= 11 && y >= 3 && y <= 8
+                  && not (x == 4 && y == 3) && not (x == 11 && y == 3)
+          isSpot = isCap && ((x == 6 && y == 5) || (x == 9 && y == 4) || (x == 7 && y == 7))
+          isStem = x >= 7 && x <= 8 && y >= 9 && y <= 14
+      in if isSpot then (240, 240, 240, 255)
+         else if isCap then (200, 30, 30, 255)
+         else if isStem then (200, 190, 170, 255)
+         else (0, 0, 0, 0)
 
 -- | Create a texture from raw RGBA pixel data
 createTextureFromPixels

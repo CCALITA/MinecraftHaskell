@@ -107,6 +107,7 @@ main = hspec $ do
   recipeRegistrySpec
   bedSleepSpec
   mobLootDropSpec
+  woodVariantsAndFloraSpec
 
 -- =========================================================================
 -- Block
@@ -4109,3 +4110,96 @@ mobLootDropSpec = describe "Mob loot drops" $ do
         maxC = maximum counts
     minC `shouldBe` 1
     maxC `shouldBe` 3
+
+-- =========================================================================
+-- Wood Variants and Flora Blocks
+-- =========================================================================
+woodVariantsAndFloraSpec :: Spec
+woodVariantsAndFloraSpec = describe "Wood variants and flora blocks" $ do
+  -- Block properties
+  describe "blockProperties" $ do
+    it "BirchLog is solid with hardness 2.0" $ do
+      let bp = blockProperties BirchLog
+      bpSolid bp `shouldBe` True
+      bpTransparent bp `shouldBe` False
+      bpHardness bp `shouldBe` 2.0
+
+    it "SpruceLeaves is solid and transparent with hardness 0.2" $ do
+      let bp = blockProperties SpruceLeaves
+      bpSolid bp `shouldBe` True
+      bpTransparent bp `shouldBe` True
+      bpHardness bp `shouldBe` 0.2
+
+    it "JunglePlanks is solid with hardness 2.0" $ do
+      let bp = blockProperties JunglePlanks
+      bpSolid bp `shouldBe` True
+      bpTransparent bp `shouldBe` False
+      bpHardness bp `shouldBe` 2.0
+
+    it "TallGrass is non-solid and transparent with hardness 0.0" $ do
+      let bp = blockProperties TallGrass
+      bpSolid bp `shouldBe` False
+      bpTransparent bp `shouldBe` True
+      bpHardness bp `shouldBe` 0.0
+
+    it "Dandelion is non-solid and transparent" $ do
+      let bp = blockProperties Dandelion
+      bpSolid bp `shouldBe` False
+      bpTransparent bp `shouldBe` True
+
+    it "Rose is non-solid and transparent" $ do
+      let bp = blockProperties Rose
+      bpSolid bp `shouldBe` False
+      bpTransparent bp `shouldBe` True
+
+    it "BrownMushroom is non-solid and transparent" $ do
+      let bp = blockProperties BrownMushroom
+      bpSolid bp `shouldBe` False
+      bpTransparent bp `shouldBe` True
+
+    it "RedMushroom is non-solid and transparent" $ do
+      let bp = blockProperties RedMushroom
+      bpSolid bp `shouldBe` False
+      bpTransparent bp `shouldBe` True
+
+  -- isLeafBlock
+  describe "isLeafBlock" $ do
+    it "BirchLeaves is a leaf block" $
+      isLeafBlock BirchLeaves `shouldBe` True
+    it "SpruceLeaves is a leaf block" $
+      isLeafBlock SpruceLeaves `shouldBe` True
+    it "JungleLeaves is a leaf block" $
+      isLeafBlock JungleLeaves `shouldBe` True
+    it "BirchLog is not a leaf block" $
+      isLeafBlock BirchLog `shouldBe` False
+
+  -- Crafting recipes
+  describe "crafting recipes" $ do
+    it "BirchLog crafts into 4 BirchPlanks" $ do
+      let grid = setCraftingSlot (emptyCraftingGrid 2) 0 0 (Just (BlockItem BirchLog))
+      tryCraft grid `shouldBe` CraftSuccess (BlockItem BirchPlanks) 4
+
+    it "SpruceLog crafts into 4 SprucePlanks" $ do
+      let grid = setCraftingSlot (emptyCraftingGrid 2) 0 0 (Just (BlockItem SpruceLog))
+      tryCraft grid `shouldBe` CraftSuccess (BlockItem SprucePlanks) 4
+
+    it "JungleLog crafts into 4 JunglePlanks" $ do
+      let grid = setCraftingSlot (emptyCraftingGrid 2) 0 0 (Just (BlockItem JungleLog))
+      tryCraft grid `shouldBe` CraftSuccess (BlockItem JunglePlanks) 4
+
+  -- Block drops
+  describe "blockDrops" $ do
+    it "BirchLog drops itself" $
+      blockDrops BirchLog `shouldBe` [(BlockItem BirchLog, 1)]
+    it "SpruceLog drops itself" $
+      blockDrops SpruceLog `shouldBe` [(BlockItem SpruceLog, 1)]
+    it "JungleLog drops itself" $
+      blockDrops JungleLog `shouldBe` [(BlockItem JungleLog, 1)]
+    it "BirchLeaves drops a sapling" $
+      blockDrops BirchLeaves `shouldBe` [(BlockItem OakSapling, 1)]
+    it "TallGrass drops nothing" $
+      blockDrops TallGrass `shouldBe` []
+    it "Dandelion drops itself" $
+      blockDrops Dandelion `shouldBe` [(BlockItem Dandelion, 1)]
+    it "RedMushroom drops itself" $
+      blockDrops RedMushroom `shouldBe` [(BlockItem RedMushroom, 1)]

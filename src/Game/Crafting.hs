@@ -125,6 +125,24 @@ allRecipes =
       , rcResult  = BlockItem OakPlanks
       , rcCount   = 4
       }
+  -- 4 birch planks from 1 birch log
+  , Recipe
+      { rcPattern = [[bi BirchLog]]
+      , rcResult  = BlockItem BirchPlanks
+      , rcCount   = 4
+      }
+  -- 4 spruce planks from 1 spruce log
+  , Recipe
+      { rcPattern = [[bi SpruceLog]]
+      , rcResult  = BlockItem SprucePlanks
+      , rcCount   = 4
+      }
+  -- 4 jungle planks from 1 jungle log
+  , Recipe
+      { rcPattern = [[bi JungleLog]]
+      , rcResult  = BlockItem JunglePlanks
+      , rcCount   = 4
+      }
   -- Crafting table from 4 planks (2x2)
   , Recipe
       { rcPattern = [[bi OakPlanks, bi OakPlanks]
