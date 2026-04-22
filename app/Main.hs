@@ -48,7 +48,7 @@ import Engine.Sound
 import Game.Particle
 import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpProgress)
 
-import World.Dimension (DimensionType(..), detectPortalFrame, netherCoords, overworldCoords, portalTransitTime)
+import World.Dimension (DimensionType(..), dimensionSkyColor, detectPortalFrame, netherCoords, overworldCoords, portalTransitTime)
 
 import Game.Config (GameConfig(..), defaultConfig)
 import Game.Event (emit, GameEvent(..))
@@ -2342,7 +2342,7 @@ main = do
                   , uboProjection   = transpose $ cameraProjectionMatrix aspect 0.1 1000 cam
                   , uboSunDirection = V4 sx sy sz 0
                   , uboAmbientLight = getAmbientLight dayNightVal * weatherAmbientMultiplier weatherVal
-                  , _uboPad1        = 0
+                  , uboTime         = realToFrac now
                   , _uboPad2        = 0
                   , _uboPad3        = 0
                   }
@@ -2359,10 +2359,12 @@ main = do
                              , isAABBInFrustum frustum minCorner maxCorner
                              ]
 
-            -- Compute sky color from day/night cycle, adjusted for weather
+            -- Compute sky color from day/night cycle, adjusted for weather and dimension
+            curDimVal <- readIORef (gsDimension gs)
             let skyMul = weatherSkyMultiplier weatherVal
                 V4 r g b a = getSkyColor dayNightVal
-                V4 skyR skyG skyB skyA = V4 (r * skyMul) (g * skyMul) (b * skyMul) a
+                V4 dr dg db _da = dimensionSkyColor curDimVal
+                V4 skyR skyG skyB skyA = V4 (r * skyMul * dr) (g * skyMul * dg) (b * skyMul * db) a
 
             -- Per-frame raycast for block target highlight
             do let eyePos = plPos player + V3 0 1.62 0

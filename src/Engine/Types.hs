@@ -41,7 +41,7 @@ data UniformBufferObject = UniformBufferObject
   , uboProjection   :: !(M44 Float)
   , uboSunDirection :: !(V4 Float)    -- xyz = sun dir, w = unused (padding)
   , uboAmbientLight :: !Float         -- 0.0-1.0 ambient brightness
-  , _uboPad1        :: !Float         -- padding to 16-byte alignment
+  , uboTime         :: !Float         -- elapsed time in seconds (for animated textures)
   , _uboPad2        :: !Float
   , _uboPad3        :: !Float
   } deriving stock (Show, Eq, Generic)
@@ -56,15 +56,16 @@ instance Storable UniformBufferObject where
     proj <- peekByteOff p 128
     sunDir <- peekByteOff p 192
     ambient <- peekByteOff p 208
-    pure $ UniformBufferObject m v proj sunDir ambient 0 0 0
-  poke ptr (UniformBufferObject m v proj sunDir ambient _ _ _) = do
+    t <- peekByteOff p 212
+    pure $ UniformBufferObject m v proj sunDir ambient t 0 0
+  poke ptr (UniformBufferObject m v proj sunDir ambient t _ _) = do
     let p = castPtr ptr
     pokeByteOff p 0   m
     pokeByteOff p 64  v
     pokeByteOff p 128 proj
     pokeByteOff p 192 sunDir
     pokeByteOff p 208 ambient
-    pokeByteOff p 212 (0 :: Float)
+    pokeByteOff p 212 t
     pokeByteOff p 216 (0 :: Float)
     pokeByteOff p 220 (0 :: Float)
 
