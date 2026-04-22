@@ -24,6 +24,7 @@ import Game.Player
 import Game.Physics (BlockQuery, BlockHeightQuery)
 import Game.Inventory
 import Game.Item
+import Game.Bucket (BucketAction(..), determineBucketAction)
 import Game.Crafting
 import Game.Enchanting
 import Game.DayNight
@@ -1216,6 +1217,30 @@ main = do
                                   _ -> pure ()
                                 _ <- spawnEntity entityWorld boatPos 1.0 "Boat"
                                 putStrLn $ "Placed boat at " ++ show boatPos
+                            Just (ItemStack (BucketItem bucketTy) _) -> do
+                              let sel = invSelected inv
+                              case determineBucketAction bucketTy hitBlock of
+                                BucketPickup _fluidBlock newBucket -> do
+                                  -- Pick up: remove fluid at targeted block, replace bucket in inventory
+                                  removeFluid fluidState world (V3 bx by bz)
+                                  writeIORef inventoryRef (setSlot inv sel (Just (ItemStack (BucketItem newBucket) 1)))
+                                  rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef bx bz
+                                  putStrLn $ "Picked up fluid at " ++ show (V3 bx by bz)
+                                BucketPlace fluidBlock _emptyBucket -> do
+                                  -- Place: put fluid at adjacent position, replace bucket with empty
+                                  let V3 nx ny nz = rhFaceNormal hit
+                                      placePos@(V3 px' _ pz') = V3 (bx + nx) (by + ny) (bz + nz)
+                                  existing <- worldGetBlock world placePos
+                                  when (existing == Air) $ do
+                                    let ft = case fluidBlock of
+                                              Water -> FluidWater
+                                              Lava  -> FluidLava
+                                              _     -> FluidWater  -- unreachable
+                                    addFluidSource fluidState world placePos ft
+                                    writeIORef inventoryRef (setSlot inv sel (Just (ItemStack (BucketItem BucketEmpty) 1)))
+                                    rebuildChunkAt world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef px' pz'
+                                    putStrLn $ "Placed fluid at " ++ show placePos
+                                BucketNoAction -> pure ()
                             Just (ItemStack item _) -> case itemToBlock item of
                               Nothing -> pure ()
                               Just bt -> do
@@ -2441,9 +2466,8 @@ main = do
             let particleVerts = if mode == Playing then renderParticles particles vp else []
             spawnPos <- readIORef spawnPointRef
             playerXP <- readIORef playerXPRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText
             chatState <- readIORef chatStateRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP chatState
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -2890,15 +2914,12 @@ tryTriggerAchievement achRef toastRef trigger = do
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- sleepMsgText: Just "message" when a bed-related message should be shown
 -- achToastText: Just "name" when an achievement toast should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText = VS.fromList $
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> ChatState -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP chatState = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
-    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ achToastVerts
-    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ chatMessageVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ achToastVerts ++ chatMessageVerts
     ChatInput -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ healthVerts ++ hungerVerts ++ chatInputVerts ++ chatMessageVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts

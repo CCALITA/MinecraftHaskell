@@ -82,6 +82,7 @@ library
     Game.Save
     Game.SaveV3
     Game.State
+    Game.Bucket
     Game.ItemDisplay
     Game.ItemRegistry
     Game.DroppedItem
