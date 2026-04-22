@@ -31,9 +31,10 @@ import World.Dimension (DimensionType(..))
 import World.World (World)
 import Engine.Vulkan.Memory (BufferAllocation)
 import Entity.Mob (AIState)
+import Entity.Villager (VillagerProfession, TradeOffer)
 
 -- | Game UI mode
-data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen | FurnaceOpen | DispenserOpen | EnchantingOpen | DeathScreen | ChatInput
+data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen | FurnaceOpen | DispenserOpen | EnchantingOpen | VillagerTrading | DeathScreen | ChatInput
   deriving stock (Show, Eq)
 
 -- | Arrow projectile fired by Skeletons
@@ -116,6 +117,8 @@ data GameState = GameState
   , gsDimension        :: !(IORef DimensionType)
   , gsNetherWorld      :: !(IORef (Maybe World))
   , gsPortalTimer      :: !(IORef Float)
+  , gsVillagerProf     :: !(IORef (Maybe VillagerProfession))
+  , gsVillagerTrades   :: !(IORef [TradeOffer])
   }
 
 -- | Create a fresh GameState with default initial values.
@@ -195,3 +198,5 @@ newGameState spawnPos = do
     <*> newIORef Overworld
     <*> newIORef Nothing       -- gsNetherWorld
     <*> newIORef 0.0
+    <*> newIORef Nothing
+    <*> newIORef []
