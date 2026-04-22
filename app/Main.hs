@@ -16,7 +16,7 @@ import Engine.Vulkan.Command
 import Engine.Vulkan.Memory
 import Engine.Vulkan.Descriptor
 import Engine.Vulkan.Texture
-import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid, isGravityAffected, isLeafBlock, isWheatCropBlock, blockCollisionHeight)
+import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid, isGravityAffected, isLeafBlock, isWheatCropBlock, blockCollisionHeight, isPistonBlock, pistonDirection, isPistonHeadBlock, pistonHeadForPiston)
 import World.Chunk
 import World.Generation
 import World.World
@@ -1297,7 +1297,20 @@ main = do
                                           then writeIORef inventoryRef (setSlot inv sel Nothing)
                                           else writeIORef inventoryRef (setSlot inv sel (Just (ItemStack si (cnt - 1))))
                                       _ -> pure ()
-                                    worldSetBlock world placePos bt
+                                    -- Orient piston by player look direction
+                                    let placeBt = if bt == Piston
+                                          then let yawR = plYaw player * pi / 180
+                                                   pitchR = plPitch player * pi / 180
+                                                   ax = abs (sin yawR * cos pitchR)
+                                                   az = abs (cos yawR * cos pitchR)
+                                                   ay = abs (sin pitchR)
+                                               in if ay > ax && ay > az
+                                                    then if sin pitchR > 0 then Piston else PistonDown
+                                                    else if ax > az
+                                                      then if sin yawR > 0 then PistonEast else PistonWest
+                                                      else if cos yawR > 0 then PistonNorth else PistonSouth
+                                          else bt
+                                    worldSetBlock world placePos placeBt
                                     playSound soundSystem SndBlockPlace
                                     let V3 px' _ pz' = placePos
                                     when (isGravityAffected bt) $
@@ -3831,7 +3844,7 @@ updateIronDoors world rsState sourcePos physDevice device cmdPool queue meshCach
       _ -> pure ()
 
 -- | Update pistons adjacent to a redstone source position.
---   Pistons face +Y (push upward). Cannot push Bedrock or Obsidian. Max 12 blocks.
+--   Each piston variant pushes in its facing direction. Cannot push Bedrock or Obsidian. Max 12 blocks.
 updatePistons
   :: World -> RedstoneState -> V3 Int
   -> Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue
@@ -3840,39 +3853,37 @@ updatePistons
 updatePistons world rsState sourcePos physDevice device cmdPool queue meshCacheRef = do
   forM_ [ sourcePos + d | d <- neighborDirs ] $ \nPos@(V3 nx _ny nz) -> do
     blk <- worldGetBlock world nPos
-    case blk of
-      Piston -> do
-        power <- getPower rsState nPos
-        let above = nPos + V3 0 1 0
-        aboveBlk <- worldGetBlock world above
-        if power > 0 && aboveBlk /= PistonHead
-          then do
-            chainLen <- tryPistonPush world nPos (V3 0 1 0) 12
-            when (chainLen >= 0) $ do
-              worldSetBlock world above PistonHead
-              rebuildChunkAt world physDevice device cmdPool queue meshCacheRef nx nz
-              -- Only rebuild chunks that actually had blocks displaced
-              forM_ [1..chainLen + 1] $ \dy -> do
-                let V3 rx _ rz = nPos + V3 0 (dy + 1) 0
-                rebuildChunkAt world physDevice device cmdPool queue meshCacheRef rx rz
-          else when (power == 0 && aboveBlk == PistonHead) $ do
-            let aboveHead = above + V3 0 1 0
-            headAboveBlk <- worldGetBlock world aboveHead
-            worldSetBlock world above Air
-            when (headAboveBlk /= Air && not (isImmovable headAboveBlk)) $ do
-              worldSetBlock world above headAboveBlk
-              worldSetBlock world aboveHead Air
+    when (isPistonBlock blk) $ do
+      power <- getPower rsState nPos
+      let dir = pistonDirection blk
+          headType = pistonHeadForPiston blk
+          frontPos = nPos + dir
+      frontBlk <- worldGetBlock world frontPos
+      if power > 0 && not (isPistonHeadBlock frontBlk)
+        then do
+          chainLen <- tryPistonPush world nPos dir 12
+          when (chainLen >= 0) $ do
+            worldSetBlock world frontPos headType
             rebuildChunkAt world physDevice device cmdPool queue meshCacheRef nx nz
-            let V3 rx _ rz = aboveHead
-            rebuildChunkAt world physDevice device cmdPool queue meshCacheRef rx rz
-      _ -> pure ()
+            forM_ [1..chainLen + 1] $ \step -> do
+              let V3 rx _ rz = nPos + fmap (* (step + 1)) dir
+              rebuildChunkAt world physDevice device cmdPool queue meshCacheRef rx rz
+        else when (power == 0 && isPistonHeadBlock frontBlk) $ do
+          let beyondHead = frontPos + dir
+          beyondBlk <- worldGetBlock world beyondHead
+          worldSetBlock world frontPos Air
+          when (beyondBlk /= Air && not (isImmovable beyondBlk)) $ do
+            worldSetBlock world frontPos beyondBlk
+            worldSetBlock world beyondHead Air
+          rebuildChunkAt world physDevice device cmdPool queue meshCacheRef nx nz
+          let V3 rx _ rz = beyondHead
+          rebuildChunkAt world physDevice device cmdPool queue meshCacheRef rx rz
 
 -- | Check if a block cannot be pushed by a piston
 isImmovable :: BlockType -> Bool
-isImmovable Bedrock    = True
-isImmovable Obsidian   = True
-isImmovable PistonHead = True
-isImmovable _          = False
+isImmovable Bedrock = True
+isImmovable Obsidian = True
+isImmovable bt = isPistonHeadBlock bt
 
 -- | Push a chain of blocks above the piston in the given direction.
 --   Returns the number of blocks moved (>= 0), or -1 on failure.

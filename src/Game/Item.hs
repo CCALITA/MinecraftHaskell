@@ -275,6 +275,16 @@ blockDrops = \case
   WheatCrop5       -> [(MaterialItem WheatSeeds, 1)]
   WheatCrop6       -> [(MaterialItem WheatSeeds, 1)]
   WheatCrop7       -> [(MaterialItem Wheat, 1), (MaterialItem WheatSeeds, 1)]
+  PistonNorth      -> [(BlockItem Piston, 1)]
+  PistonSouth      -> [(BlockItem Piston, 1)]
+  PistonEast       -> [(BlockItem Piston, 1)]
+  PistonWest       -> [(BlockItem Piston, 1)]
+  PistonDown       -> [(BlockItem Piston, 1)]
+  PistonHeadNorth  -> []
+  PistonHeadSouth  -> []
+  PistonHeadEast   -> []
+  PistonHeadWest   -> []
+  PistonHeadDown   -> []
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
