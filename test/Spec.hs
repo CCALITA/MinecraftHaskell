@@ -3475,6 +3475,47 @@ biomeFeaturesSpec = describe "World.BiomeFeatures" $ do
     treeLogBlock OakTree `shouldBe` OakLog
     treeLeafBlock OakTree `shouldBe` OakLeaves
 
+  -- Biome-feature wiring tests: verify biome -> tree type mappings
+  it "Forest has both OakTree and BirchTree features" $ do
+    let trees = featureTrees (biomeFeatures Forest)
+        types = map (\(TreeFeature t _) -> t) trees
+    types `shouldSatisfy` elem OakTree
+    types `shouldSatisfy` elem BirchTree
+
+  it "Taiga has SpruceTree feature" $ do
+    let trees = featureTrees (biomeFeatures Taiga)
+        types = map (\(TreeFeature t _) -> t) trees
+    types `shouldSatisfy` elem SpruceTree
+
+  it "Plains has sparse OakTree feature" $ do
+    let trees = featureTrees (biomeFeatures Plains)
+        types = map (\(TreeFeature t _) -> t) trees
+    types `shouldSatisfy` elem OakTree
+
+  it "Desert has no tree features" $ do
+    let trees = featureTrees (biomeFeatures Desert)
+    trees `shouldBe` []
+
+  it "all tree types fall back to OakLog" $ do
+    let allTrees = [minBound .. maxBound] :: [TreeType]
+    mapM_ (\t -> treeLogBlock t `shouldBe` OakLog) allTrees
+
+  it "all tree types fall back to OakLeaves" $ do
+    let allTrees = [minBound .. maxBound] :: [TreeType]
+    mapM_ (\t -> treeLeafBlock t `shouldBe` OakLeaves) allTrees
+
+  it "Forest tree density is higher than Plains" $ do
+    let forestTrees = featureTrees (biomeFeatures Forest)
+        plainsTrees = featureTrees (biomeFeatures Plains)
+        totalDensity ts = sum [d | TreeFeature _ d <- ts]
+    totalDensity forestTrees `shouldSatisfy` (> totalDensity plainsTrees)
+
+  it "Taiga SpruceTree density is higher than Mountains SpruceTree density" $ do
+    let taigaTrees = featureTrees (biomeFeatures Taiga)
+        mtnTrees   = featureTrees (biomeFeatures Mountains)
+        spruceDensity ts = sum [d | TreeFeature SpruceTree d <- ts]
+    spruceDensity taigaTrees `shouldSatisfy` (> spruceDensity mtnTrees)
+
 -- =========================================================================
 -- Item Registry
 -- =========================================================================
