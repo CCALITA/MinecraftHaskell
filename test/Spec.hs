@@ -28,6 +28,8 @@ import Game.RecipeRegistry
 import World.BiomeFeatures
 import World.Biome (BiomeType(..))
 import Game.ItemRegistry
+import World.Generation (generateChunk, GenerationConfig(..), defaultGenConfig,
+                         structureHashRoll, placeStructureInChunk)
 
 import Entity.Villager
 import qualified World.Dimension as Dim
@@ -56,6 +58,7 @@ import Linear (V2(..), V3(..), V4(..))
 import qualified Data.Vector as V
 import Control.Concurrent.STM (atomically, readTVar)
 import qualified Data.HashMap.Strict as HM
+import qualified Data.Vector.Unboxed.Mutable as MUV
 
 main :: IO ()
 main = hspec $ do
@@ -110,6 +113,7 @@ main = hspec $ do
   mobLootDropSpec
   woodVariantsAndFloraSpec
   xpSpec
+  structurePlacementSpec
 
 -- =========================================================================
 -- Block
@@ -2642,7 +2646,7 @@ structureSpec = describe "World.Structure" $ do
 
   -- placeStructure integration test
   it "placeStructure places blocks into the world" $ withTestWorld $ \world -> do
-    placeStructure world (V3 0 64 0) wellStructure
+    placeStructure (worldSetBlock world) (V3 0 64 0) wellStructure
     -- Check cobblestone floor at origin
     bt00 <- worldGetBlock world (V3 0 64 0)
     bt00 `shouldBe` Cobblestone
@@ -2651,7 +2655,7 @@ structureSpec = describe "World.Structure" $ do
     btWater `shouldBe` Water
 
   it "placeStructure respects offset" $ withTestWorld $ \world -> do
-    placeStructure world (V3 5 70 5) dungeonStructure
+    placeStructure (worldSetBlock world) (V3 5 70 5) dungeonStructure
     -- Floor corner at (5,70,5)
     bt <- worldGetBlock world (V3 5 70 5)
     bt `shouldBe` Cobblestone
@@ -2660,7 +2664,7 @@ structureSpec = describe "World.Structure" $ do
     btChest `shouldBe` Chest
 
   it "placeStructure does not affect unrelated positions" $ withTestWorld $ \world -> do
-    placeStructure world (V3 0 64 0) wellStructure
+    placeStructure (worldSetBlock world) (V3 0 64 0) wellStructure
     -- Position outside the structure should still be Air
     btFar <- worldGetBlock world (V3 10 64 10)
     btFar `shouldBe` Air
@@ -4282,3 +4286,109 @@ xpSpec = describe "Game.XP" $ do
   it "Neutral mobs give 3 XP" $ do
     xpForMobKill Spider `shouldBe` 3
     xpForMobKill Wolf `shouldBe` 3
+
+-- =========================================================================
+-- Structure Placement in World Generation
+-- =========================================================================
+structurePlacementSpec :: Spec
+structurePlacementSpec = describe "World.Generation structure placement" $ do
+
+  it "structureHashRoll is deterministic for same inputs" $ do
+    let r1 = structureHashRoll 42 3 7 10001
+        r2 = structureHashRoll 42 3 7 10001
+    r1 `shouldBe` r2
+
+  it "structureHashRoll returns non-negative values" $
+    property $ \s cx cz salt ->
+      structureHashRoll s cx cz salt >= 0
+
+  it "structureHashRoll varies with different salts" $ do
+    let r1 = structureHashRoll 42 3 7 10001
+        r2 = structureHashRoll 42 3 7 10002
+    r1 `shouldNotBe` r2
+
+  it "structureHashRoll varies with different chunk positions" $ do
+    let r1 = structureHashRoll 42 0 0 10001
+        r2 = structureHashRoll 42 1 0 10001
+        r3 = structureHashRoll 42 0 1 10001
+    r1 `shouldNotBe` r2
+    r1 `shouldNotBe` r3
+
+  it "structureHashRoll varies with different seeds" $ do
+    let r1 = structureHashRoll 42 3 7 10001
+        r2 = structureHashRoll 99 3 7 10001
+    r1 `shouldNotBe` r2
+
+  it "placeStructureInChunk writes well blocks into chunk vector" $ do
+    chunk <- newChunk (V2 0 0)
+    let mvec = chunkBlocks chunk
+    -- Place well at local (5, 64, 5)
+    placeStructureInChunk mvec wellStructure 5 64 5
+    -- Check cobblestone floor at (5, 64, 5)
+    b <- MUV.read mvec (blockIndex 5 64 5)
+    b `shouldBe` fromIntegral (fromEnum Cobblestone)
+    -- Check water at (7, 65, 7) = origin (5,64,5) + offset (2,1,2)
+    w <- MUV.read mvec (blockIndex 7 65 7)
+    w `shouldBe` fromIntegral (fromEnum Water)
+
+  it "placeStructureInChunk clips blocks outside chunk bounds" $ do
+    chunk <- newChunk (V2 0 0)
+    let mvec = chunkBlocks chunk
+    -- Place well at edge so some blocks would go out of bounds
+    placeStructureInChunk mvec wellStructure 14 64 14
+    -- (14+4, 64, 14) = (18, 64, 14) is out of bounds, should not crash
+    -- (14, 64, 14) should still have cobblestone
+    b <- MUV.read mvec (blockIndex 14 64 14)
+    b `shouldBe` fromIntegral (fromEnum Cobblestone)
+    -- (14+1, 64, 14+1) = (15, 64, 15) is in bounds
+    b2 <- MUV.read mvec (blockIndex 15 64 15)
+    b2 `shouldBe` fromIntegral (fromEnum Cobblestone)
+
+  it "placeStructureInChunk places dungeon underground" $ do
+    chunk <- newChunk (V2 0 0)
+    let mvec = chunkBlocks chunk
+    placeStructureInChunk mvec dungeonStructure 4 20 4
+    -- Floor cobblestone at (4, 20, 4)
+    b <- MUV.read mvec (blockIndex 4 20 4)
+    b `shouldBe` fromIntegral (fromEnum Cobblestone)
+    -- Chest at center (4+3, 20+1, 4+3) = (7, 21, 7)
+    c <- MUV.read mvec (blockIndex 7 21 7)
+    c `shouldBe` fromIntegral (fromEnum Chest)
+
+  it "generateChunk is deterministic — same seed produces identical chunks" $ do
+    let cfg = defaultGenConfig { gcSeed = 12345 }
+        pos = V2 10 20
+    chunk1 <- generateChunk cfg pos
+    chunk2 <- generateChunk cfg pos
+    -- Compare all blocks in both chunks
+    let totalBlocks = chunkWidth * chunkDepth * chunkHeight
+    allSame <- allBlocksSame (chunkBlocks chunk1) (chunkBlocks chunk2) totalBlocks 0
+    allSame `shouldBe` True
+
+  it "generateChunk produces different chunks for different seeds" $ do
+    let cfg1 = defaultGenConfig { gcSeed = 11111 }
+        cfg2 = defaultGenConfig { gcSeed = 22222 }
+        pos = V2 5 5
+    chunk1 <- generateChunk cfg1 pos
+    chunk2 <- generateChunk cfg2 pos
+    -- At least one block should differ
+    let totalBlocks = chunkWidth * chunkDepth * chunkHeight
+    allSame <- allBlocksSame (chunkBlocks chunk1) (chunkBlocks chunk2) totalBlocks 0
+    allSame `shouldBe` False
+
+  it "generateChunk produces different chunks for different positions" $ do
+    let cfg = defaultGenConfig { gcSeed = 42 }
+    chunk1 <- generateChunk cfg (V2 0 0)
+    chunk2 <- generateChunk cfg (V2 100 100)
+    let totalBlocks = chunkWidth * chunkDepth * chunkHeight
+    allSame <- allBlocksSame (chunkBlocks chunk1) (chunkBlocks chunk2) totalBlocks 0
+    allSame `shouldBe` False
+
+-- | Helper: compare all blocks in two mutable vectors
+allBlocksSame :: MUV.IOVector Word8 -> MUV.IOVector Word8 -> Int -> Int -> IO Bool
+allBlocksSame v1 v2 total i
+  | i >= total = pure True
+  | otherwise = do
+      a <- MUV.read v1 i
+      b <- MUV.read v2 i
+      if a /= b then pure False else allBlocksSame v1 v2 total (i + 1)
