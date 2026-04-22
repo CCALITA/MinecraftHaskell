@@ -14,7 +14,7 @@ import qualified Vulkan.CStruct.Extends as Vk
 
 import Engine.Vulkan.Init (VulkanContext(..))
 import Engine.Vulkan.Swapchain (SwapchainContext(..))
-import Engine.Vulkan.Pipeline (PipelineContext(..), HudPipeline(..))
+import Engine.Vulkan.Pipeline (PipelineContext(..), HudPipeline(..), EntityPipeline(..))
 import Engine.Vulkan.Memory (BufferAllocation(..))
 
 import Data.Vector (Vector)
@@ -84,9 +84,10 @@ recordCommandBuffer
   -> [(BufferAllocation, BufferAllocation, Int)]  -- ^ List of (vertBuf, idxBuf, indexCount) per chunk
   -> Vk.DescriptorSet        -- ^ Descriptor set (UBO + texture)
   -> (Float, Float, Float, Float)  -- ^ Sky clear color (r, g, b, a)
+  -> Maybe (EntityPipeline, BufferAllocation, Int)  -- ^ Optional entity pipeline, vertex buffer, vertex count
   -> Maybe (HudPipeline, BufferAllocation, Int)  -- ^ Optional HUD pipeline, vertex buffer, vertex count
   -> IO ()
-recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent chunkDraws descriptorSet (skyR, skyG, skyB, skyA) mHud = do
+recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent chunkDraws descriptorSet (skyR, skyG, skyB, skyA) mEntity mHud = do
   let beginInfo = Vk.CommandBufferBeginInfo
         { Vk.next            = ()
         , Vk.flags           = Vk.zero
@@ -126,6 +127,17 @@ recordCommandBuffer cmdBuf renderPass framebuffer pipeline pipelineLayout extent
     Vk.cmdDrawIndexed cmdBuf (fromIntegral ic) 1 0 0 0
     ) chunkDraws
 
+  -- Draw entity billboards (after blocks, before HUD)
+  case mEntity of
+    Nothing -> pure ()
+    Just (entityPipeline, entVertBuf, entVertCount) -> when (entVertCount > 0) $ do
+      Vk.cmdBindPipeline cmdBuf Vk.PIPELINE_BIND_POINT_GRAPHICS (epPipeline entityPipeline)
+      Vk.cmdSetViewport cmdBuf 0 (V.singleton viewport)
+      Vk.cmdSetScissor cmdBuf 0 (V.singleton scissor)
+      Vk.cmdBindDescriptorSets cmdBuf Vk.PIPELINE_BIND_POINT_GRAPHICS (epPipelineLayout entityPipeline) 0 (V.singleton descriptorSet) V.empty
+      Vk.cmdBindVertexBuffers cmdBuf 0 (V.singleton (baBuffer entVertBuf)) (V.singleton 0)
+      Vk.cmdDraw cmdBuf (fromIntegral entVertCount) 1 0 0
+
   -- Draw HUD overlay (crosshair, hotbar)
   case mHud of
     Nothing -> pure ()
@@ -151,9 +163,10 @@ drawFrame
   -> [(BufferAllocation, BufferAllocation, Int)]  -- ^ Per-chunk draw data
   -> Vk.DescriptorSet        -- ^ Descriptor set for current frame
   -> (Float, Float, Float, Float)  -- ^ Sky clear color
+  -> Maybe (EntityPipeline, BufferAllocation, Int)  -- ^ Optional entity billboards
   -> Maybe (HudPipeline, BufferAllocation, Int)  -- ^ Optional HUD
   -> IO Bool
-drawFrame vc sc pc framebuffers cmdBuf syncObj chunkDraws descriptorSet skyColor mHud = do
+drawFrame vc sc pc framebuffers cmdBuf syncObj chunkDraws descriptorSet skyColor mEntity mHud = do
   let device = vcDevice vc
       maxWait = maxBound :: Word64
 
@@ -184,6 +197,7 @@ drawFrame vc sc pc framebuffers cmdBuf syncObj chunkDraws descriptorSet skyColor
         chunkDraws
         descriptorSet
         skyColor
+        mEntity
         mHud
 
       -- Submit command buffer
