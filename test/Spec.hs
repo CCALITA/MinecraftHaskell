@@ -42,6 +42,7 @@ import UI.Tooltip
 import UI.Screen
 
 import Game.PotionEffect
+import Game.Particle (WeatherParticle(..), WeatherParticleType(..), spawnWeatherParticles, tickWeatherParticles, renderWeatherParticles, weatherParticleRadius, weatherParticleHeight, weatherParticleCount, rainFallSpeed, snowFallSpeed, isSnowBiome, clampParticleXZ, clampParticleY)
 
 import Game.Bucket (BucketAction(..), determineBucketAction, bucketTypeToFluidBlock, fluidBlockToBucketType)
 import World.Fluid (FluidState, FluidType(..), newFluidState, addFluidSource, removeFluid, getFluid, FluidBlock(..))
@@ -61,7 +62,7 @@ import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.List (nub, isPrefixOf, isInfixOf)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
-import Linear (V2(..), V3(..), V4(..))
+import Linear (V2(..), V3(..), V4(..), identity)
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Unboxed as UV
@@ -5757,3 +5758,72 @@ dimensionWiringSpec = describe "Dimension wiring" $ do
       gs <- newGameState (V3 0 80 0)
       timer <- readIORef (gsPortalTimer gs)
       timer `shouldBe` 0.0
+
+weatherParticleSpec :: Spec
+weatherParticleSpec = describe "Game.Particle weather" $ do
+  describe "constants" $ do
+    it "weatherParticleRadius is 16" $ weatherParticleRadius `shouldBe` 16.0
+    it "weatherParticleHeight is 20" $ weatherParticleHeight `shouldBe` 20.0
+    it "weatherParticleCount is 200" $ weatherParticleCount `shouldBe` 200
+    it "rainFallSpeed is 15" $ rainFallSpeed `shouldBe` 15.0
+    it "snowFallSpeed is 3" $ snowFallSpeed `shouldBe` 3.0
+  describe "isSnowBiome" $ do
+    it "Tundra is a snow biome" $ isSnowBiome Tundra `shouldBe` True
+    it "Taiga is a snow biome" $ isSnowBiome Taiga `shouldBe` True
+    it "Plains is not a snow biome" $ isSnowBiome Plains `shouldBe` False
+    it "Desert is not a snow biome" $ isSnowBiome Desert `shouldBe` False
+    it "Forest is not a snow biome" $ isSnowBiome Forest `shouldBe` False
+  describe "clampParticleXZ" $ do
+    it "values within radius are unchanged" $ clampParticleXZ 16.0 5.0 `shouldBe` 5.0
+    it "wraps values exceeding radius" $ clampParticleXZ 16.0 20.0 `shouldBe` (20.0 - 32.0)
+    it "wraps values below negative radius" $ clampParticleXZ 16.0 (-20.0) `shouldBe` (-20.0 + 32.0)
+    it "boundary value is unchanged" $ clampParticleXZ 16.0 16.0 `shouldBe` 16.0
+    it "negative boundary value is unchanged" $ clampParticleXZ 16.0 (-16.0) `shouldBe` (-16.0)
+  describe "clampParticleY" $ do
+    it "value within [0, height] returns Just" $ clampParticleY 20.0 10.0 `shouldBe` Just 10.0
+    it "value at zero returns Just 0" $ clampParticleY 20.0 0.0 `shouldBe` Just 0.0
+    it "value above height wraps" $ clampParticleY 20.0 25.0 `shouldBe` Just 5.0
+    it "negative value returns Nothing" $ clampParticleY 20.0 (-1.0) `shouldBe` Nothing
+  describe "spawnWeatherParticles" $ do
+    it "spawns the requested number of particles" $ do
+      ps <- spawnWeatherParticles (V3 100 80 100) Plains 50
+      length ps `shouldBe` 50
+    it "spawns weatherParticleCount particles" $ do
+      ps <- spawnWeatherParticles (V3 0 64 0) Forest weatherParticleCount
+      length ps `shouldBe` weatherParticleCount
+    it "rain particles are RainDrop in Plains" $ do
+      ps <- spawnWeatherParticles (V3 0 64 0) Plains 10
+      all (\p -> wpType p == RainDrop) ps `shouldBe` True
+    it "snow particles are SnowFlake in Tundra" $ do
+      ps <- spawnWeatherParticles (V3 0 64 0) Tundra 10
+      all (\p -> wpType p == SnowFlake) ps `shouldBe` True
+    it "snow particles are SnowFlake in Taiga" $ do
+      ps <- spawnWeatherParticles (V3 0 64 0) Taiga 10
+      all (\p -> wpType p == SnowFlake) ps `shouldBe` True
+    it "all particles within cylinder radius" $ do
+      ps <- spawnWeatherParticles (V3 100 80 (-50)) Plains 200
+      let ok wp = let V3 wx _ wz = wpPos wp; dx = wx - 100; dz = wz + 50 in sqrt (dx*dx + dz*dz) <= weatherParticleRadius + 0.01
+      all ok ps `shouldBe` True
+    it "all particles within cylinder height" $ do
+      ps <- spawnWeatherParticles (V3 0 80 0) Plains 200
+      let ok wp = let V3 _ wy _ = wpPos wp; dy = wy - 80 in dy >= -0.01 && dy <= weatherParticleHeight + 0.01
+      all ok ps `shouldBe` True
+  describe "tickWeatherParticles" $ do
+    it "preserves particle count" $ do
+      ps <- spawnWeatherParticles (V3 0 80 0) Plains 50
+      ps' <- tickWeatherParticles 0.5 (V3 0 80 0) Plains ps
+      length ps' `shouldBe` 50
+    it "snow falls slower than rain" $ do
+      rps <- spawnWeatherParticles (V3 0 100 0) Plains 1
+      sps <- spawnWeatherParticles (V3 0 100 0) Tundra 1
+      rps' <- tickWeatherParticles 0.01 (V3 0 100 0) Plains rps
+      sps' <- tickWeatherParticles 0.01 (V3 0 100 0) Tundra sps
+      let rdy = let V3 _ y0 _ = wpPos (head rps); V3 _ y1 _ = wpPos (head rps') in y0 - y1
+          sdy = let V3 _ y0 _ = wpPos (head sps); V3 _ y1 _ = wpPos (head sps') in y0 - y1
+      rdy `shouldSatisfy` (> sdy)
+  describe "renderWeatherParticles" $ do
+    it "empty list produces no vertices" $ renderWeatherParticles [] identity `shouldBe` []
+    it "rain particle produces 36 floats" $ length (renderWeatherParticles [WeatherParticle (V3 0 0 (-1)) RainDrop] identity) `shouldBe` 36
+    it "snow particle produces 36 floats" $ length (renderWeatherParticles [WeatherParticle (V3 0 0 (-1)) SnowFlake] identity) `shouldBe` 36
+    it "rain has blue color" $ case renderWeatherParticles [WeatherParticle (V3 0 0 (-1)) RainDrop] identity of { (_:_:r:g:b:_) -> do { r `shouldBe` 0.5; g `shouldBe` 0.6; b `shouldBe` 1.0 }; _ -> expectationFailure "no verts" }
+    it "snow has white color" $ case renderWeatherParticles [WeatherParticle (V3 0 0 (-1)) SnowFlake] identity of { (_:_:r:g:b:_) -> do { r `shouldBe` 1.0; g `shouldBe` 1.0; b `shouldBe` 1.0 }; _ -> expectationFailure "no verts" }
