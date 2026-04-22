@@ -41,6 +41,8 @@ import Game.Event
 import UI.Tooltip
 import UI.Screen
 
+import Game.Particle (Particle(..), ParticleSystem, PrecipitationType(..), newParticleSystem, spawnBlockBreakParticles, tickParticles, renderParticles, precipitationForBiome, spawnRainParticle, spawnSnowParticle, spawnPrecipitationBatch, tickPrecipitation, renderPrecipitation, precipitationColor, precipitationSpeed, rainSpeed, snowSpeed, precipCylinderRadius, precipCylinderHeight, maxPrecipParticles)
+
 import Game.PotionEffect
 
 import Game.Bucket (BucketAction(..), determineBucketAction, bucketTypeToFluidBlock, fluidBlockToBucketType)
@@ -61,7 +63,7 @@ import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.List (nub, isPrefixOf, isInfixOf)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
-import Linear (V2(..), V3(..), V4(..))
+import Linear (V2(..), V3(..), V4(..), M44)
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Unboxed as UV
@@ -136,6 +138,7 @@ main = hspec $ do
   chatStateSpec
   lookupItemByNameSpec
   netherPortalSpec
+  precipitationSpec
   crossChunkCullingSpec
   greedyMeshingSpec
   dimensionWiringSpec
@@ -6270,3 +6273,405 @@ meshAOSpec = describe "Engine.Mesh AO" $ do
           aoVals = map bvAO topFaceVerts
       length topFaceVerts `shouldBe` 4
       (maximum aoVals - minimum aoVals) `shouldSatisfy` (> 0.01)
+
+
+-- =========================================================================
+-- Precipitation (Rain / Snow) particles
+-- =========================================================================
+precipitationSpec :: Spec
+precipitationSpec = describe "Game.Particle precipitation" $ do
+
+  describe "PrecipitationType" $ do
+    it "PrecipRain and PrecipSnow are distinct" $
+      PrecipRain `shouldNotBe` PrecipSnow
+
+    it "PrecipRain shows as PrecipRain" $
+      show PrecipRain `shouldBe` "PrecipRain"
+
+    it "PrecipSnow shows as PrecipSnow" $
+      show PrecipSnow `shouldBe` "PrecipSnow"
+
+    it "PrecipRain == PrecipRain" $
+      (PrecipRain == PrecipRain) `shouldBe` True
+
+    it "PrecipSnow == PrecipSnow" $
+      (PrecipSnow == PrecipSnow) `shouldBe` True
+
+    it "PrecipRain < PrecipSnow (Ord)" $
+      compare PrecipRain PrecipSnow `shouldBe` LT
+
+  describe "precipitationForBiome" $ do
+    it "Tundra produces snow" $
+      precipitationForBiome "Tundra" `shouldBe` Just PrecipSnow
+
+    it "Taiga produces snow" $
+      precipitationForBiome "Taiga" `shouldBe` Just PrecipSnow
+
+    it "Plains produces rain" $
+      precipitationForBiome "Plains" `shouldBe` Just PrecipRain
+
+    it "Forest produces rain" $
+      precipitationForBiome "Forest" `shouldBe` Just PrecipRain
+
+    it "Desert produces rain" $
+      precipitationForBiome "Desert" `shouldBe` Just PrecipRain
+
+    it "Mountains produces rain" $
+      precipitationForBiome "Mountains" `shouldBe` Just PrecipRain
+
+    it "Ocean produces rain" $
+      precipitationForBiome "Ocean" `shouldBe` Just PrecipRain
+
+    it "Savanna produces rain" $
+      precipitationForBiome "Savanna" `shouldBe` Just PrecipRain
+
+    it "Swamp produces rain" $
+      precipitationForBiome "Swamp" `shouldBe` Just PrecipRain
+
+  describe "precipitation constants" $ do
+    it "rainSpeed is 15 blocks/sec" $
+      rainSpeed `shouldBe` 15.0
+
+    it "snowSpeed is 3 blocks/sec" $
+      snowSpeed `shouldBe` 3.0
+
+    it "cylinder radius is 16 blocks" $
+      precipCylinderRadius `shouldBe` 16.0
+
+    it "cylinder height is 20 blocks" $
+      precipCylinderHeight `shouldBe` 20.0
+
+    it "max precipitation particles is 200" $
+      maxPrecipParticles `shouldBe` 200
+
+  describe "precipitationSpeed" $ do
+    it "rain speed matches rainSpeed constant" $
+      precipitationSpeed PrecipRain `shouldBe` rainSpeed
+
+    it "snow speed matches snowSpeed constant" $
+      precipitationSpeed PrecipSnow `shouldBe` snowSpeed
+
+  describe "precipitationColor" $ do
+    it "rain is blueish (blue channel > red channel)" $ do
+      let V4 r _g b _a = precipitationColor PrecipRain
+      b `shouldSatisfy` (> r)
+
+    it "rain has non-zero alpha" $ do
+      let V4 _ _ _ a = precipitationColor PrecipRain
+      a `shouldSatisfy` (> 0)
+
+    it "snow is near-white (all RGB close to 1.0)" $ do
+      let V4 r g b _a = precipitationColor PrecipSnow
+      r `shouldSatisfy` (> 0.9)
+      g `shouldSatisfy` (> 0.9)
+      b `shouldSatisfy` (>= 0.95)
+
+    it "snow has non-zero alpha" $ do
+      let V4 _ _ _ a = precipitationColor PrecipSnow
+      a `shouldSatisfy` (> 0)
+
+    it "rain alpha is less than 1.0 (semi-transparent)" $ do
+      let V4 _ _ _ a = precipitationColor PrecipRain
+      a `shouldSatisfy` (< 1.0)
+
+    it "snow alpha is less than 1.0 (semi-transparent)" $ do
+      let V4 _ _ _ a = precipitationColor PrecipSnow
+      a `shouldSatisfy` (< 1.0)
+
+  describe "spawnRainParticle" $ do
+    it "spawns a particle with negative Y velocity" $ do
+      p <- spawnRainParticle (V3 0 64 0)
+      let V3 _ vy _ = partVelocity p
+      vy `shouldSatisfy` (< 0)
+
+    it "rain velocity Y magnitude is rainSpeed" $ do
+      p <- spawnRainParticle (V3 0 64 0)
+      let V3 _ vy _ = partVelocity p
+      abs vy `shouldSatisfy` (\v -> abs (v - rainSpeed) < 0.01)
+
+    it "rain particle has zero X velocity" $ do
+      p <- spawnRainParticle (V3 0 64 0)
+      let V3 vx _ _ = partVelocity p
+      vx `shouldBe` 0
+
+    it "rain particle has zero Z velocity" $ do
+      p <- spawnRainParticle (V3 0 64 0)
+      let V3 _ _ vz = partVelocity p
+      vz `shouldBe` 0
+
+    it "spawns particle above player (Y > playerY)" $ do
+      let py = 64.0
+      p <- spawnRainParticle (V3 0 py 0)
+      let V3 _ wy _ = partPos p
+      wy `shouldSatisfy` (> py)
+
+    it "spawns particle within cylinder radius (XZ distance)" $ do
+      p <- spawnRainParticle (V3 100 64 200)
+      let V3 wx _ wz = partPos p
+          dx = wx - 100
+          dz = wz - 200
+          dist = sqrt (dx * dx + dz * dz)
+      dist `shouldSatisfy` (<= precipCylinderRadius + 0.1)
+
+    it "rain particle has positive life" $ do
+      p <- spawnRainParticle (V3 0 64 0)
+      partLife p `shouldSatisfy` (> 0)
+
+    it "rain particle maxLife equals life at spawn" $ do
+      p <- spawnRainParticle (V3 0 64 0)
+      partMaxLife p `shouldBe` partLife p
+
+    it "rain particle color matches precipitationColor PrecipRain" $ do
+      p <- spawnRainParticle (V3 0 64 0)
+      partColor p `shouldBe` precipitationColor PrecipRain
+
+  describe "spawnSnowParticle" $ do
+    it "spawns a particle with negative Y velocity" $ do
+      p <- spawnSnowParticle (V3 0 64 0)
+      let V3 _ vy _ = partVelocity p
+      vy `shouldSatisfy` (< 0)
+
+    it "snow velocity Y magnitude is snowSpeed" $ do
+      p <- spawnSnowParticle (V3 0 64 0)
+      let V3 _ vy _ = partVelocity p
+      abs vy `shouldSatisfy` (\v -> abs (v - snowSpeed) < 0.01)
+
+    it "snow particle has lateral drift (nonzero X or Z possible)" $ do
+      ps <- mapM (\_ -> spawnSnowParticle (V3 0 64 0)) [1..50 :: Int]
+      let hasNonZeroX = any (\p -> let V3 vx _ _ = partVelocity p in abs vx > 0.001) ps
+          hasNonZeroZ = any (\p -> let V3 _ _ vz = partVelocity p in abs vz > 0.001) ps
+      (hasNonZeroX || hasNonZeroZ) `shouldBe` True
+
+    it "spawns particle above player" $ do
+      let py = 64.0
+      p <- spawnSnowParticle (V3 0 py 0)
+      let V3 _ wy _ = partPos p
+      wy `shouldSatisfy` (> py)
+
+    it "spawns particle within cylinder radius" $ do
+      p <- spawnSnowParticle (V3 50 64 50)
+      let V3 wx _ wz = partPos p
+          dx = wx - 50
+          dz = wz - 50
+          dist = sqrt (dx * dx + dz * dz)
+      dist `shouldSatisfy` (<= precipCylinderRadius + 0.1)
+
+    it "snow particle has positive life" $ do
+      p <- spawnSnowParticle (V3 0 64 0)
+      partLife p `shouldSatisfy` (> 0)
+
+    it "snow particle maxLife equals life at spawn" $ do
+      p <- spawnSnowParticle (V3 0 64 0)
+      partMaxLife p `shouldBe` partLife p
+
+    it "snow particle color matches precipitationColor PrecipSnow" $ do
+      p <- spawnSnowParticle (V3 0 64 0)
+      partColor p `shouldBe` precipitationColor PrecipSnow
+
+    it "snow life is longer than rain life (snow is slower)" $ do
+      rp <- spawnRainParticle (V3 0 64 0)
+      sp <- spawnSnowParticle (V3 0 64 0)
+      partLife sp `shouldSatisfy` (> partLife rp)
+
+  describe "spawnPrecipitationBatch" $ do
+    it "spawns particles when currentCount is 0" $ do
+      batch <- spawnPrecipitationBatch 0 PrecipRain (V3 0 64 0)
+      length batch `shouldSatisfy` (> 0)
+
+    it "spawns up to 20 per call" $ do
+      batch <- spawnPrecipitationBatch 0 PrecipRain (V3 0 64 0)
+      length batch `shouldSatisfy` (<= 20)
+
+    it "spawns exactly 20 when deficit is large" $ do
+      batch <- spawnPrecipitationBatch 0 PrecipRain (V3 0 64 0)
+      length batch `shouldBe` 20
+
+    it "spawns nothing when already at max" $ do
+      batch <- spawnPrecipitationBatch maxPrecipParticles PrecipRain (V3 0 64 0)
+      length batch `shouldBe` 0
+
+    it "spawns nothing when over max" $ do
+      batch <- spawnPrecipitationBatch (maxPrecipParticles + 50) PrecipRain (V3 0 64 0)
+      length batch `shouldBe` 0
+
+    it "spawns deficit when deficit < 20" $ do
+      batch <- spawnPrecipitationBatch (maxPrecipParticles - 5) PrecipRain (V3 0 64 0)
+      length batch `shouldBe` 5
+
+    it "rain batch produces rain-colored particles" $ do
+      batch <- spawnPrecipitationBatch 0 PrecipRain (V3 0 64 0)
+      all (\p -> partColor p == precipitationColor PrecipRain) batch `shouldBe` True
+
+    it "snow batch produces snow-colored particles" $ do
+      batch <- spawnPrecipitationBatch 0 PrecipSnow (V3 0 64 0)
+      all (\p -> partColor p == precipitationColor PrecipSnow) batch `shouldBe` True
+
+  describe "tickPrecipitation" $ do
+    it "empty list stays empty" $
+      tickPrecipitation 0.1 [] `shouldBe` []
+
+    it "dead particles are removed" $ do
+      let p = Particle (V3 0 64 0) (V3 0 (-15) 0) (V4 0.4 0.5 0.9 0.6) 0.0 1.0
+      tickPrecipitation 0.1 [p] `shouldBe` []
+
+    it "live particles are kept" $ do
+      let p = Particle (V3 0 64 0) (V3 0 (-15) 0) (V4 0.4 0.5 0.9 0.6) 1.0 1.0
+      length (tickPrecipitation 0.05 [p]) `shouldBe` 1
+
+    it "position updates by velocity * dt" $ do
+      let p = Particle (V3 0 100 0) (V3 0 (-15) 0) (V4 0.4 0.5 0.9 0.6) 5.0 5.0
+          [p'] = tickPrecipitation 1.0 [p]
+          V3 _ y' _ = partPos p'
+      abs (y' - 85.0) `shouldSatisfy` (< 0.01)
+
+    it "life decreases by dt" $ do
+      let p = Particle (V3 0 100 0) (V3 0 (-15) 0) (V4 0.4 0.5 0.9 0.6) 5.0 5.0
+          [p'] = tickPrecipitation 0.5 [p]
+      abs (partLife p' - 4.5) `shouldSatisfy` (< 0.01)
+
+    it "velocity is constant (no gravity for precipitation)" $ do
+      let vel = V3 0.1 (-3) 0.2
+          p = Particle (V3 0 100 0) vel (V4 1 1 1 1) 5.0 5.0
+          [p'] = tickPrecipitation 1.0 [p]
+      partVelocity p' `shouldBe` vel
+
+    it "multiple particles: dead removed, live kept" $ do
+      let alive1 = Particle (V3 0 100 0) (V3 0 (-15) 0) (V4 1 1 1 1) 2.0 2.0
+          dead   = Particle (V3 0 100 0) (V3 0 (-15) 0) (V4 1 1 1 1) 0.0 2.0
+          alive2 = Particle (V3 5 100 5) (V3 0 (-3) 0) (V4 1 1 1 1) 1.0 1.0
+      length (tickPrecipitation 0.1 [alive1, dead, alive2]) `shouldBe` 2
+
+    it "snow particle drifts laterally" $ do
+      let p = Particle (V3 0 100 0) (V3 0.5 (-3) (-0.3)) (V4 1 1 1 1) 5.0 5.0
+          [p'] = tickPrecipitation 2.0 [p]
+          V3 x' _ z' = partPos p'
+      abs (x' - 1.0) `shouldSatisfy` (< 0.01)
+      abs (z' - (-0.6)) `shouldSatisfy` (< 0.01)
+
+  describe "renderPrecipitation" $ do
+    let identityVP = V4 (V4 1 0 0 0) (V4 0 1 0 0) (V4 0 0 1 0) (V4 0 0 0 1) :: M44 Float
+
+    it "empty list produces no vertices" $
+      renderPrecipitation [] PrecipRain identityVP `shouldBe` []
+
+    it "visible particle produces 36 floats (6 verts * 6 components)" $ do
+      let p = Particle (V3 0 0 0.5) (V3 0 (-15) 0) (V4 0.4 0.5 0.9 0.6) 1.0 1.0
+          verts = renderPrecipitation [p] PrecipRain identityVP
+      length verts `shouldBe` 36
+
+    it "rain streak is taller than wide" $ do
+      let p = Particle (V3 0 0 0.5) (V3 0 (-15) 0) (V4 0.4 0.5 0.9 0.6) 1.0 1.0
+          verts = renderPrecipitation [p] PrecipRain identityVP
+          x0 = verts !! 0
+          y0 = verts !! 1
+          x1 = verts !! 6
+          y1 = verts !! 13
+          width = abs (x1 - x0)
+          height = abs (y1 - y0)
+      height `shouldSatisfy` (> width)
+
+    it "snow quad is roughly square" $ do
+      let p = Particle (V3 0 0 0.5) (V3 0 (-3) 0) (V4 0.95 0.95 1.0 0.7) 1.0 1.0
+          verts = renderPrecipitation [p] PrecipSnow identityVP
+          x0 = verts !! 0
+          y0 = verts !! 1
+          x1 = verts !! 6
+          y1 = verts !! 13
+          width = abs (x1 - x0)
+          height = abs (y1 - y0)
+      abs (width - height) `shouldSatisfy` (< 0.001)
+
+    it "multiple particles produce 36 floats each" $ do
+      let p1 = Particle (V3 0 0 0.5) (V3 0 (-15) 0) (V4 0.4 0.5 0.9 0.6) 1.0 1.0
+          p2 = Particle (V3 0.1 0 0.5) (V3 0 (-15) 0) (V4 0.4 0.5 0.9 0.6) 1.0 1.0
+          verts = renderPrecipitation [p1, p2] PrecipRain identityVP
+      length verts `shouldBe` 72
+
+    it "off-screen particle produces no vertices" $ do
+      let p = Particle (V3 100 100 0.5) (V3 0 (-15) 0) (V4 0.4 0.5 0.9 0.6) 1.0 1.0
+          verts = renderPrecipitation [p] PrecipRain identityVP
+      length verts `shouldBe` 0
+
+    it "rain vertex alpha is positive" $ do
+      let p = Particle (V3 0 0 0.5) (V3 0 (-15) 0) (V4 0.4 0.5 0.9 0.6) 1.0 1.0
+          verts = renderPrecipitation [p] PrecipRain identityVP
+          alphaValues = [verts !! i | i <- [5, 11, 17, 23, 29, 35]]
+      all (> 0) alphaValues `shouldBe` True
+
+    it "snow vertex alpha is positive" $ do
+      let p = Particle (V3 0 0 0.5) (V3 0 (-3) 0) (V4 0.95 0.95 1.0 0.7) 1.0 1.0
+          verts = renderPrecipitation [p] PrecipSnow identityVP
+          alphaValues = [verts !! i | i <- [5, 11, 17, 23, 29, 35]]
+      all (> 0) alphaValues `shouldBe` True
+
+  describe "biome precipitation pipeline" $ do
+    it "Tundra biome -> snow particles spawned" $ do
+      batch <- case precipitationForBiome "Tundra" of
+        Just ptype -> spawnPrecipitationBatch 0 ptype (V3 0 64 0)
+        Nothing -> pure []
+      all (\p -> partColor p == precipitationColor PrecipSnow) batch `shouldBe` True
+
+    it "Taiga biome -> snow particles spawned" $ do
+      batch <- case precipitationForBiome "Taiga" of
+        Just ptype -> spawnPrecipitationBatch 0 ptype (V3 0 64 0)
+        Nothing -> pure []
+      all (\p -> partColor p == precipitationColor PrecipSnow) batch `shouldBe` True
+
+    it "Plains biome -> rain particles spawned" $ do
+      batch <- case precipitationForBiome "Plains" of
+        Just ptype -> spawnPrecipitationBatch 0 ptype (V3 0 64 0)
+        Nothing -> pure []
+      all (\p -> partColor p == precipitationColor PrecipRain) batch `shouldBe` True
+
+    it "rain particles fall faster than snow particles" $ do
+      rp <- spawnRainParticle (V3 0 64 0)
+      sp <- spawnSnowParticle (V3 0 64 0)
+      let V3 _ rvy _ = partVelocity rp
+          V3 _ svy _ = partVelocity sp
+      abs rvy `shouldSatisfy` (> abs svy)
+
+    it "batch fills to max over multiple calls" $ do
+      b1 <- spawnPrecipitationBatch 0 PrecipRain (V3 0 64 0)
+      b2 <- spawnPrecipitationBatch 20 PrecipRain (V3 0 64 0)
+      b3 <- spawnPrecipitationBatch 180 PrecipRain (V3 0 64 0)
+      b4 <- spawnPrecipitationBatch 200 PrecipRain (V3 0 64 0)
+      length b1 `shouldBe` 20
+      length b2 `shouldBe` 20
+      length b3 `shouldBe` 20
+      length b4 `shouldBe` 0
+
+    it "precipitation tick + render pipeline produces output" $ do
+      batch <- spawnPrecipitationBatch 0 PrecipRain (V3 0 64 0)
+      let ticked = tickPrecipitation 0.016 batch
+          identityVP = V4 (V4 1 0 0 0) (V4 0 1 0 0) (V4 0 0 1 0) (V4 0 0 0 1) :: M44 Float
+      length (renderPrecipitation ticked PrecipRain identityVP) `shouldSatisfy` (>= 0)
+
+    it "snow precipitation tick preserves lateral drift" $ do
+      p <- spawnSnowParticle (V3 0 64 0)
+      let [p'] = tickPrecipitation 1.0 [p]
+          V3 vx _ vz = partVelocity p
+          V3 vx' _ vz' = partVelocity p'
+      vx' `shouldBe` vx
+      vz' `shouldBe` vz
+
+  describe "block break particles (regression)" $ do
+    it "newParticleSystem starts empty" $ do
+      ps <- newParticleSystem
+      particles <- readIORef ps
+      particles `shouldBe` []
+
+    it "spawnBlockBreakParticles adds 8-12 particles" $ do
+      ps <- newParticleSystem
+      spawnBlockBreakParticles ps (V3 5 60 5) (0.5, 0.5, 0.5, 1.0)
+      particles <- readIORef ps
+      length particles `shouldSatisfy` (\n -> n >= 8 && n <= 12)
+
+    it "tickParticles removes dead particles" $ do
+      ps <- newParticleSystem
+      writeIORef ps [Particle (V3 0 0 0) (V3 0 0 0) (V4 1 1 1 1) 0.0 1.0]
+      tickParticles 0.1 ps
+      particles <- readIORef ps
+      particles `shouldBe` []
+
+    it "renderParticles returns empty for empty list" $
+      renderParticles [] (V4 (V4 1 0 0 0) (V4 0 1 0 0) (V4 0 0 1 0) (V4 0 0 0 1)) `shouldBe` []
