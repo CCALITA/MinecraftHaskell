@@ -28,6 +28,7 @@ import Game.BlockEntity (BlockEntityMap, newBlockEntityMap)
 import Game.Achievement (AchievementState, newAchievementState)
 import World.Chunk (ChunkPos)
 import World.Dimension (DimensionType(..))
+import World.World (World)
 import Engine.Vulkan.Memory (BufferAllocation)
 import Entity.Mob (AIState)
 
@@ -113,6 +114,7 @@ data GameState = GameState
   , gsChatState        :: !(IORef ChatState)
     -- Dimension system
   , gsDimension        :: !(IORef DimensionType)
+  , gsNetherWorld      :: !(IORef (Maybe World))
   , gsPortalTimer      :: !(IORef Float)
   }
 
@@ -191,4 +193,5 @@ newGameState spawnPos = do
     <*> newIORef emptyChatState
     -- Dimension system
     <*> newIORef Overworld
+    <*> newIORef Nothing       -- gsNetherWorld
     <*> newIORef 0.0

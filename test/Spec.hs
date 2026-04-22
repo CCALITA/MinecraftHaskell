@@ -49,6 +49,7 @@ import World.Fluid (FluidState, FluidType(..), newFluidState, addFluidSource, re
 import Entity.Pathfinding (findPath, pathDistance)
 import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
 import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, getTimeOfDay, TimeOfDay(..))
+import Game.State (GameState(..), newGameState)
 import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
 
 import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
@@ -132,6 +133,7 @@ main = hspec $ do
   chatStateSpec
   lookupItemByNameSpec
   netherPortalSpec
+  dimensionWiringSpec
 
 -- =========================================================================
 -- Block
@@ -5416,3 +5418,104 @@ netherPortalSpec = describe "World.Dimension.NetherPortal" $ do
 
   it "NetherPortal block drops nothing" $ do
     blockDrops NetherPortal `shouldBe` []
+
+-- =========================================================================
+-- Dimension wiring (sky color, GameState fields, coordinate mapping)
+-- =========================================================================
+dimensionWiringSpec :: Spec
+dimensionWiringSpec = describe "Dimension wiring" $ do
+  -- dimensionSkyColor
+  describe "dimensionSkyColor" $ do
+    it "Overworld sky color is identity (1,1,1,1)" $ do
+      Dim.dimensionSkyColor Dim.Overworld `shouldBe` V4 1.0 1.0 1.0 1.0
+
+    it "Nether sky color is reddish" $ do
+      let V4 r g b _a = Dim.dimensionSkyColor Dim.Nether
+      r `shouldSatisfy` (> 0.3)
+      g `shouldSatisfy` (< 0.3)
+      b `shouldSatisfy` (< 0.3)
+
+    it "Nether sky red channel exceeds green and blue" $ do
+      let V4 r g b _a = Dim.dimensionSkyColor Dim.Nether
+      r `shouldSatisfy` (> g)
+      r `shouldSatisfy` (> b)
+
+    it "TheEnd sky color is dark purplish" $ do
+      let V4 r _g b _a = Dim.dimensionSkyColor Dim.TheEnd
+      b `shouldSatisfy` (> r)
+
+    it "all three dimension sky colors are distinct" $ do
+      let ow  = Dim.dimensionSkyColor Dim.Overworld
+          net = Dim.dimensionSkyColor Dim.Nether
+          end = Dim.dimensionSkyColor Dim.TheEnd
+      ow `shouldNotBe` net
+      net `shouldNotBe` end
+      ow `shouldNotBe` end
+
+    it "dimensionSkyColor alpha is 1 for all dimensions" $ do
+      let dims = [minBound .. maxBound] :: [Dim.DimensionType]
+      mapM_ (\d -> let V4 _ _ _ a = Dim.dimensionSkyColor d in a `shouldBe` 1.0) dims
+
+  -- dimensionConfig lookup
+  describe "dimensionConfig" $ do
+    it "dimensionConfig Overworld matches overworldConfig" $ do
+      Dim.dimensionConfig Dim.Overworld `shouldBe` Dim.overworldConfig
+
+    it "dimensionConfig Nether matches netherConfig" $ do
+      Dim.dimensionConfig Dim.Nether `shouldBe` Dim.netherConfig
+
+    it "dimensionConfig TheEnd matches endConfig" $ do
+      Dim.dimensionConfig Dim.TheEnd `shouldBe` Dim.endConfig
+
+  -- Coordinate mapping roundtrip properties
+  describe "coordinate mapping" $ do
+    it "netherCoords then overworldCoords roundtrips multiples of 8" $ do
+      let original = V3 80 64 160
+      Dim.overworldCoords (Dim.netherCoords original) `shouldBe` original
+
+    it "overworldCoords then netherCoords roundtrips" $ do
+      let nether = V3 10 64 20
+      Dim.netherCoords (Dim.overworldCoords nether) `shouldBe` nether
+
+    it "netherCoords divides x and z by 8, preserves y" $ do
+      Dim.netherCoords (V3 160 100 (-240)) `shouldBe` V3 20 100 (-30)
+
+    it "overworldCoords multiplies x and z by 8, preserves y" $ do
+      Dim.overworldCoords (V3 20 100 (-30)) `shouldBe` V3 160 100 (-240)
+
+    it "netherCoords at origin is origin" $ do
+      Dim.netherCoords (V3 0 0 0) `shouldBe` V3 0 0 0
+
+    it "overworldCoords at origin is origin" $ do
+      Dim.overworldCoords (V3 0 0 0) `shouldBe` V3 0 0 0
+
+  -- GameState dimension fields
+  describe "GameState dimension fields" $ do
+    it "newGameState starts in Overworld" $ do
+      gs <- newGameState (V3 0 80 0)
+      dim <- readIORef (gsDimension gs)
+      dim `shouldBe` Dim.Overworld
+
+    it "gsDimension can be changed to Nether" $ do
+      gs <- newGameState (V3 0 80 0)
+      writeIORef (gsDimension gs) Dim.Nether
+      dim <- readIORef (gsDimension gs)
+      dim `shouldBe` Dim.Nether
+
+    it "gsDimension can be changed to TheEnd" $ do
+      gs <- newGameState (V3 0 80 0)
+      writeIORef (gsDimension gs) Dim.TheEnd
+      dim <- readIORef (gsDimension gs)
+      dim `shouldBe` Dim.TheEnd
+
+    it "gsNetherWorld starts as Nothing" $ do
+      gs <- newGameState (V3 0 80 0)
+      nw <- readIORef (gsNetherWorld gs)
+      case nw of
+        Nothing -> pure ()
+        Just _  -> expectationFailure "Expected gsNetherWorld to be Nothing"
+
+    it "gsPortalTimer starts at 0" $ do
+      gs <- newGameState (V3 0 80 0)
+      timer <- readIORef (gsPortalTimer gs)
+      timer `shouldBe` 0.0
