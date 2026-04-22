@@ -39,6 +39,7 @@ import Game.Save
 import Game.DroppedItem
 import Game.BlockEntity
 import Game.State (GameState(..), GameMode(..), Projectile(..), newGameState)
+import Game.Achievement (AchievementState, checkAchievement, unlockAchievement, achievementName, AchievementTrigger(..))
 import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), ChatMessage(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
 import Game.ItemDisplay (itemColor, itemMiniIcon)
 import Engine.Sound
@@ -238,6 +239,8 @@ main = do
         fpsCounterRef       = gsFpsCounter gs
         fpsTimerRef         = gsFpsTimer gs
         fpsDisplayRef       = gsFpsDisplay gs
+        achievementsRef     = gsAchievements gs
+        achievementToastRef = gsAchievementToast gs
         chatStateRef        = gsChatState gs
 
     -- World save management: use world1 as default
@@ -492,6 +495,8 @@ main = do
                   Nothing -> do
                     writeIORef cursorItemRef (Just (ItemStack item count))
                     writeIORef craftingGridRef (emptyCraftingGrid 2)
+                    -- Achievement: craft item trigger
+                    tryTriggerAchievement achievementsRef achievementToastRef (TrigCraftItem item)
                   _ -> pure ()
               CraftFailure -> pure ()
           else do
@@ -570,6 +575,8 @@ main = do
                               Nothing -> g
                             ) grid [(r, c) | r <- [0..size-1], c <- [0..size-1]]
                       writeIORef craftingGridRef consumed
+                      -- Achievement: craft item trigger
+                      tryTriggerAchievement achievementsRef achievementToastRef (TrigCraftItem item)
                     _ -> pure ()  -- cursor occupied
                 CraftFailure -> pure ()
             Just (CraftInvSlot idx) -> do
@@ -1740,6 +1747,8 @@ main = do
                           writeIORef inventoryRef inv''
                           putStrLn $ "Broke " ++ show bt ++ " at " ++ show blockPos
                           playSound soundSystem SndBlockBreak
+                          -- Achievement: mine block trigger
+                          tryTriggerAchievement achievementsRef achievementToastRef (TrigMineBlock bt)
                           -- Trigger falling blocks above the broken block
                           void $ triggerGravityAbove world blockPos
                           -- Sugar cane cascade: break all sugar cane above
@@ -2011,6 +2020,8 @@ main = do
                     -- Award XP for killing the mob
                     let killXP = xpForMobKill mobType
                     modifyIORef' playerXPRef (+ killXP)
+                    -- Achievement: kill mob trigger
+                    tryTriggerAchievement achievementsRef achievementToastRef (TrigKillEntity (entTag ent))
                     let dropPos = entPosition ent'
                     drops <- mobDrops (entTag ent)
                     forM_ drops $ \(item, count) ->
@@ -2292,6 +2303,14 @@ main = do
             case sleepMsg of
               Just (t, msg) -> writeIORef sleepMessageRef (if t - dt > 0 then Just (t - dt, msg) else Nothing)
               Nothing       -> pure ()
+            -- Achievement toast timer decay
+            achToast <- readIORef achievementToastRef
+            let achToastText = case achToast of
+                  Just (name, t) | t > 0 -> Just name
+                  _                      -> Nothing
+            case achToast of
+              Just (name, t) -> writeIORef achievementToastRef (if t - dt > 0 then Just (name, t - dt) else Nothing)
+              Nothing        -> pure ()
             -- Update chat message timers
             modifyIORef' chatStateRef (updateChatMessages dt)
             debugInfo <- if showDebug
@@ -2356,6 +2375,7 @@ main = do
             let particleVerts = if mode == Playing then renderParticles particles vp else []
             spawnPos <- readIORef spawnPointRef
             playerXP <- readIORef playerXPRef
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText
             chatState <- readIORef chatStateRef
             let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP chatState
                     VS.++ VS.fromList particleVerts
@@ -2785,15 +2805,33 @@ checkLogNearby world (V3 wx wy wz) radius = go offsets
       bt <- worldGetBlock world (V3 wx wy wz + d)
       if bt == OakLog then pure True else go rest
 
+-- | Try to unlock an achievement from a trigger event.
+-- If the trigger matches a new (locked) achievement, unlock it and
+-- set the toast IORef so the HUD displays a gold notification for 3 seconds.
+tryTriggerAchievement :: IORef AchievementState -> IORef (Maybe (String, Float)) -> AchievementTrigger -> IO ()
+tryTriggerAchievement achRef toastRef trigger = do
+  st <- readIORef achRef
+  case checkAchievement st trigger of
+    Just ach -> do
+      let newSt = unlockAchievement st ach
+      writeIORef achRef newSt
+      writeIORef toastRef (Just (achievementName ach, 3.0))
+      putStrLn $ "Achievement unlocked: " ++ achievementName ach
+    Nothing -> pure ()
+
 -- | Build HUD vertices from current state
 -- debugInfo: Just DebugInfo when F3 overlay is active
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- sleepMsgText: Just "message" when a bed-related message should be shown
+-- achToastText: Just "name" when an achievement toast should be shown
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText = VS.fromList $
 buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> ChatState -> VS.Vector Float
 buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP chatState = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ achToastVerts
     Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ chatMessageVerts
     ChatInput -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ healthVerts ++ hungerVerts ++ chatInputVerts ++ chatMessageVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts
@@ -3101,6 +3139,15 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
             infoY = hotbarY - 0.09
         in renderTextCentered infoY 0.8 (0.9, 0.8, 0.3, 1) todStr
       _ -> []
+
+    -- Achievement toast: gold text notification near top of screen
+    achToastVerts = case achToastText of
+      Just name ->
+          let achMsg = "ACHIEVEMENT: " ++ name
+              achBg  = quad (-0.55) (-0.90) 0.55 (-0.77) (0.15, 0.12, 0.0, 0.7)
+              achTxt = renderTextCentered (-0.87) 1.0 (1.0, 0.84, 0.0, 1.0) achMsg
+          in achBg ++ achTxt
+      Nothing -> []
 
     -- Death screen: red overlay, "YOU DIED" text, score, and respawn button
     deathScreenVerts =

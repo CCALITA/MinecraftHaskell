@@ -25,6 +25,7 @@ import Game.DayNight (DayNightCycle, newDayNightCycle)
 import World.Weather (WeatherState, newWeatherState)
 import World.Redstone (RedstoneState, newRedstoneState)
 import Game.BlockEntity (BlockEntityMap, newBlockEntityMap)
+import Game.Achievement (AchievementState, newAchievementState)
 import World.Chunk (ChunkPos)
 import Engine.Vulkan.Memory (BufferAllocation)
 import Entity.Mob (AIState)
@@ -104,6 +105,9 @@ data GameState = GameState
   , gsFpsDisplay       :: !(IORef Int)
     -- Event system
   , gsEventBus         :: !EventBus
+    -- Achievement system
+  , gsAchievements     :: !(IORef AchievementState)
+  , gsAchievementToast :: !(IORef (Maybe (String, Float)))
     -- Chat system
   , gsChatState        :: !(IORef ChatState)
   }
@@ -176,5 +180,8 @@ newGameState spawnPos = do
     <*> newIORef 0
     -- Event system
     <*> newEventBus
+    -- Achievement system
+    <*> newIORef newAchievementState
+    <*> newIORef Nothing
     -- Chat system
     <*> newIORef emptyChatState
