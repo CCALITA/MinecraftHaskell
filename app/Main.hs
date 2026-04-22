@@ -587,31 +587,32 @@ main = do
               GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
               writeIORef lastCursorRef Nothing
             _ -> pure ()
-          _ -> case key of  -- InventoryOpen, CraftingOpen, or FurnaceOpen
-            GLFW.Key'Escape -> do
-              writeIORef gameModeRef Playing
-              writeIORef openFurnacePosRef Nothing
-              GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
-              writeIORef lastCursorRef Nothing
-              -- Return cursor item to inventory if any
-              mCursor <- readIORef cursorItemRef
-              case mCursor of
-                Just (ItemStack item cnt) -> do
-                  modifyIORef' inventoryRef (\inv -> fst $ addItem inv item cnt)
-                  writeIORef cursorItemRef Nothing
-                Nothing -> pure ()
-            GLFW.Key'E -> do
-              writeIORef gameModeRef Playing
-              writeIORef openFurnacePosRef Nothing
-              GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
-              writeIORef lastCursorRef Nothing
-              mCursor <- readIORef cursorItemRef
-              case mCursor of
-                Just (ItemStack item cnt) -> do
-                  modifyIORef' inventoryRef (\inv -> fst $ addItem inv item cnt)
-                  writeIORef cursorItemRef Nothing
-                Nothing -> pure ()
-            _ -> pure ()
+          _ -> do
+            let closeInventoryUI = do
+                  writeIORef gameModeRef Playing
+                  writeIORef openFurnacePosRef Nothing
+                  GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Disabled
+                  writeIORef lastCursorRef Nothing
+                  -- Return cursor item to inventory if any
+                  mCursor <- readIORef cursorItemRef
+                  case mCursor of
+                    Just (ItemStack item cnt) -> do
+                      modifyIORef' inventoryRef (\inv -> fst $ addItem inv item cnt)
+                      writeIORef cursorItemRef Nothing
+                    Nothing -> pure ()
+                  -- Return crafting grid items to inventory when closing crafting table
+                  when (mode == CraftingOpen) $ do
+                    cGrid <- readIORef craftingGridRef
+                    let size = cgSize cGrid
+                        gridItems = [ item | r <- [0..size-1], c <- [0..size-1]
+                                           , Just item <- [getCraftingSlot cGrid r c] ]
+                    modifyIORef' inventoryRef (\inv ->
+                      foldl (\i item -> fst $ addItem i item 1) inv gridItems)
+                    writeIORef craftingGridRef (emptyCraftingGrid 3)
+            case key of
+              GLFW.Key'Escape -> closeInventoryUI
+              GLFW.Key'E      -> closeInventoryUI
+              _               -> pure ()
 
     -- Timing
     frameRef <- newIORef (0 :: Int)
