@@ -6,7 +6,7 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 projection;
     vec4 sunDirection;    // xyz = sun direction, w = unused
     float ambientLight;   // 0.0-1.0 overall brightness
-    float _pad1;
+    float time;           // elapsed time in seconds (for animated textures)
     float _pad2;
     float _pad3;
 } ubo;
