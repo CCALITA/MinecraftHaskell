@@ -2332,10 +2332,16 @@ main = do
             sc' <- readIORef scRef
             dayNightVal <- readIORef dayNightRef
             weatherVal <- readIORef weatherRef
+            curDimVal <- readIORef (gsDimension gs)
             let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
             let cam = cameraFromPlayer player
                 aspect = fromIntegral extW / fromIntegral extH
                 V3 sx sy sz = getSunDirection dayNightVal
+                -- Compute sky color from day/night cycle, adjusted for weather and dimension
+                skyMul = weatherSkyMultiplier weatherVal
+                V4 r g b a = getSkyColor dayNightVal
+                V4 dr dg db _da = dimensionSkyColor curDimVal
+                V4 skyR skyG skyB skyA = V4 (r * skyMul * dr) (g * skyMul * dg) (b * skyMul * db) a
                 ubo = UniformBufferObject
                   { uboModel        = transpose identity
                   , uboView         = transpose $ cameraViewMatrix cam
@@ -2343,8 +2349,9 @@ main = do
                   , uboSunDirection = V4 sx sy sz 0
                   , uboAmbientLight = getAmbientLight dayNightVal * weatherAmbientMultiplier weatherVal
                   , uboTime         = realToFrac now
-                  , _uboPad2        = 0
-                  , _uboPad3        = 0
+                  , uboFogStart     = 90
+                  , uboFogEnd       = 128
+                  , uboFogColor     = V4 skyR skyG skyB skyA
                   }
             updateUBO device (uniformBufs V.! currentFrame) ubo
 
@@ -2358,13 +2365,6 @@ main = do
                                    maxCorner = V3 (fromIntegral (cx + 1) * 16) 256 (fromIntegral (cz + 1) * 16)
                              , isAABBInFrustum frustum minCorner maxCorner
                              ]
-
-            -- Compute sky color from day/night cycle, adjusted for weather and dimension
-            curDimVal <- readIORef (gsDimension gs)
-            let skyMul = weatherSkyMultiplier weatherVal
-                V4 r g b a = getSkyColor dayNightVal
-                V4 dr dg db _da = dimensionSkyColor curDimVal
-                V4 skyR skyG skyB skyA = V4 (r * skyMul * dr) (g * skyMul * dg) (b * skyMul * db) a
 
             -- Per-frame raycast for block target highlight
             do let eyePos = plPos player + V3 0 1.62 0
