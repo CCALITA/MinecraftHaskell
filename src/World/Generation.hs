@@ -3,11 +3,14 @@ module World.Generation
   , GenerationConfig(..)
   , defaultGenConfig
   , placeTreeWorld
+  , placeTypedTree
   ) where
 
 import World.Block (BlockType(..))
 import World.Chunk
 import World.Biome
+import World.BiomeFeatures (BiomeFeature(..), TreeType(..), biomeFeatures, featureTrees,
+                            treeLogBlock, treeLeafBlock)
 import World.Noise
 
 import Control.Monad (when, forM_)
@@ -102,7 +105,7 @@ generateChunk cfg chunkCoord = do
             Just ore -> MUV.write mvec (blockIndex lx y lz) (blockW8 ore)
             Nothing  -> pure ()
 
-  -- Pass 4: Trees — hash-based scatter to avoid grid artifacts
+  -- Pass 4: Trees — biome-feature-driven placement with hash scatter
   forM_ [2..chunkWidth-3] $ \lx ->
     forM_ [2..chunkDepth-3] $ \lz -> do
       let wx = cx * chunkWidth + lx
@@ -111,19 +114,26 @@ generateChunk cfg chunkCoord = do
           wzd = fromIntegral wz :: Double
           biome = biomeAt seed wxd wzd
           bp = biomeParams biome
-          -- Hash the world position to get a pseudo-random value in [0, 1)
-          h = hashPos (seed + 5000) wx wz
-          treeRoll = fromIntegral (h `mod` 10000) / 10000.0 :: Double
-      when (treeRoll < bpTreeDensity bp) $ do
-        surfY <- findSurface mvec lx lz (chunkHeight - 1)
-        when (surfY > gcSeaLevel cfg && surfY < chunkHeight - 10) $ do
-          surfBlock <- MUV.read mvec (blockIndex lx surfY lz)
-          when (surfBlock == blockW8 (bpSurfaceBlock bp)) $ do
-            -- Vary tree height based on position hash
-            let hTree = hashPos (seed + 6000) wx wz
-                trunkH = 4 + hTree `mod` 3  -- height 4-6
-                canopyR = 1 + hTree `mod` 2  -- radius 1-2
-            placeTree mvec lx surfY lz trunkH canopyR
+          trees = featureTrees (biomeFeatures biome)
+      -- For each TreeFeature in the biome, check if a tree spawns
+      forM_ trees $ \feat -> do
+        let TreeFeature treeType density = feat
+            -- Use a different salt per tree type so multiple tree features
+            -- don't always overlap on the same positions
+            salt = seed + 5000 + fromEnum treeType * 1000
+            h = hashPos salt wx wz
+            treeRoll = fromIntegral (h `mod` 10000) / 10000.0 :: Double
+        when (treeRoll < realToFrac density) $ do
+          surfY <- findSurface mvec lx lz (chunkHeight - 1)
+          when (surfY > gcSeaLevel cfg && surfY < chunkHeight - 10) $ do
+            surfBlock <- MUV.read mvec (blockIndex lx surfY lz)
+            when (surfBlock == blockW8 (bpSurfaceBlock bp)) $ do
+              let logBlock  = treeLogBlock treeType
+                  leafBlock = treeLeafBlock treeType
+                  hTree = hashPos (seed + 6000) wx wz
+                  trunkH = 4 + hTree `mod` 3  -- height 4-6
+                  canopyR = 1 + hTree `mod` 2  -- radius 1-2
+              placeTypedTree mvec lx surfY lz trunkH canopyR logBlock leafBlock
 
   -- Pass 5: Surface decoration (gravel patches, clay near water)
   forM_ [0..chunkWidth-1] $ \lx ->
@@ -243,14 +253,15 @@ findSurface mvec lx lz y
         then pure y
         else findSurface mvec lx lz (y - 1)
 
--- | Place a tree at (x, surfY, z) with variable trunk height and canopy radius
-placeTree :: MUV.IOVector Word8 -> Int -> Int -> Int -> Int -> Int -> IO ()
-placeTree mvec x surfY z trunkH canopyR = do
+-- | Place a tree at (x, surfY, z) with variable trunk height, canopy radius,
+--   and configurable log/leaf block types for biome-specific trees.
+placeTypedTree :: MUV.IOVector Word8 -> Int -> Int -> Int -> Int -> Int -> BlockType -> BlockType -> IO ()
+placeTypedTree mvec x surfY z trunkH canopyR logBlock leafBlock = do
   -- Trunk
   forM_ [1..trunkH] $ \dy -> do
     let y = surfY + dy
     when (y < chunkHeight) $
-      MUV.write mvec (blockIndex x y z) (blockW8 OakLog)
+      MUV.write mvec (blockIndex x y z) (blockW8 logBlock)
 
   -- Leaf canopy — spheroid around trunk top
   let topY = surfY + trunkH
@@ -271,14 +282,19 @@ placeTree mvec x surfY z trunkH canopyR = do
         when (dist2 <= maxR2 && not isTrunk && isInBounds lx ly lz) $ do
           cur <- MUV.read mvec (blockIndex lx ly lz)
           when (cur == blockW8 Air) $
-            MUV.write mvec (blockIndex lx ly lz) (blockW8 OakLeaves)
+            MUV.write mvec (blockIndex lx ly lz) (blockW8 leafBlock)
 
   -- Crown leaf on top
   let crownY = topY + 3
   when (crownY < chunkHeight && isInBounds x crownY z) $ do
     cur <- MUV.read mvec (blockIndex x crownY z)
     when (cur == blockW8 Air) $
-      MUV.write mvec (blockIndex x crownY z) (blockW8 OakLeaves)
+      MUV.write mvec (blockIndex x crownY z) (blockW8 leafBlock)
+
+-- | Place an oak tree at (x, surfY, z) — backward-compatible wrapper.
+placeTree :: MUV.IOVector Word8 -> Int -> Int -> Int -> Int -> Int -> IO ()
+placeTree mvec x surfY z trunkH canopyR =
+  placeTypedTree mvec x surfY z trunkH canopyR OakLog OakLeaves
 
 -- | Convert BlockType to Word8
 blockW8 :: BlockType -> Word8
