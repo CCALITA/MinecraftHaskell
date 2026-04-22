@@ -56,7 +56,7 @@ data GameState = GameState
   , gsDayNight         :: !(IORef DayNightCycle)
   , gsWeather          :: !(IORef WeatherState)
   , gsSpawnPoint       :: !(IORef (V3 Float))
-  , gsSleepMessage     :: !(IORef (Maybe Float))
+  , gsSleepMessage     :: !(IORef (Maybe (Float, String)))
   , gsDebugOverlay     :: !(IORef Bool)
   , gsTargetBlock      :: !(IORef (Maybe (V3 Int)))
   , gsRedstone         :: !(IORef RedstoneState)

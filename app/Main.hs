@@ -33,7 +33,7 @@ import Game.Furnace
 import World.Fluid
 import World.Light
 import Entity.ECS
-import Entity.Mob (MobType(..), MobInfo(..), updateMobAI, AIState(..), mobInfo, damageEntity)
+import Entity.Mob (MobType(..), MobInfo(..), updateMobAI, AIState(..), mobInfo, damageEntity, isHostile)
 import Entity.Spawn
 import Game.Save
 import Game.DroppedItem
@@ -1015,10 +1015,18 @@ main = do
                           dnc <- readIORef dayNightRef
                           if isNight dnc
                             then do
-                              writeIORef spawnPointRef (fmap fromIntegral (V3 bx by bz) + V3 0.5 1.0 0.5)
-                              modifyIORef' dayNightRef (\d -> d { dncTime = 0.25, dncDayCount = dncDayCount d + 1 })
+                              -- Check for hostile mobs within 8 blocks
+                              let bedPos = fmap fromIntegral (V3 bx by bz) + V3 0.5 1.0 0.5
+                              nearbyEnts <- entitiesInRange entityWorld bedPos 8.0
+                              let hostileTags = ["Zombie", "Skeleton", "Creeper", "Spider"]
+                                  hasHostile = any (\e -> entTag e `elem` hostileTags) nearbyEnts
+                              if hasHostile
+                                then writeIORef sleepMessageRef (Just (3.0, "YOU MAY NOT REST NOW, THERE ARE MONSTERS NEARBY"))
+                                else do
+                                  writeIORef spawnPointRef bedPos
+                                  modifyIORef' dayNightRef (\d -> d { dncTime = 0.25, dncDayCount = dncDayCount d + 1 })
                             else
-                              writeIORef sleepMessageRef (Just 3.0)
+                              writeIORef sleepMessageRef (Just (3.0, "YOU CAN ONLY SLEEP AT NIGHT"))
                         Chest -> do
                           let chestPos = V3 bx by bz
                           mExisting <- getChestInventory blockEntityMapRef chestPos
@@ -2170,10 +2178,12 @@ main = do
             chunks <- readTVarIO (worldChunks world)
             targetBlock <- readIORef targetBlockRef
             sleepMsg <- readIORef sleepMessageRef
-            let showSleepMsg = maybe False (> 0) sleepMsg
+            let sleepMsgText = case sleepMsg of
+                  Just (t, msg) | t > 0 -> Just msg
+                  _                     -> Nothing
             case sleepMsg of
-              Just t  -> writeIORef sleepMessageRef (if t - dt > 0 then Just (t - dt) else Nothing)
-              Nothing -> pure ()
+              Just (t, msg) -> writeIORef sleepMessageRef (if t - dt > 0 then Just (t - dt, msg) else Nothing)
+              Nothing       -> pure ()
             debugInfo <- if showDebug
                   then do
                     let V3 px' _ pz' = plPos player'
@@ -2235,7 +2245,7 @@ main = do
               writeIORef damageFlashRef (max 0 (damageFlash - dt))
             let particleVerts = if mode == Playing then renderParticles particles vp else []
             spawnPos <- readIORef spawnPointRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) showSleepMsg damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -2666,9 +2676,9 @@ checkLogNearby world (V3 wx wy wz) radius = go offsets
 -- | Build HUD vertices from current state
 -- debugInfo: Just DebugInfo when F3 overlay is active
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
--- showSleepMsg: True when "You can only sleep at night" should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Bool -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo showSleepMsg damageFlash mouseX mouseY playerPos spawnPos dayNight = VS.fromList $
+-- sleepMsgText: Just "message" when a bed-related message should be shown
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
@@ -2902,13 +2912,13 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
                 _ -> []
         in concatMap drawEdge edges
 
-    -- "You can only sleep at night" message
-    sleepMsgVerts
-      | showSleepMsg =
+    -- Bed-related message (sleep at night / monsters nearby)
+    sleepMsgVerts = case sleepMsgText of
+      Just msg ->
           let msgBg = quad (-0.55) 0.25 0.55 0.38 (0.0, 0.0, 0.0, 0.6)
-              msgText = renderTextCentered 0.28 1.0 (1, 1, 1, 1) "YOU CAN ONLY SLEEP AT NIGHT"
+              msgText = renderTextCentered 0.28 1.0 (1, 1, 1, 1) msg
           in msgBg ++ msgText
-      | otherwise = []
+      Nothing -> []
 
     -- Damage flash: red overlay that fades out
     damageFlashVerts
