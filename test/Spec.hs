@@ -49,7 +49,7 @@ import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
 import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
 
 import Data.Binary (encode, decode)
-import Data.IORef (newIORef, readIORef, modifyIORef')
+import Data.IORef (newIORef, readIORef, writeIORef, modifyIORef')
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..))
@@ -2327,6 +2327,101 @@ achievementSpec = describe "Game.Achievement" $ do
   -- Enum roundtrip
   it "AchievementType roundtrips through Enum" $ do
     mapM_ (\ach -> toEnum (fromEnum ach) `shouldBe` ach) allAchievements
+
+  -- Integration: IORef-based trigger workflow (mirrors game loop wiring)
+  it "mine OakLog triggers Getting Wood via IORef workflow" $ do
+    achRef   <- newIORef newAchievementState
+    toastRef <- newIORef (Nothing :: Maybe (String, Float))
+    let trigger = TrigMineBlock OakLog
+    st <- readIORef achRef
+    case checkAchievement st trigger of
+      Just ach -> do
+        writeIORef achRef (unlockAchievement st ach)
+        writeIORef toastRef (Just (achievementName ach, 3.0))
+      Nothing -> pure ()
+    st' <- readIORef achRef
+    isUnlocked st' AchMineWood `shouldBe` True
+    toast <- readIORef toastRef
+    fmap fst toast `shouldBe` Just "Getting Wood"
+
+  it "mine DiamondOre triggers Diamonds! via IORef workflow" $ do
+    achRef   <- newIORef newAchievementState
+    toastRef <- newIORef (Nothing :: Maybe (String, Float))
+    let trigger = TrigMineBlock DiamondOre
+    st <- readIORef achRef
+    case checkAchievement st trigger of
+      Just ach -> do
+        writeIORef achRef (unlockAchievement st ach)
+        writeIORef toastRef (Just (achievementName ach, 3.0))
+      Nothing -> pure ()
+    st' <- readIORef achRef
+    isUnlocked st' AchMineDiamond `shouldBe` True
+    toast <- readIORef toastRef
+    fmap fst toast `shouldBe` Just "Diamonds!"
+
+  it "craft OakPlanks triggers Benchmarking via IORef workflow" $ do
+    achRef   <- newIORef newAchievementState
+    toastRef <- newIORef (Nothing :: Maybe (String, Float))
+    let trigger = TrigCraftItem (BlockItem OakPlanks)
+    st <- readIORef achRef
+    case checkAchievement st trigger of
+      Just ach -> do
+        writeIORef achRef (unlockAchievement st ach)
+        writeIORef toastRef (Just (achievementName ach, 3.0))
+      Nothing -> pure ()
+    st' <- readIORef achRef
+    isUnlocked st' AchCraftPlanks `shouldBe` True
+    toast <- readIORef toastRef
+    fmap fst toast `shouldBe` Just "Benchmarking"
+
+  it "kill Zombie triggers Monster Hunter via IORef workflow" $ do
+    achRef   <- newIORef newAchievementState
+    toastRef <- newIORef (Nothing :: Maybe (String, Float))
+    let trigger = TrigKillEntity "Zombie"
+    st <- readIORef achRef
+    case checkAchievement st trigger of
+      Just ach -> do
+        writeIORef achRef (unlockAchievement st ach)
+        writeIORef toastRef (Just (achievementName ach, 3.0))
+      Nothing -> pure ()
+    st' <- readIORef achRef
+    isUnlocked st' AchKillMob `shouldBe` True
+    toast <- readIORef toastRef
+    fmap fst toast `shouldBe` Just "Monster Hunter"
+
+  it "duplicate trigger does not overwrite toast" $ do
+    achRef   <- newIORef newAchievementState
+    toastRef <- newIORef (Nothing :: Maybe (String, Float))
+    -- First trigger: should unlock
+    let trigger1 = TrigMineBlock OakLog
+    st0 <- readIORef achRef
+    case checkAchievement st0 trigger1 of
+      Just ach -> do
+        writeIORef achRef (unlockAchievement st0 ach)
+        writeIORef toastRef (Just (achievementName ach, 3.0))
+      Nothing -> pure ()
+    -- Second trigger with same event: should NOT unlock again
+    writeIORef toastRef (Just ("Getting Wood", 1.5))  -- simulate partially decayed toast
+    st1 <- readIORef achRef
+    case checkAchievement st1 trigger1 of
+      Just _ach -> writeIORef toastRef (Just ("SHOULD NOT HAPPEN", 3.0))
+      Nothing   -> pure ()
+    toast <- readIORef toastRef
+    fmap fst toast `shouldBe` Just "Getting Wood"
+    fmap snd toast `shouldBe` Just 1.5
+
+  it "toast timer set to 3.0 on unlock" $ do
+    achRef   <- newIORef newAchievementState
+    toastRef <- newIORef (Nothing :: Maybe (String, Float))
+    let trigger = TrigKillEntity "Skeleton"
+    st <- readIORef achRef
+    case checkAchievement st trigger of
+      Just ach -> do
+        writeIORef achRef (unlockAchievement st ach)
+        writeIORef toastRef (Just (achievementName ach, 3.0))
+      Nothing -> pure ()
+    toast <- readIORef toastRef
+    fmap snd toast `shouldBe` Just 3.0
 
 -- =========================================================================
 -- Villager trading
