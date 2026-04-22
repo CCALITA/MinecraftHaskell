@@ -38,6 +38,8 @@ import Game.Event
 import UI.Tooltip
 import UI.Screen
 
+import Game.PotionEffect
+
 import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
 
 import Data.Binary (encode, decode)
@@ -3570,3 +3572,70 @@ itemRegistrySpec = describe "Game.ItemRegistry" $ do
   it "mkItemDef mini-icon is non-empty for Sword" $ do
     let def = mkItemDef 1 (ToolItem Sword Iron 250)
     length (idMiniIcon def) `shouldSatisfy` (> 0)
+
+  describe "Game.PotionEffect" $ do
+    it "tickEffects decrements duration" $ do
+      let effs = [ActiveEffect SpeedEffect 0 10.0]
+          (alive, _) = tickEffects 1.0 effs
+      length alive `shouldBe` 1
+      aeDuration (head alive) `shouldSatisfy` (\d -> abs (d - 9.0) < 0.01)
+
+    it "tickEffects removes expired effects" $ do
+      let effs = [ActiveEffect PoisonEffect 0 0.5]
+          (alive, _) = tickEffects 1.0 effs
+      length alive `shouldBe` 0
+
+    it "tickEffects returns SpeedMod for SpeedEffect" $ do
+      let effs = [ActiveEffect SpeedEffect 0 10.0]
+          (_, ticks) = tickEffects 0.05 effs
+      ticks `shouldBe` [SpeedMod 0.2]
+
+    it "tickEffects returns DamageTick for PoisonEffect" $ do
+      let effs = [ActiveEffect PoisonEffect 0 5.0]
+          (_, ticks) = tickEffects 0.05 effs
+      ticks `shouldBe` [DamageTick 0.8]
+
+    it "tickEffects returns HealTick for RegenerationEffect" $ do
+      let effs = [ActiveEffect RegenerationEffect 0 10.0]
+          (_, ticks) = tickEffects 0.05 effs
+      ticks `shouldBe` [HealTick 0.4]
+
+    it "applyPotion SpeedPotion adds SpeedEffect" $ do
+      let effs = applyPotion SpeedPotion []
+      length effs `shouldBe` 1
+      aeType (head effs) `shouldBe` SpeedEffect
+      aeDuration (head effs) `shouldSatisfy` (> 0)
+
+    it "applyPotion PoisonPotion adds PoisonEffect" $ do
+      let effs = applyPotion PoisonPotion []
+      length effs `shouldBe` 1
+      aeType (head effs) `shouldBe` PoisonEffect
+
+    it "applyPotion replaces existing effect of same type" $ do
+      let effs = applyPotion SpeedPotion [ActiveEffect SpeedEffect 0 5.0]
+      length effs `shouldBe` 1
+      aeDuration (head effs) `shouldSatisfy` (> 25.0)
+
+    it "applyPotion WaterBottle does nothing" $ do
+      let effs = applyPotion WaterBottle [ActiveEffect SpeedEffect 0 5.0]
+      length effs `shouldBe` 1
+
+    it "multiple effects tick independently" $ do
+      let effs = [ActiveEffect SpeedEffect 0 10.0, ActiveEffect PoisonEffect 0 2.0]
+          (alive, ticks) = tickEffects 0.05 effs
+      length alive `shouldBe` 2
+      length ticks `shouldBe` 2
+
+    it "effectName returns non-empty for all types" $ do
+      mapM_ (\t -> effectName t `shouldSatisfy` (not . null)) [minBound .. maxBound :: EffectType]
+
+    it "removeEffectType removes matching effect" $ do
+      let effs = [ActiveEffect SpeedEffect 0 10.0, ActiveEffect PoisonEffect 0 5.0]
+          result = removeEffectType SpeedEffect effs
+      length result `shouldBe` 1
+      aeType (head result) `shouldBe` PoisonEffect
+
+    it "amplifier increases SpeedMod magnitude" $ do
+      let effs = [ActiveEffect SpeedEffect 1 10.0]
+          (_, ticks) = tickEffects 0.05 effs
+      ticks `shouldBe` [SpeedMod 0.4]

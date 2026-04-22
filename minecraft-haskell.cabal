@@ -85,6 +85,7 @@ library
     Game.ItemDisplay
     Game.ItemRegistry
     Game.DroppedItem
+    Game.PotionEffect
     Game.Particle
     Entity.ECS
     Entity.Component

@@ -18,6 +18,7 @@ import Game.Inventory (Inventory, ItemStack, emptyInventory)
 import Game.Crafting (CraftingGrid, emptyCraftingGrid)
 import Game.Furnace (FurnaceState, newFurnaceState)
 import Game.Enchanting (EnchantmentType, EnchantmentMap, newEnchantmentMap)
+import Game.PotionEffect (ActiveEffect)
 import Game.DayNight (DayNightCycle, newDayNightCycle)
 import World.Weather (WeatherState, newWeatherState)
 import World.Redstone (RedstoneState, newRedstoneState)
@@ -72,6 +73,7 @@ data GameState = GameState
   , gsCactusDmgTimer   :: !(IORef Float)
   , gsPoisonTimer      :: !(IORef Float)
   , gsSpeedBuff        :: !(IORef Float)
+  , gsActiveEffects    :: !(IORef [ActiveEffect])
   , gsProjectiles      :: !(IORef [Projectile])
   , gsSkeletonCd       :: !(IORef (HM.HashMap Int Float))
   , gsCreeperFuse      :: !(IORef (IM.IntMap Float))
@@ -139,6 +141,7 @@ newGameState spawnPos = do
     <*> newIORef 0.0
     <*> newIORef 0.0
     <*> newIORef 0.0
+    <*> newIORef []  -- gsActiveEffects
     <*> newIORef []
     <*> newIORef HM.empty
     <*> newIORef IM.empty
