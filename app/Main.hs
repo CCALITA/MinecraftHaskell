@@ -44,6 +44,7 @@ import Engine.Sound
 import Game.Particle
 
 import Game.Config (GameConfig(..), defaultConfig)
+import Game.Event (emit, GameEvent(..))
 
 import World.Redstone (RedstoneState, newRedstoneState, setPower, getPower, propagateRedstone)
 
