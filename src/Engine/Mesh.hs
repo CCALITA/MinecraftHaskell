@@ -1,6 +1,8 @@
 module Engine.Mesh
   ( MeshData(..)
+  , NeighborData(..)
   , emptyMesh
+  , emptyNeighborData
   , meshChunk
   , meshChunkWithLight
   , BlockVertex(..)
@@ -52,6 +54,19 @@ data MeshData = MeshData
 
 emptyMesh :: MeshData
 emptyMesh = MeshData VS.empty VS.empty
+
+-- | Optional frozen block vectors for the 4 cardinal neighbor chunks.
+--   Used to look up blocks across chunk boundaries during meshing,
+--   preventing invisible seam faces between adjacent chunks.
+data NeighborData = NeighborData
+  { ndNorth :: !(Maybe (UV.Vector Word8))   -- +Z neighbor
+  , ndSouth :: !(Maybe (UV.Vector Word8))   -- -Z neighbor
+  , ndEast  :: !(Maybe (UV.Vector Word8))   -- +X neighbor
+  , ndWest  :: !(Maybe (UV.Vector Word8))   -- -X neighbor
+  }
+
+emptyNeighborData :: NeighborData
+emptyNeighborData = NeighborData Nothing Nothing Nothing Nothing
 
 -- | Atlas tile size: 16x16 tiles in a 256x256 atlas
 atlasSize :: Float
@@ -119,8 +134,10 @@ meshChunk chunk = do
 
 -- | Generate mesh for a chunk with light map data.
 --   Light levels are passed through the AO vertex attribute (0.0 = dark, 1.0 = full light).
-meshChunkWithLight :: Chunk -> LightMap -> IO MeshData
-meshChunkWithLight chunk lm = do
+--   Neighbor data enables cross-chunk face culling: at chunk edges, looks up the
+--   adjacent block in the neighbor chunk instead of treating it as Air.
+meshChunkWithLight :: Chunk -> LightMap -> NeighborData -> IO MeshData
+meshChunkWithLight chunk lm neighbors = do
   vertsRef   <- newIORef ([] :: [[BlockVertex]])
   indicesRef <- newIORef ([] :: [[Word32]])
   vertCount  <- newIORef (0 :: Word32)
@@ -138,7 +155,32 @@ meshChunkWithLight chunk lm = do
         writeIORef vertCount (vc + 4)
 
   blocksVec <- freezeBlocks chunk
-  let go !x !y !z
+  let -- | Look up a block type at the given local coords, consulting neighbor
+      -- data when the coordinate falls outside this chunk's bounds.
+      lookupBlock :: Int -> Int -> Int -> BlockType
+      lookupBlock nx ny nz
+        | ny < 0 || ny >= chunkHeight = Air
+        -- +X boundary: look in east neighbor
+        | nx >= chunkWidth = case ndEast neighbors of
+            Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex 0 ny nz
+            Nothing -> Air
+        -- -X boundary: look in west neighbor
+        | nx < 0 = case ndWest neighbors of
+            Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex (chunkWidth - 1) ny nz
+            Nothing -> Air
+        -- +Z boundary: look in north neighbor
+        | nz >= chunkDepth = case ndNorth neighbors of
+            Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex nx ny 0
+            Nothing -> Air
+        -- -Z boundary: look in south neighbor
+        | nz < 0 = case ndSouth neighbors of
+            Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex nx ny (chunkDepth - 1)
+            Nothing -> Air
+        -- Within bounds: look in current chunk
+        | otherwise = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex nx ny nz
+      {-# INLINE lookupBlock #-}
+
+      go !x !y !z
         | y >= chunkHeight = pure ()
         | z >= chunkDepth  = go 0 (y + 1) 0
         | x >= chunkWidth  = go 0 y (z + 1)
@@ -152,9 +194,7 @@ meshChunkWithLight chunk lm = do
                     bz = fromIntegral z
                     pos = V3 bx by bz
                     checkFaceLight nx ny nz face = do
-                      let neighbor
-                            | not (isInBounds nx ny nz) = Air
-                            | otherwise = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex nx ny nz
+                      let neighbor = lookupBlock nx ny nz
                       when (isTransparent neighbor) $ do
                         lightLevel <- getTotalLight lm nx ny nz
                         let lightVal = max 0.1 (fromIntegral lightLevel / 15.0)

@@ -46,6 +46,7 @@ import Game.PotionEffect
 import Game.Bucket (BucketAction(..), determineBucketAction, bucketTypeToFluidBlock, fluidBlockToBucketType)
 import World.Fluid (FluidState, FluidType(..), newFluidState, addFluidSource, removeFluid, getFluid, FluidBlock(..))
 
+import Engine.Mesh (MeshData(..), NeighborData(..), meshChunkWithLight, emptyNeighborData, BlockVertex(..))
 import Entity.Pathfinding (findPath, pathDistance)
 import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
 import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, getTimeOfDay, TimeOfDay(..))
@@ -61,6 +62,8 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..))
 import qualified Data.Vector as V
+import qualified Data.Vector.Storable as VS
+import qualified Data.Vector.Unboxed as UV
 import Control.Concurrent.STM (atomically, readTVar)
 import qualified Data.HashMap.Strict as HM
 import System.Directory (removeDirectoryRecursive, doesFileExist)
@@ -132,6 +135,7 @@ main = hspec $ do
   chatStateSpec
   lookupItemByNameSpec
   netherPortalSpec
+  crossChunkCullingSpec
 
 -- =========================================================================
 -- Block
@@ -5416,3 +5420,133 @@ netherPortalSpec = describe "World.Dimension.NetherPortal" $ do
 
   it "NetherPortal block drops nothing" $ do
     blockDrops NetherPortal `shouldBe` []
+
+-- =========================================================================
+-- Cross-chunk face culling
+-- =========================================================================
+crossChunkCullingSpec :: Spec
+crossChunkCullingSpec = describe "Engine.Mesh cross-chunk face culling" $ do
+
+  it "emptyNeighborData has all Nothing fields" $ do
+    ndNorth emptyNeighborData `shouldBe` Nothing
+    ndSouth emptyNeighborData `shouldBe` Nothing
+    ndEast emptyNeighborData `shouldBe` Nothing
+    ndWest emptyNeighborData `shouldBe` Nothing
+
+  it "no neighbors: edge block emits face toward chunk boundary" $ do
+    -- Place a single stone block at the east edge (x=15, y=0, z=0)
+    chunk <- newChunk (V2 0 0)
+    setBlock chunk 15 0 0 Stone
+    lm <- newLightMap
+    propagateBlockLight chunk lm
+    propagateSkyLight chunk lm
+    mesh <- meshChunkWithLight chunk lm emptyNeighborData
+    -- With no neighbor, the east face should be emitted (treat boundary as Air).
+    -- A single exposed block generates 6 faces = 6*4=24 verts, 6*6=36 indices.
+    VS.length (mdVertices mesh) `shouldBe` 24
+    VS.length (mdIndices mesh) `shouldBe` 36
+
+  it "opaque neighbor: edge face is culled when neighbor block is opaque" $ do
+    -- Place stone at east edge of chunk (x=15)
+    chunk <- newChunk (V2 0 0)
+    setBlock chunk 15 0 0 Stone
+    -- Create east neighbor chunk with stone at x=0 (adjacent to our x=15)
+    eastChunk <- newChunk (V2 1 0)
+    setBlock eastChunk 0 0 0 Stone
+    eastVec <- freezeBlocks eastChunk
+    let nd = emptyNeighborData { ndEast = Just eastVec }
+    lm <- newLightMap
+    propagateBlockLight chunk lm
+    propagateSkyLight chunk lm
+    mesh <- meshChunkWithLight chunk lm nd
+    -- East face should be culled (neighbor is opaque Stone).
+    -- 5 faces remain: 5*4=20 verts, 5*6=30 indices.
+    VS.length (mdVertices mesh) `shouldBe` 20
+    VS.length (mdIndices mesh) `shouldBe` 30
+
+  it "transparent neighbor: edge face is NOT culled when neighbor is transparent" $ do
+    chunk <- newChunk (V2 0 0)
+    setBlock chunk 15 0 0 Stone
+    -- East neighbor has Glass (transparent) at x=0
+    eastChunk <- newChunk (V2 1 0)
+    setBlock eastChunk 0 0 0 Glass
+    eastVec <- freezeBlocks eastChunk
+    let nd = emptyNeighborData { ndEast = Just eastVec }
+    lm <- newLightMap
+    propagateBlockLight chunk lm
+    propagateSkyLight chunk lm
+    mesh <- meshChunkWithLight chunk lm nd
+    -- Glass is transparent, so the east face still gets emitted.
+    -- All 6 faces present: 6*4=24 verts.
+    VS.length (mdVertices mesh) `shouldBe` 24
+
+  it "north neighbor: +Z edge face culled by opaque neighbor" $ do
+    chunk <- newChunk (V2 0 0)
+    setBlock chunk 5 0 15 Stone  -- z=15 is the +Z edge
+    northChunk <- newChunk (V2 0 1)
+    setBlock northChunk 5 0 0 Stone  -- z=0 in the north neighbor
+    northVec <- freezeBlocks northChunk
+    let nd = emptyNeighborData { ndNorth = Just northVec }
+    lm <- newLightMap
+    propagateBlockLight chunk lm
+    propagateSkyLight chunk lm
+    mesh <- meshChunkWithLight chunk lm nd
+    -- North face culled: 5 faces = 20 verts
+    VS.length (mdVertices mesh) `shouldBe` 20
+
+  it "south neighbor: -Z edge face culled by opaque neighbor" $ do
+    chunk <- newChunk (V2 0 0)
+    setBlock chunk 5 0 0 Stone  -- z=0 is the -Z edge
+    southChunk <- newChunk (V2 0 (-1))
+    setBlock southChunk 5 0 15 Stone  -- z=15 in the south neighbor
+    southVec <- freezeBlocks southChunk
+    let nd = emptyNeighborData { ndSouth = Just southVec }
+    lm <- newLightMap
+    propagateBlockLight chunk lm
+    propagateSkyLight chunk lm
+    mesh <- meshChunkWithLight chunk lm nd
+    -- South face culled: 5 faces = 20 verts
+    VS.length (mdVertices mesh) `shouldBe` 20
+
+  it "west neighbor: -X edge face culled by opaque neighbor" $ do
+    chunk <- newChunk (V2 0 0)
+    setBlock chunk 0 0 5 Stone  -- x=0 is the -X edge
+    westChunk <- newChunk (V2 (-1) 0)
+    setBlock westChunk 15 0 5 Stone  -- x=15 in the west neighbor
+    westVec <- freezeBlocks westChunk
+    let nd = emptyNeighborData { ndWest = Just westVec }
+    lm <- newLightMap
+    propagateBlockLight chunk lm
+    propagateSkyLight chunk lm
+    mesh <- meshChunkWithLight chunk lm nd
+    -- West face culled: 5 faces = 20 verts
+    VS.length (mdVertices mesh) `shouldBe` 20
+
+  it "missing neighbor treated as Air (graceful handling)" $ do
+    -- When one neighbor is provided but another is Nothing, the missing
+    -- direction should treat boundary as Air (emit face).
+    chunk <- newChunk (V2 0 0)
+    setBlock chunk 15 0 15 Stone  -- corner block: east + north edges
+    -- Only provide east neighbor (opaque), leave north as Nothing
+    eastChunk <- newChunk (V2 1 0)
+    setBlock eastChunk 0 0 15 Stone
+    eastVec <- freezeBlocks eastChunk
+    let nd = emptyNeighborData { ndEast = Just eastVec }
+    lm <- newLightMap
+    propagateBlockLight chunk lm
+    propagateSkyLight chunk lm
+    mesh <- meshChunkWithLight chunk lm nd
+    -- East face culled, north face emitted (no north neighbor = Air).
+    -- 5 faces = 20 verts
+    VS.length (mdVertices mesh) `shouldBe` 20
+
+  it "all four neighbors provided: fully interior edge block has fewer faces" $ do
+    -- Place blocks at all 4 edges plus neighbors
+    chunk <- newChunk (V2 0 0)
+    setBlock chunk 8 0 8 Stone  -- interior block, not at any edge
+    lm <- newLightMap
+    propagateBlockLight chunk lm
+    propagateSkyLight chunk lm
+    -- Interior block with no neighbors needed: 6 faces (all neighbors are Air within chunk)
+    mesh <- meshChunkWithLight chunk lm emptyNeighborData
+    VS.length (mdVertices mesh) `shouldBe` 24

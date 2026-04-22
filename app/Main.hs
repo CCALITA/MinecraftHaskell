@@ -6,7 +6,7 @@ import qualified Graphics.UI.GLFW as GLFW
 
 import Engine.Window
 import Engine.Camera
-import Engine.Mesh (BlockVertex(..), MeshData(..), meshChunkWithLight)
+import Engine.Mesh (BlockVertex(..), MeshData(..), NeighborData(..), meshChunkWithLight, emptyNeighborData)
 import Engine.BitmapFont
 import Engine.Types (defaultEngineConfig, EngineConfig(..), UniformBufferObject(..))
 import Engine.Vulkan.Init
@@ -2318,7 +2318,7 @@ main = do
               forM_ newChunks $ \c ->
                 void $ settleChunkGravity world c
               -- Mesh only newly loaded chunks
-              mapM_ (\c -> meshSingleChunk physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef c) newChunks
+              mapM_ (\c -> meshSingleChunk world physDevice device cmdPool (vcGraphicsQueue vc) meshCacheRef c) newChunks
               -- Remove meshes for unloaded chunks
               pruneChunkMeshes world device meshCacheRef
 
@@ -2599,7 +2599,7 @@ rebuildAllChunkMeshes
   -> IO ()
 rebuildAllChunkMeshes world physDevice device cmdPool queue cacheRef = do
   chunks <- HM.elems <$> readTVarIO (worldChunks world)
-  mapM_ (meshSingleChunk physDevice device cmdPool queue cacheRef) chunks
+  mapM_ (meshSingleChunk world physDevice device cmdPool queue cacheRef) chunks
 
 -- | Settle gravity-affected blocks in all currently loaded chunks
 settleAllLoadedChunks :: World -> IO ()
@@ -2607,18 +2607,39 @@ settleAllLoadedChunks world = do
   chunks <- HM.elems <$> readTVarIO (worldChunks world)
   mapM_ (settleChunkGravity world) chunks
 
+-- | Freeze neighbor chunk blocks for cross-chunk face culling.
+--   Returns NeighborData with frozen vectors for each loaded cardinal neighbor.
+getNeighborData :: World -> ChunkPos -> IO NeighborData
+getNeighborData world (V2 cx cz) = do
+  allChunks <- readTVarIO (worldChunks world)
+  let freeze pos = case HM.lookup pos allChunks of
+        Nothing -> pure Nothing
+        Just c  -> Just <$> freezeBlocks c
+  north <- freeze (V2 cx (cz + 1))
+  south <- freeze (V2 cx (cz - 1))
+  east  <- freeze (V2 (cx + 1) cz)
+  west  <- freeze (V2 (cx - 1) cz)
+  pure NeighborData
+    { ndNorth = north
+    , ndSouth = south
+    , ndEast  = east
+    , ndWest  = west
+    }
+
 -- | Build GPU mesh for a single chunk and insert into cache
 meshSingleChunk
-  :: Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue
+  :: World -> Vk.PhysicalDevice -> Vk.Device -> Vk.CommandPool -> Vk.Queue
   -> IORef (HM.HashMap ChunkPos (BufferAllocation, BufferAllocation, Int))
   -> Chunk -> IO ()
-meshSingleChunk physDevice device cmdPool queue cacheRef chunk = do
+meshSingleChunk world physDevice device cmdPool queue cacheRef chunk = do
   -- Propagate light for this chunk
   lm <- newLightMap
   propagateBlockLight chunk lm
   propagateSkyLight chunk lm
-  -- Mesh with light data
-  mesh <- meshChunkWithLight chunk lm
+  -- Gather neighbor data for cross-chunk face culling
+  nd <- getNeighborData world (chunkPos chunk)
+  -- Mesh with light data and neighbor info
+  mesh <- meshChunkWithLight chunk lm nd
   let ic = VS.length (mdIndices mesh)
       pos = chunkPos chunk
       V2 cx cz = pos
@@ -2655,7 +2676,7 @@ rebuildChunkAt world physDevice device cmdPool queue cacheRef wx wz = do
   mChunk <- getChunk world (V2 cx cz)
   case mChunk of
     Nothing -> pure ()
-    Just chunk -> meshSingleChunk physDevice device cmdPool queue cacheRef chunk
+    Just chunk -> meshSingleChunk world physDevice device cmdPool queue cacheRef chunk
 
 -- | Rebuild the chunk at (wx, wz) plus its 4 cardinal neighbors.
 --   Light propagation is per-chunk, so neighbors must be re-meshed when
@@ -2702,7 +2723,7 @@ remeshDirtyChunks world physDevice device cmdPool queue cacheRef dirtyRef = do
     mCh <- getChunk world cp
     case mCh of
       Nothing -> pure ()
-      Just ch -> meshSingleChunk physDevice device cmdPool queue cacheRef ch
+      Just ch -> meshSingleChunk world physDevice device cmdPool queue cacheRef ch
 
 -- | Rebuild chunk meshes in the area affected by an explosion
 rebuildExplosionChunks
@@ -2719,7 +2740,7 @@ rebuildExplosionChunks world physDevice device cmdPool queue cacheRef centerX ce
       mChunk <- getChunk world (V2 chx chz)
       case mChunk of
         Nothing -> pure ()
-        Just ch -> meshSingleChunk physDevice device cmdPool queue cacheRef ch
+        Just ch -> meshSingleChunk world physDevice device cmdPool queue cacheRef ch
 
 -- | Inventory slot layout constants
 invGridX0, invGridY0, invSlotW, invSlotH, invSlotPad :: Float
