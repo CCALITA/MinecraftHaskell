@@ -84,6 +84,20 @@ data BlockType
   | EmeraldOre
   | MossyCobblestone
   | MossyStoneBrick
+  | BirchLog
+  | BirchLeaves
+  | BirchPlanks
+  | SpruceLog
+  | SpruceLeaves
+  | SprucePlanks
+  | JungleLog
+  | JungleLeaves
+  | JunglePlanks
+  | TallGrass
+  | Dandelion
+  | Rose
+  | BrownMushroom
+  | RedMushroom
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -184,6 +198,20 @@ blockProperties = \case
   EmeraldOre      -> BlockProperties True  False 0  3.0
   MossyCobblestone -> BlockProperties True  False 0  2.0
   MossyStoneBrick -> BlockProperties True  False 0  1.5
+  BirchLog         -> BlockProperties True  False 0  2.0
+  BirchLeaves      -> BlockProperties True  True  0  0.2
+  BirchPlanks      -> BlockProperties True  False 0  2.0
+  SpruceLog        -> BlockProperties True  False 0  2.0
+  SpruceLeaves     -> BlockProperties True  True  0  0.2
+  SprucePlanks     -> BlockProperties True  False 0  2.0
+  JungleLog        -> BlockProperties True  False 0  2.0
+  JungleLeaves     -> BlockProperties True  True  0  0.2
+  JunglePlanks     -> BlockProperties True  False 0  2.0
+  TallGrass        -> BlockProperties False True  0  0.0
+  Dandelion        -> BlockProperties False True  0  0.0
+  Rose             -> BlockProperties False True  0  0.0
+  BrownMushroom    -> BlockProperties False True  0  0.0
+  RedMushroom      -> BlockProperties False True  0  0.0
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -199,8 +227,11 @@ isGravityAffected _      = False
 
 -- | Whether a block is a leaf block (subject to decay)
 isLeafBlock :: BlockType -> Bool
-isLeafBlock OakLeaves = True
-isLeafBlock _         = False
+isLeafBlock OakLeaves    = True
+isLeafBlock BirchLeaves  = True
+isLeafBlock SpruceLeaves = True
+isLeafBlock JungleLeaves = True
+isLeafBlock _            = False
 
 -- | Collision height for a block type. Slabs are half-height (0.5), all others are 1.0.
 blockCollisionHeight :: BlockType -> Float
@@ -309,3 +340,26 @@ blockFaceTexCoords blockType face = case blockType of
   EmeraldOre       -> V2 5 3
   MossyCobblestone -> V2 3 4
   MossyStoneBrick  -> V2 4 4
+  BirchLog      -> case face of
+    FaceTop    -> V2 1 6   -- birch log cross-section
+    FaceBottom -> V2 1 6
+    _          -> V2 0 6   -- birch log bark
+  BirchLeaves  -> V2 2 6
+  BirchPlanks  -> V2 3 6
+  SpruceLog    -> case face of
+    FaceTop    -> V2 5 6   -- spruce log cross-section
+    FaceBottom -> V2 5 6
+    _          -> V2 4 6   -- spruce log bark
+  SpruceLeaves -> V2 6 6
+  SprucePlanks -> V2 7 6
+  JungleLog    -> case face of
+    FaceTop    -> V2 9 6   -- jungle log cross-section
+    FaceBottom -> V2 9 6
+    _          -> V2 8 6   -- jungle log bark
+  JungleLeaves -> V2 10 6
+  JunglePlanks -> V2 11 6
+  TallGrass    -> V2 12 6
+  Dandelion    -> V2 13 6
+  Rose         -> V2 14 6
+  BrownMushroom -> V2 15 6
+  RedMushroom  -> V2 0 7

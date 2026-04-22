@@ -237,6 +237,20 @@ blockDrops = \case
   EmeraldOre       -> [(MaterialItem Emerald, 1)]
   MossyCobblestone -> [(BlockItem MossyCobblestone, 1)]
   MossyStoneBrick  -> [(BlockItem MossyStoneBrick, 1)]
+  BirchLog         -> [(BlockItem BirchLog, 1)]
+  BirchLeaves      -> [(BlockItem OakSapling, 1)]  -- drops sapling
+  BirchPlanks      -> [(BlockItem BirchPlanks, 1)]
+  SpruceLog        -> [(BlockItem SpruceLog, 1)]
+  SpruceLeaves     -> [(BlockItem OakSapling, 1)]  -- drops sapling
+  SprucePlanks     -> [(BlockItem SprucePlanks, 1)]
+  JungleLog        -> [(BlockItem JungleLog, 1)]
+  JungleLeaves     -> [(BlockItem OakSapling, 1)]  -- drops sapling
+  JunglePlanks     -> [(BlockItem JunglePlanks, 1)]
+  TallGrass        -> []  -- no drops
+  Dandelion        -> [(BlockItem Dandelion, 1)]
+  Rose             -> [(BlockItem Rose, 1)]
+  BrownMushroom    -> [(BlockItem BrownMushroom, 1)]
+  RedMushroom      -> [(BlockItem RedMushroom, 1)]
 
 -- | Minimum harvest level required to get drops from this block.
 --   0 = hand, 1 = wood, 2 = stone, 3 = iron, 4 = diamond
@@ -279,6 +293,12 @@ blockPreferredTool = \case
   Farmland    -> Just Shovel
   OakLog      -> Just Axe
   OakPlanks   -> Just Axe
+  BirchLog    -> Just Axe
+  BirchPlanks -> Just Axe
+  SpruceLog   -> Just Axe
+  SprucePlanks -> Just Axe
+  JungleLog   -> Just Axe
+  JunglePlanks -> Just Axe
   CraftingTable -> Just Axe
   Chest       -> Just Axe
   OakDoorClosed -> Just Axe
