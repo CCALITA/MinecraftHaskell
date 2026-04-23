@@ -1,6 +1,8 @@
 module Game.ItemDisplay
   ( itemColor
   , itemMiniIcon
+  , durabilityFraction
+  , durabilityBarColor
   ) where
 
 import Game.Item
@@ -299,3 +301,39 @@ itemMiniIcon (BlockItem bt) = blockMiniIcon bt
     blockMiniIcon _ = fill (itemColor (BlockItem bt))
 itemMiniIcon item = fillSolid (itemColor item)
   where fillSolid c = [(r,col,c) | r <- [0..2], col <- [0..2]]
+
+-- ---------------------------------------------------------------------------
+-- Durability display helpers
+-- ---------------------------------------------------------------------------
+
+-- | Fraction of durability remaining (0.0 = broken, 1.0 = full).
+-- Returns Nothing for items without durability.
+durabilityFraction :: Item -> Maybe Float
+durabilityFraction (ToolItem _ mat cur) =
+  let mx = tiMaxDurability (toolInfo mat)
+  in Just (fromIntegral cur / fromIntegral mx)
+durabilityFraction (ArmorItem _ mat cur) =
+  let mx = armorMaxDur mat
+  in Just (fromIntegral cur / fromIntegral mx)
+durabilityFraction (ShearsItem cur) =
+  Just (fromIntegral cur / 238.0)
+durabilityFraction (FlintAndSteelItem cur) =
+  Just (fromIntegral cur / 64.0)
+durabilityFraction (FishingRodItem cur) =
+  Just (fromIntegral cur / 64.0)
+durabilityFraction _ = Nothing
+
+-- | Bar color based on remaining fraction.
+-- Green (>60%), yellow (30%-60%), red (<30%).
+durabilityBarColor :: Float -> (Float, Float, Float, Float)
+durabilityBarColor frac
+  | frac > 0.6 = (0.2, 0.8, 0.2, 1.0)   -- green
+  | frac > 0.3 = (0.9, 0.8, 0.2, 1.0)   -- yellow
+  | otherwise  = (0.8, 0.2, 0.2, 1.0)   -- red
+
+-- | Maximum durability for armor materials.
+armorMaxDur :: ArmorMaterial -> Int
+armorMaxDur LeatherArmor = 80
+armorMaxDur IronArmor    = 240
+armorMaxDur GoldArmor    = 112
+armorMaxDur DiamondArmor = 528
