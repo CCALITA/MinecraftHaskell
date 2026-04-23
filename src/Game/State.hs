@@ -38,6 +38,10 @@ import Entity.Villager (VillagerProfession, TradeOffer)
 data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | ChestOpen | FurnaceOpen | DispenserOpen | EnchantingOpen | VillagerTrading | DeathScreen | ChatInput
   deriving stock (Show, Eq)
 
+-- | Play mode: survival (default) or creative (infinite items, no damage)
+data PlayMode = Survival | Creative
+  deriving stock (Show, Eq, Ord, Enum, Bounded)
+
 -- | Arrow projectile fired by Skeletons
 data Projectile = Projectile
   { projPos      :: !(V3 Float)
@@ -53,6 +57,7 @@ data GameState = GameState
     gsPlayer           :: !(IORef Player)
   , gsInventory        :: !(IORef Inventory)
   , gsGameMode         :: !(IORef GameMode)
+  , gsPlayMode         :: !(IORef PlayMode)
   , gsCursorItem       :: !(IORef (Maybe ItemStack))
   , gsCraftingGrid     :: !(IORef CraftingGrid)
   , gsFurnaceState     :: !(IORef FurnaceState)
@@ -134,6 +139,7 @@ newGameState spawnPos = do
     <$> newIORef (defaultPlayer spawnPos)
     <*> newIORef emptyInventory
     <*> newIORef MainMenu
+    <*> newIORef Survival
     <*> newIORef Nothing
     <*> newIORef (emptyCraftingGrid 3)
     <*> newIORef newFurnaceState

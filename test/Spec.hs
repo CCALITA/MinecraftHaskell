@@ -51,7 +51,8 @@ import Engine.Mesh (MeshData(..), NeighborData(..), meshChunkWithLight, emptyNei
 import Entity.Pathfinding (findPath, pathDistance)
 import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
 import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, isDawn, isDusk, getTimeOfDay, TimeOfDay(..))
-import Game.State (GameState(..), GameMode(..), newGameState)
+import Game.State (GameState(..), GameMode(..), PlayMode(..), newGameState)
+import Game.Creative (creativePalette, creativePaletteSize, creativeClickSlot, creativePickFromPalette, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteCols, paletteSlotsPerPage, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
 
 import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
@@ -147,6 +148,7 @@ main = hspec $ do
   dropFromSlotSpec
   hotbarNumberKeySpec
   inventoryComprehensiveSpec
+  creativeInventorySpec
 
 -- =========================================================================
 -- Block
@@ -7223,3 +7225,261 @@ inventoryComprehensiveSpec = describe "Game.Inventory comprehensive" $ do
         let count = abs n `mod` 5000
             (inv, leftover) = addItem emptyInventory stone count
         in countItem inv stone + leftover == count
+
+
+-- =========================================================================
+-- Creative Mode Inventory
+-- =========================================================================
+creativeInventorySpec :: Spec
+creativeInventorySpec = describe "Game.Creative" $ do
+
+  -- Palette contents
+  describe "Creative palette" $ do
+    it "palette is non-empty" $
+      creativePaletteSize `shouldSatisfy` (> 0)
+
+    it "palette contains at least 70 block items" $ do
+      let blockCount = length [() | BlockItem _ <- creativePalette]
+      blockCount `shouldSatisfy` (>= 70)
+
+    it "palette contains all tool tiers" $ do
+      let hasWoodPickaxe   = elem (ToolItem Pickaxe Wood 59) creativePalette
+          hasDiamondSword  = elem (ToolItem Sword Diamond 1561) creativePalette
+      hasWoodPickaxe `shouldBe` True
+      hasDiamondSword `shouldBe` True
+
+    it "palette contains food items" $ do
+      let foodCount = length [() | FoodItem _ <- creativePalette]
+      foodCount `shouldSatisfy` (>= 5)
+
+    it "palette contains material items" $ do
+      let matCount = length [() | MaterialItem _ <- creativePalette]
+      matCount `shouldSatisfy` (>= 10)
+
+    it "palette contains armor items" $ do
+      let armorCount = length [() | ArmorItem {} <- creativePalette]
+      armorCount `shouldSatisfy` (>= 8)
+
+    it "palette contains misc items (compass, clock, boat)" $ do
+      elem CompassItem creativePalette `shouldBe` True
+      elem ClockItem creativePalette `shouldBe` True
+      elem BoatItem creativePalette `shouldBe` True
+
+    it "palette contains bucket variants" $ do
+      elem (BucketItem BucketEmpty) creativePalette `shouldBe` True
+      elem (BucketItem BucketWater) creativePalette `shouldBe` True
+
+    it "palette does not contain Air block" $ do
+      elem (BlockItem Air) creativePalette `shouldBe` False
+
+    it "palette contains Stone block" $ do
+      elem (BlockItem Stone) creativePalette `shouldBe` True
+
+    it "palette contains Torch block" $ do
+      elem (BlockItem Torch) creativePalette `shouldBe` True
+
+    it "palette contains StickItem" $ do
+      elem StickItem creativePalette `shouldBe` True
+
+    it "palette size matches length" $
+      creativePaletteSize `shouldBe` length creativePalette
+
+  -- Palette pagination
+  describe "Palette pagination" $ do
+    it "paletteSlotsPerPage is rows * cols" $
+      paletteSlotsPerPage `shouldBe` paletteRows * paletteCols
+
+    it "page count covers all items" $
+      palettePageCount * paletteSlotsPerPage `shouldSatisfy` (>= creativePaletteSize)
+
+    it "page 0 has paletteSlotsPerPage items when palette is large enough" $
+      length (palettePageItems 0) `shouldBe` min paletteSlotsPerPage creativePaletteSize
+
+    it "last page may have fewer items" $ do
+      let lastPage = palettePageCount - 1
+          items = palettePageItems lastPage
+      length items `shouldSatisfy` (<= paletteSlotsPerPage)
+      length items `shouldSatisfy` (> 0)
+
+    it "all pages combined equal total palette" $ do
+      let allItems = concatMap palettePageItems [0 .. palettePageCount - 1]
+      length allItems `shouldBe` creativePaletteSize
+
+    it "page items are contiguous slices of palette" $ do
+      let page0 = palettePageItems 0
+          page1 = palettePageItems 1
+      take (length page0) creativePalette `shouldBe` page0
+      take (length page1) (drop paletteSlotsPerPage creativePalette) `shouldBe` page1
+
+  -- Palette hit detection
+  describe "Palette hit detection" $ do
+    it "top-left corner hits slot 0" $ do
+      let x = paletteX0 + 0.01
+          y = paletteY0 + 0.01
+      hitPaletteSlot x y `shouldBe` Just 0
+
+    it "second column first row hits slot 1" $ do
+      let x = paletteX0 + paletteSlotW + 0.01
+          y = paletteY0 + 0.01
+      hitPaletteSlot x y `shouldBe` Just 1
+
+    it "first column second row hits slot paletteCols" $ do
+      let x = paletteX0 + 0.01
+          y = paletteY0 + paletteSlotH + 0.01
+      hitPaletteSlot x y `shouldBe` Just paletteCols
+
+    it "outside left returns Nothing" $
+      hitPaletteSlot (paletteX0 - 0.1) (paletteY0 + 0.01) `shouldBe` Nothing
+
+    it "outside right returns Nothing" $
+      hitPaletteSlot (paletteX0 + fromIntegral paletteCols * paletteSlotW + 0.1) (paletteY0 + 0.01) `shouldBe` Nothing
+
+    it "outside top returns Nothing" $
+      hitPaletteSlot (paletteX0 + 0.01) (paletteY0 - 0.1) `shouldBe` Nothing
+
+    it "outside bottom returns Nothing" $
+      hitPaletteSlot (paletteX0 + 0.01) (paletteY0 + fromIntegral paletteRows * paletteSlotH + 0.1) `shouldBe` Nothing
+
+    it "bottom-right corner hits last slot" $ do
+      let x = paletteX0 + fromIntegral (paletteCols - 1) * paletteSlotW + 0.01
+          y = paletteY0 + fromIntegral (paletteRows - 1) * paletteSlotH + 0.01
+      hitPaletteSlot x y `shouldBe` Just (paletteRows * paletteCols - 1)
+
+  -- Creative pick from palette
+  describe "creativePickFromPalette" $ do
+    it "picks first item as full stack of 64" $ do
+      let items = palettePageItems 0
+          result = creativePickFromPalette 0 items
+      result `shouldBe` Just (ItemStack (BlockItem Stone) 64)
+
+    it "picks a tool item as stack of 1" $ do
+      -- Find index of a tool in the palette
+      let items = creativePalette
+          toolIdx = length [() | BlockItem _ <- takeWhile isBlockItem' items]
+          isBlockItem' (BlockItem _) = True
+          isBlockItem' _ = False
+      case creativePickFromPalette toolIdx items of
+        Just (ItemStack (ToolItem {}) 1) -> pure ()
+        other -> expectationFailure $ "Expected tool stack of 1, got " ++ show other
+
+    it "returns Nothing for negative index" $ do
+      let items = palettePageItems 0
+      creativePickFromPalette (-1) items `shouldBe` Nothing
+
+    it "returns Nothing for out-of-range index" $ do
+      let items = palettePageItems 0
+      creativePickFromPalette 999 items `shouldBe` Nothing
+
+    it "returns Nothing for empty page" $
+      creativePickFromPalette 0 [] `shouldBe` Nothing
+
+    it "block items get stack of 64" $ do
+      let items = [BlockItem Dirt]
+      case creativePickFromPalette 0 items of
+        Just (ItemStack (BlockItem Dirt) 64) -> pure ()
+        other -> expectationFailure $ "Expected Dirt x64, got " ++ show other
+
+    it "food items get stack of 64" $ do
+      let items = [FoodItem Apple]
+      case creativePickFromPalette 0 items of
+        Just (ItemStack (FoodItem Apple) 64) -> pure ()
+        other -> expectationFailure $ "Expected Apple x64, got " ++ show other
+
+    it "material items get stack of 64" $ do
+      let items = [MaterialItem Coal]
+      case creativePickFromPalette 0 items of
+        Just (ItemStack (MaterialItem Coal) 64) -> pure ()
+        other -> expectationFailure $ "Expected Coal x64, got " ++ show other
+
+  -- Creative click slot
+  describe "creativeClickSlot" $ do
+    it "clicking empty slot with no cursor returns nothing" $ do
+      let inv = emptyInventory
+          (newInv, newCursor) = creativeClickSlot inv 0 Nothing
+      newCursor `shouldBe` Nothing
+      getSlot newInv 0 `shouldBe` Nothing
+
+    it "clicking occupied slot with no cursor gives full stack" $ do
+      let inv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 5))
+          (_, newCursor) = creativeClickSlot inv 0 Nothing
+      newCursor `shouldBe` Just (ItemStack (BlockItem Stone) 64)
+
+    it "clicking occupied slot with no cursor does not modify inventory" $ do
+      let inv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 5))
+          (newInv, _) = creativeClickSlot inv 0 Nothing
+      getSlot newInv 0 `shouldBe` Just (ItemStack (BlockItem Stone) 5)
+
+    it "clicking with cursor places full stack in slot" $ do
+      let inv = emptyInventory
+          cursor = Just (ItemStack (BlockItem Dirt) 3)
+          (newInv, newCursor) = creativeClickSlot inv 5 cursor
+      newCursor `shouldBe` Nothing
+      getSlot newInv 5 `shouldBe` Just (ItemStack (BlockItem Dirt) 64)
+
+    it "clicking with cursor replaces existing slot content" $ do
+      let inv = setSlot emptyInventory 2 (Just (ItemStack (BlockItem Stone) 10))
+          cursor = Just (ItemStack (BlockItem Dirt) 1)
+          (newInv, newCursor) = creativeClickSlot inv 2 cursor
+      newCursor `shouldBe` Nothing
+      getSlot newInv 2 `shouldBe` Just (ItemStack (BlockItem Dirt) 64)
+
+    it "tool items placed as stack of 1" $ do
+      let inv = emptyInventory
+          cursor = Just (ItemStack (ToolItem Pickaxe Diamond 1561) 1)
+          (newInv, newCursor) = creativeClickSlot inv 0 cursor
+      newCursor `shouldBe` Nothing
+      getSlot newInv 0 `shouldBe` Just (ItemStack (ToolItem Pickaxe Diamond 1561) 1)
+
+    it "armor items placed as stack of 1" $ do
+      let inv = emptyInventory
+          cursor = Just (ItemStack (ArmorItem Helmet DiamondArmor 363) 1)
+          (newInv, _) = creativeClickSlot inv 0 cursor
+      getSlot newInv 0 `shouldBe` Just (ItemStack (ArmorItem Helmet DiamondArmor 363) 1)
+
+    it "picking from slot with 1 item still gives full stack" $ do
+      let inv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Cobblestone) 1))
+          (_, newCursor) = creativeClickSlot inv 0 Nothing
+      newCursor `shouldBe` Just (ItemStack (BlockItem Cobblestone) 64)
+
+  -- PlayMode type
+  describe "PlayMode" $ do
+    it "Survival /= Creative" $
+      Survival `shouldSatisfy` (/= Creative)
+
+    it "show Survival" $
+      show Survival `shouldBe` "Survival"
+
+    it "show Creative" $
+      show Creative `shouldBe` "Creative"
+
+    it "Bounded: minBound is Survival" $
+      (minBound :: PlayMode) `shouldBe` Survival
+
+    it "Bounded: maxBound is Creative" $
+      (maxBound :: PlayMode) `shouldBe` Creative
+
+    it "Enum: toEnum 0 is Survival" $
+      toEnum 0 `shouldBe` Survival
+
+    it "Enum: toEnum 1 is Creative" $
+      (toEnum 1 :: PlayMode) `shouldBe` Creative
+
+  -- GameState PlayMode field
+  describe "GameState PlayMode field" $ do
+    it "new game state defaults to Survival" $ do
+      gs <- newGameState (V3 0 80 0)
+      pm <- readIORef (gsPlayMode gs)
+      pm `shouldBe` Survival
+
+    it "gsPlayMode can be set to Creative" $ do
+      gs <- newGameState (V3 0 80 0)
+      writeIORef (gsPlayMode gs) Creative
+      pm <- readIORef (gsPlayMode gs)
+      pm `shouldBe` Creative
+
+    it "gsPlayMode can be toggled back to Survival" $ do
+      gs <- newGameState (V3 0 80 0)
+      writeIORef (gsPlayMode gs) Creative
+      writeIORef (gsPlayMode gs) Survival
+      pm <- readIORef (gsPlayMode gs)
+      pm `shouldBe` Survival
