@@ -10,6 +10,7 @@ layout(binding = 0) uniform UniformBufferObject {
     float fogStart;       // distance (blocks) where fog begins
     float fogEnd;         // distance (blocks) where fog is fully opaque
     vec4 fogColor;        // fog color (usually matches sky color)
+    float underwater;     // 1.0 when camera is submerged in water, else 0.0
 } ubo;
 
 layout(location = 0) in vec3 inPosition;

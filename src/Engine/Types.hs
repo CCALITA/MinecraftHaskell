@@ -45,10 +45,11 @@ data UniformBufferObject = UniformBufferObject
   , uboFogStart     :: !Float         -- distance (blocks) where fog begins
   , uboFogEnd       :: !Float         -- distance (blocks) where fog is fully opaque
   , uboFogColor     :: !(V4 Float)    -- fog color (usually matches sky color)
+  , uboUnderwater   :: !Float         -- 1.0 when camera is submerged in water, else 0.0
   } deriving stock (Show, Eq, Generic)
 
 instance Storable UniformBufferObject where
-  sizeOf _ = 3 * sizeOf (undefined :: M44 Float) + 2 * sizeOf (undefined :: V4 Float) + 4 * sizeOf (undefined :: Float)  -- 192 + 16 + 16 + 16 = 240
+  sizeOf _ = 3 * sizeOf (undefined :: M44 Float) + 2 * sizeOf (undefined :: V4 Float) + 5 * sizeOf (undefined :: Float)  -- 192 + 16 + 20 + 16 = 244, padded to 248
   alignment _ = alignment (undefined :: Float)
   peek ptr = do
     let p = castPtr ptr
@@ -61,8 +62,9 @@ instance Storable UniformBufferObject where
     fogS <- peekByteOff p 216
     fogE <- peekByteOff p 220
     fogC <- peekByteOff p 224
-    pure $ UniformBufferObject m v proj sunDir ambient t fogS fogE fogC
-  poke ptr (UniformBufferObject m v proj sunDir ambient t fogS fogE fogC) = do
+    uw <- peekByteOff p 240
+    pure $ UniformBufferObject m v proj sunDir ambient t fogS fogE fogC uw
+  poke ptr (UniformBufferObject m v proj sunDir ambient t fogS fogE fogC uw) = do
     let p = castPtr ptr
     pokeByteOff p 0   m
     pokeByteOff p 64  v
@@ -73,6 +75,7 @@ instance Storable UniformBufferObject where
     pokeByteOff p 216 fogS
     pokeByteOff p 220 fogE
     pokeByteOff p 224 fogC
+    pokeByteOff p 240 uw
 
 -- | Per-frame synchronization and command data
 data FrameData = FrameData

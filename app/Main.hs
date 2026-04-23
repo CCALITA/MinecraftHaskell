@@ -2443,8 +2443,17 @@ main = do
                   , uboFogStart     = 90
                   , uboFogEnd       = 128
                   , uboFogColor     = V4 skyR skyG skyB skyA
+                  , uboUnderwater   = 0
                   }
-            updateUBO device (uniformBufs V.! currentFrame) ubo
+
+            -- Detect if player's head is submerged in water
+            let V3 px py pz = plPos player
+                headBlockPos = V3 (floor px :: Int) (floor (py + 1.6) :: Int) (floor pz :: Int)
+            headBlock <- worldGetBlock world headBlockPos
+            let underwaterUbo = if headBlock == Water
+                                  then ubo { uboUnderwater = 1.0 }
+                                  else ubo
+            updateUBO device (uniformBufs V.! currentFrame) underwaterUbo
 
             meshCache <- readIORef meshCacheRef
             -- Frustum culling: only draw chunks visible to the camera
