@@ -19,6 +19,8 @@ module Game.Inventory
   , sortInventory
   , moveToSection
   , collectAll
+  , splitStack
+  , placeSingle
   ) where
 
 import Game.Item (Item(..), itemStackLimit)
@@ -266,3 +268,39 @@ collectAll inv item maxStack = go inv 0 0
                 inv'' = setSlot inv' idx newSlot
             in go inv'' (idx + 1) (collected + toTake)
           _ -> go inv' (idx + 1) collected
+-- | Right-click with empty cursor on a stack: pick up half (ceil(cnt/2)).
+-- Returns (remaining slot contents, picked-up cursor stack).
+-- If the slot is empty, returns (Nothing, Nothing).
+splitStack :: Maybe ItemStack -> (Maybe ItemStack, Maybe ItemStack)
+splitStack Nothing = (Nothing, Nothing)
+splitStack (Just (ItemStack item cnt))
+  | cnt <= 0  = (Nothing, Nothing)
+  | cnt == 1  = (Nothing, Just (ItemStack item 1))
+  | otherwise =
+      let half = (cnt + 1) `div` 2  -- ceiling division
+          remaining = cnt - half
+          slotStack = if remaining <= 0 then Nothing else Just (ItemStack item remaining)
+      in (slotStack, Just (ItemStack item half))
+
+-- | Right-click with cursor holding items: place 1 item into a slot.
+-- Works on an empty slot or a slot containing the same item (merge).
+-- Returns (new slot contents, new cursor contents).
+-- If placement is not possible (different item, or slot at stack limit), no-op.
+placeSingle :: Maybe ItemStack -> Maybe ItemStack -> (Maybe ItemStack, Maybe ItemStack)
+placeSingle Nothing slot = (slot, Nothing)  -- empty cursor: no-op
+placeSingle cursor Nothing =
+  -- Empty slot: place 1 from cursor
+  case cursor of
+    Just (ItemStack item cnt)
+      | cnt <= 1  -> (Just (ItemStack item 1), Nothing)
+      | otherwise -> (Just (ItemStack item 1), Just (ItemStack item (cnt - 1)))
+    Nothing -> (Nothing, Nothing)
+placeSingle (Just (ItemStack cItem cCnt)) (Just (ItemStack sItem sCnt))
+  | cItem == sItem && sCnt < itemStackLimit sItem =
+      -- Same item and under limit: merge 1
+      let newSlot = Just (ItemStack sItem (sCnt + 1))
+          newCursor = if cCnt <= 1 then Nothing else Just (ItemStack cItem (cCnt - 1))
+      in (newSlot, newCursor)
+  | otherwise =
+      -- Different item or at stack limit: no-op, return unchanged
+      (Just (ItemStack sItem sCnt), Just (ItemStack cItem cCnt))
