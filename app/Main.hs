@@ -4009,38 +4009,30 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
                     else []
               in slotBg ++ iconVerts ++ countText
 
-        -- Smelt progress arrow: fills left-to-right
+        -- Smelt progress arrow: fills left-to-right (green bar)
         furnaceSmeltArrow =
           let arrowX = -0.10
               arrowY = -0.25
               arrowW = 0.15
               arrowH = 0.04
-              progress = if fsSmeltTime furnaceState > 0
-                then case getFurnaceInput furnaceState of
-                  Just (ItemStack inputItem _) -> case findRecipe inputItem of
-                    Just r  -> fsSmeltTime furnaceState / srTime r
-                    Nothing -> 0
-                  Nothing -> 0
-                else 0
+              progress = furnaceSmeltFraction furnaceState
               bg = quad arrowX arrowY (arrowX + arrowW) (arrowY + arrowH) (0.4, 0.4, 0.4, 0.7)
               fill = if progress > 0
-                     then quad arrowX arrowY (arrowX + arrowW * min 1 progress) (arrowY + arrowH) (1, 1, 1, 0.9)
+                     then quad arrowX arrowY (arrowX + arrowW * progress) (arrowY + arrowH) (0.2, 0.9, 0.2, 0.9)
                      else []
           in bg ++ fill
 
-        -- Fuel burn indicator: fills bottom-to-top
+        -- Fuel burn indicator: fills bottom-to-top (red bar)
         furnaceFuelIndicator =
           let indX = -0.22
               indY = -0.07
               indW = 0.04
               indH = 0.06
-              progress = if fsMaxFuelTime furnaceState > 0
-                         then fsFuelTime furnaceState / fsMaxFuelTime furnaceState
-                         else 0
+              progress = furnaceFuelFraction furnaceState
               bg = quad indX indY (indX + indW) (indY + indH) (0.3, 0.15, 0.1, 0.7)
               fill = if progress > 0
-                     then let fillH = indH * min 1 progress
-                          in quad indX (indY + indH - fillH) (indX + indW) (indY + indH) (1.0, 0.6, 0.1, 0.9)
+                     then let fillH = indH * progress
+                          in quad indX (indY + indH - fillH) (indX + indW) (indY + indH) (0.9, 0.2, 0.2, 0.9)
                      else []
           in bg ++ fill
 

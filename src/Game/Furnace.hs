@@ -12,6 +12,8 @@ module Game.Furnace
   , setFurnaceFuel
   , getFurnaceOutput
   , setFurnaceOutput
+  , furnaceFuelFraction
+  , furnaceSmeltFraction
   , shiftClickFurnaceOutput
   ) where
 
@@ -171,6 +173,23 @@ getFurnaceOutput = fsOutput
 setFurnaceOutput :: FurnaceState -> Maybe ItemStack -> FurnaceState
 setFurnaceOutput fs stack = fs { fsOutput = stack }
 
+-- | Fuel burn fraction: fsFuelTime / fsMaxFuelTime, clamped to [0,1].
+-- Returns 0 when no fuel is burning.
+furnaceFuelFraction :: FurnaceState -> Float
+furnaceFuelFraction fs
+  | fsMaxFuelTime fs <= 0 = 0
+  | otherwise = max 0 (min 1 (fsFuelTime fs / fsMaxFuelTime fs))
+
+-- | Smelt progress fraction: fsSmeltTime / recipe time, clamped to [0,1].
+-- Returns 0 when no recipe matches the current input or no smelting is active.
+furnaceSmeltFraction :: FurnaceState -> Float
+furnaceSmeltFraction fs
+  | fsSmeltTime fs <= 0 = 0
+  | otherwise = case fsInput fs of
+      Just (ItemStack inputItem _) -> case findRecipe inputItem of
+        Just r  -> max 0 (min 1 (fsSmeltTime fs / srTime r))
+        Nothing -> 0
+      Nothing -> 0
 -- | Shift-click on furnace output slot: move all output items into the player
 -- inventory via 'addItem'. Returns the updated furnace state (output cleared
 -- or reduced) and the updated inventory. Items that don't fit remain in the
