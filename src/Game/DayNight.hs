@@ -89,24 +89,39 @@ getSunDirection cycle =
   in normalize $ V3 (cos angle) (sin angle) 0.2
 
 -- | Sky color based on time of day (RGBA)
+--
+-- Dawn and dusk use multi-step interpolation through warm horizon colors
+-- for dramatic sunrise/sunset effects.
 getSkyColor :: DayNightCycle -> V4 Float
 getSkyColor cycle = case getTimeOfDay cycle of
   Day   -> lerp4 dayProgress daySkyStart daySkyPeak
   Night -> nightSky
-  Dawn  -> lerp4 dawnProgress nightSky daySkyStart
-  Dusk  -> lerp4 duskProgress daySkyStart nightSky
+  Dawn
+    | t < 0.24  -> lerp4 ((t - 0.20) / 0.04) nightSky     dawnHorizon
+    | t < 0.27  -> lerp4 ((t - 0.24) / 0.03) dawnHorizon   dawnGold
+    | otherwise -> lerp4 ((t - 0.27) / 0.03) dawnGold      daySkyStart
+  Dusk
+    | t < 0.73  -> lerp4 ((t - 0.70) / 0.03) daySkyStart   duskGolden
+    | t < 0.77  -> lerp4 ((t - 0.73) / 0.04) duskGolden    duskDeepOrange
+    | otherwise -> lerp4 ((t - 0.77) / 0.03) duskDeepOrange nightSky
   where
     t = dncTime cycle
 
-    -- Progress within each phase (0.0 to 1.0)
-    dawnProgress = (t - 0.20) / 0.10
+    -- Progress within day phase (0.0 to 1.0)
     dayProgress  = (t - 0.30) / 0.40
-    duskProgress = (t - 0.70) / 0.10
 
     -- Sky colors
-    nightSky    = V4 0.01 0.01 0.05 1.0
-    daySkyStart = V4 0.40 0.60 0.85 1.0
-    daySkyPeak  = V4 0.53 0.81 0.92 1.0
+    nightSky       = V4 0.01 0.01 0.05 1.0
+    daySkyStart    = V4 0.40 0.60 0.85 1.0
+    daySkyPeak     = V4 0.53 0.81 0.92 1.0
+
+    -- Dawn transition colors
+    dawnHorizon    = V4 0.70 0.40 0.30 1.0   -- warm orange-pink
+    dawnGold       = V4 0.80 0.70 0.50 1.0   -- pale gold
+
+    -- Dusk transition colors
+    duskGolden     = V4 0.80 0.60 0.30 1.0   -- golden
+    duskDeepOrange = V4 0.60 0.25 0.15 1.0   -- deep orange-red
 
 -- | Ambient light level (0.0 to 1.0)
 getAmbientLight :: DayNightCycle -> Float
