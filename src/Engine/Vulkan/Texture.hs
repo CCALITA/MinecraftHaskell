@@ -63,9 +63,6 @@ pixHash x y s =
 -- | Clamp an Int to the Word8 range [0, 255]
 clampByte :: Int -> Word8
 clampByte v = fromIntegral (max 0 (min 255 v))
--- | Clamp an Int to valid Word8 range and convert
-clampByte :: Int -> Word8
-clampByte n = fromIntegral (max 0 (min 255 n))
 
 -- | Generate a pixel for a tile with patterns
 tilePixel :: Int -> Int -> Int -> Int -> Word8
@@ -99,15 +96,15 @@ tileFull tileIdx lx ly = case tileIdx of
   25 -> chestPattern lx ly     -- chest (V2 9 1)
   30 -> ladderPattern lx ly    -- ladder (V2 14 1)
   -- Row 2: tileIdx 32-47
-  32 -> orePattern lx ly (255, 215, 0)    -- gold ore (V2 0 2)
-  33 -> orePattern lx ly (200, 170, 130)  -- iron ore (V2 1 2)
-  34 -> orePattern lx ly (40, 40, 40)     -- coal ore (V2 2 2)
+  32 -> goldOrePattern lx ly              -- gold ore (V2 0 2)
+  33 -> ironOrePattern lx ly              -- iron ore (V2 1 2)
+  34 -> coalOrePattern lx ly              -- coal ore (V2 2 2)
   44 -> furnaceSide lx ly      -- furnace side (V2 12 2)
   45 -> furnaceSide lx ly      -- furnace side alt (V2 13 2)
   -- Row 3: tileIdx 48-63
   48 -> woolPattern lx ly         -- wool (V2 0 3)
   49 -> glassPattern lx ly     -- glass alt (V2 1 3)
-  50 -> orePattern lx ly (100, 220, 255)  -- diamond ore (V2 2 3)
+  50 -> diamondOrePattern lx ly           -- diamond ore (V2 2 3)
   54 -> stoneBrickPattern lx ly -- stone brick (V2 6 3)
   59 -> craftingTop lx ly      -- crafting table top (V2 11 3)
   62 -> furnaceTop lx ly       -- furnace top (V2 14 3)
@@ -150,9 +147,9 @@ tileFull tileIdx lx ly = case tileIdx of
   94 -> glowstonePattern lx ly       -- glowstone (V2 12 5)
   95 -> netherBrickPattern lx ly     -- nether brick (V2 13 5)
   96 -> netherPortalPattern lx ly    -- nether portal (V2 14 5)
-  51 -> orePattern lx ly (180, 0, 0)     -- redstone ore (V2 3 3)
-  52 -> orePattern lx ly (30, 70, 180)   -- lapis ore (V2 4 3)
-  53 -> orePattern lx ly (60, 200, 80)   -- emerald ore (V2 5 3)
+  51 -> redstoneOrePattern lx ly          -- redstone ore (V2 3 3)
+  52 -> lapisOrePattern lx ly             -- lapis ore (V2 4 3)
+  53 -> emeraldOrePattern lx ly           -- emerald ore (V2 5 3)
   67 -> mossyCobblePattern lx ly     -- mossy cobblestone (V2 3 4)
   68 -> mossyStoneBrickPattern lx ly -- mossy stone brick (V2 4 4)
   -- Row 6: wood variants and flora (tileIdx 96-111)
@@ -353,11 +350,113 @@ tileFull tileIdx lx ly = case tileIdx of
               else (75, 75, 80, 255)   -- lighter gray speck
          else (baseV, baseV, baseV, 255)
 
-    -- Ore: stone base with colored spots
+    -- Ore: stone base with colored spots (generic fallback)
     orePattern x y (or', og, ob) =
       let isOreSpot = let n = pixHash (x `div` 3) (y `div` 3) 1000 `mod` 10
                       in n < 3 && (x + y) `mod` 3 /= 0
       in if isOreSpot then (or', og, ob, 255) else stonePattern x y
+
+    -- Diamond ore: stone base with cyan sparkle clusters (small bright pixels in 2-3 pixel groups)
+    diamondOrePattern x y =
+      let n = pixHash x y 1050 `mod` 100
+          -- Cluster seeds at irregular positions
+          cx = pixHash (x `div` 3) (y `div` 3) 1051 `mod` 10
+          -- Individual sparkle within a cluster
+          sparkle = cx < 3 && (x + y) `mod` 3 /= 0
+          -- Bright highlight on some sparkle pixels
+          bright = pixHash x y 1052 `mod` 4 == 0
+          (sr, sg, sb) = if bright then (180, 255, 255)
+                         else if n < 50 then (80, 200, 235)
+                         else (100, 220, 255)
+      in if sparkle then (sr, sg, sb, 255) else stonePattern x y
+
+    -- Gold ore: stone base with warm yellow-orange nugget patches (larger 3x2 blobs)
+    goldOrePattern x y =
+      let -- Blob centers determined by coarse grid
+          bx = x `div` 4
+          by = y `div` 3
+          seed = pixHash bx by 1100 `mod` 10
+          -- Offset within the blob cell
+          lbx = x `mod` 4
+          lby = y `mod` 3
+          -- Blob occupies a 3x2 region within the 4x3 cell
+          inBlob = seed < 3 && lbx >= 0 && lbx <= 2 && lby >= 0 && lby <= 1
+          n = pixHash x y 1101 `mod` 60
+          (gr, gg, gb) = if n < 20 then (255, 200, 40)
+                         else if n < 40 then (240, 185, 30)
+                         else (220, 170, 20)
+      in if inBlob then (gr, gg, gb, 255) else stonePattern x y
+
+    -- Iron ore: stone base with tan/brown spotted clusters (medium rust-colored dots)
+    ironOrePattern x y =
+      let n = pixHash x y 1150 `mod` 100
+          -- Medium-sized cluster regions
+          cx = pixHash (x `div` 3) (y `div` 3) 1151 `mod` 10
+          inCluster = cx < 4 && pixHash x y 1152 `mod` 3 /= 0
+          -- Rust-tan color variation
+          (ir, ig, ib) = if n < 30 then (185, 150, 110)
+                         else if n < 60 then (200, 170, 130)
+                         else (175, 140, 100)
+      in if inCluster then (ir, ig, ib, 255) else stonePattern x y
+
+    -- Coal ore: stone base with black vein streaks (connected dark lines)
+    coalOrePattern x y =
+      let -- Veins follow a connected path using adjacent-pixel coherence
+          veinSeed = pixHash (x `div` 2) (y `div` 2) 1200 `mod` 10
+          -- Diagonal vein direction
+          veinDiag = (x + y) `mod` 4 < 2 && veinSeed < 4
+          -- Horizontal/vertical connectors
+          veinH = pixHash x (y `div` 3) 1201 `mod` 8 < 2 && veinSeed < 5
+          isVein = veinDiag || veinH
+          n = pixHash x y 1202 `mod` 40
+          (cr, cg, cb) = if n < 15 then (25, 25, 25)
+                         else if n < 30 then (35, 35, 35)
+                         else (45, 45, 45)
+      in if isVein then (cr, cg, cb, 255) else stonePattern x y
+
+    -- Redstone ore: stone base with red crystalline spots (bright red small dots)
+    redstoneOrePattern x y =
+      let n = pixHash x y 1250 `mod` 100
+          -- Scattered individual small bright dots
+          dot = pixHash (x * 7 + y * 13) (y * 11 + x * 3) 1251 `mod` 12 < 2
+          -- Occasional brighter glow pixel
+          glow = pixHash x y 1252 `mod` 5 == 0
+          (rr, rg, rb) = if glow && dot then (255, 40, 40)
+                         else if n < 50 then (200, 10, 10)
+                         else (180, 0, 0)
+      in if dot then (rr, rg, rb, 255) else stonePattern x y
+
+    -- Lapis ore: stone base with deep blue cluster patches (grouped blue pixels)
+    lapisOrePattern x y =
+      let -- Larger cluster regions (4x4 grid seeds)
+          cx = pixHash (x `div` 4) (y `div` 4) 1300 `mod` 10
+          -- Fill within cluster with some gaps
+          inCluster = cx < 3 && pixHash x y 1301 `mod` 4 /= 0
+          n = pixHash x y 1302 `mod` 60
+          (lr, lg, lb) = if n < 20 then (25, 55, 160)
+                         else if n < 40 then (35, 70, 180)
+                         else (20, 45, 140)
+      in if inCluster then (lr, lg, lb, 255) else stonePattern x y
+
+    -- Emerald ore: stone base with green crystalline facets (angular green shapes)
+    emeraldOrePattern x y =
+      let -- Angular faceted shapes: diamond/rhombus patterns
+          cx = x `div` 5
+          cy = y `div` 5
+          seed = pixHash cx cy 1350 `mod` 10
+          -- Local coords within 5x5 cell
+          fx = x `mod` 5
+          fy = y `mod` 5
+          -- Diamond shape: |fx - 2| + |fy - 2| <= 2
+          dist = abs (fx - 2) + abs (fy - 2)
+          inFacet = seed < 3 && dist <= 2
+          -- Edge highlight for angular look
+          isEdge = dist == 2
+          n = pixHash x y 1351 `mod` 40
+          (er, eg, eb) = if isEdge then (80, 230, 100)
+                         else if n < 20 then (50, 190, 70)
+                         else (60, 200, 80)
+      in if inFacet then (er, eg, eb, 255) else stonePattern x y
 
     -- Water: deep blue with caustic-like light patterns and surface ripples
     waterPattern x y =
