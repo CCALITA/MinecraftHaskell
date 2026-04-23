@@ -4,6 +4,7 @@ module Engine.Window
   , windowShouldClose
   , getWindowSize
   , WindowHandle(..)
+  , isKeyDown
   ) where
 
 import qualified Graphics.UI.GLFW as GLFW
@@ -68,3 +69,9 @@ windowShouldClose wh = GLFW.windowShouldClose (whWindow wh)
 -- | Get current framebuffer size
 getWindowSize :: WindowHandle -> IO (Int, Int)
 getWindowSize wh = readIORef (whFramebufferSize wh)
+
+-- | Check if a GLFW key is pressed
+isKeyDown :: GLFW.Window -> GLFW.Key -> IO Bool
+isKeyDown win key = do
+  state <- GLFW.getKey win key
+  pure $ state == GLFW.KeyState'Pressed

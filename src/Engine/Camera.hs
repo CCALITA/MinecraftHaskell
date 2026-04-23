@@ -9,9 +9,13 @@ module Engine.Camera
   , isAABBInFrustum
   , thirdPersonOffset
   , thirdPersonViewMatrix
+  , cameraFromPlayer
+  , dirFromPlayer
   ) where
 
 import Linear
+
+import Game.Player (Player(..), eyeHeight, sneakEyeOffset)
 
 -- | FPS camera state
 data Camera = Camera
@@ -123,3 +127,26 @@ thirdPersonViewMatrix :: Bool -> Float -> Camera -> M44 Float
 thirdPersonViewMatrix isBack dist cam =
   let (pos, target) = thirdPersonOffset isBack dist cam
   in lookAt pos target (camUp cam)
+
+-- | Convert player state to Camera
+cameraFromPlayer :: Player -> Camera
+cameraFromPlayer player =
+  let yawR   = plYaw player * pi / 180
+      pitchR = plPitch player * pi / 180
+      front  = V3 (sin yawR * cos pitchR) (sin pitchR) (cos yawR * cos pitchR)
+      fov    = if plSprinting player then 55 else 45
+      eye    = if plSneaking player then eyeHeight - sneakEyeOffset else eyeHeight
+  in defaultCamera
+    { camPosition = plPos player + V3 0 eye 0
+    , camFront    = front
+    , camYaw      = plYaw player
+    , camPitch    = plPitch player
+    , camFov      = fov
+    }
+
+-- | Get look direction from player
+dirFromPlayer :: Player -> V3 Float
+dirFromPlayer player =
+  let yawR   = plYaw player * pi / 180
+      pitchR = plPitch player * pi / 180
+  in normalize $ V3 (sin yawR * cos pitchR) (sin pitchR) (cos yawR * cos pitchR)

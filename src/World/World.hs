@@ -10,6 +10,7 @@ module World.World
   , triggerGravityAbove
   , settleGravityBlock
   , settleChunkGravity
+  , checkLogNearby
   ) where
 
 import World.Block (BlockType(..), isGravityAffected)
@@ -202,3 +203,18 @@ settleChunkGravity world chunk = do
             worldSetBlock world (V3 wx landY wz) bt
             writeIORef anyMoved True
   readIORef anyMoved
+
+-- | Check if an OakLog exists within a given Manhattan distance of a world position
+checkLogNearby :: World -> V3 Int -> Int -> IO Bool
+checkLogNearby world (V3 wx wy wz) radius = go offsets
+  where
+    offsets = [ V3 dx dy dz
+              | dx <- [-radius..radius]
+              , dy <- [-radius..radius]
+              , dz <- [-radius..radius]
+              , abs dx + abs dy + abs dz <= radius
+              ]
+    go [] = pure False
+    go (d : rest) = do
+      bt <- worldGetBlock world (V3 wx wy wz + d)
+      if bt == OakLog then pure True else go rest
