@@ -5,6 +5,7 @@ module Engine.Mesh
   , emptyNeighborData
   , meshChunk
   , meshChunkWithLight
+  , meshChunkWithLightSplit
   , BlockVertex(..)
   , computeVertexAO
   ) where
@@ -271,6 +272,49 @@ meshChunkWithLight chunk lm neighbors = do
   verts   <- VS.fromList . concat . reverse <$> readIORef vertsRef
   indices <- VS.fromList . concat . reverse <$> readIORef indicesRef
   pure $ MeshData verts indices
+meshChunkWithLightSplit :: Chunk -> LightMap -> NeighborData -> IO (MeshData, MeshData)
+meshChunkWithLightSplit chunk lm neighbors = do
+  oVR <- newIORef ([] :: [[BlockVertex]]); oIR <- newIORef ([] :: [[Word32]]); oVC <- newIORef (0 :: Word32)
+  tVR <- newIORef ([] :: [[BlockVertex]]); tIR <- newIORef ([] :: [[Word32]]); tVC <- newIORef (0 :: Word32)
+  let addF ref iref vcref (V3 bx by bz) face bt aoV = do
+        let (uv0,uv1) = tileUV (blockFaceTexCoords bt face)
+            V2 u0 v0 = uv0; V2 u1 v1 = uv1
+            (vs,_) = faceVertices bx by bz face u0 v0 u1 v1 aoV
+        vc <- readIORef vcref
+        modifyIORef' ref (vs :); modifyIORef' iref ([vc,vc+1,vc+2,vc+2,vc+3,vc] :); writeIORef vcref (vc+4)
+  blocksVec <- freezeBlocks chunk
+  let lb nx ny nz
+        | ny<0||ny>=chunkHeight = Air
+        | nx>=chunkWidth = case ndEast neighbors of {Just nv -> toEnum.fromIntegral$ nv`UV.unsafeIndex`blockIndex 0 ny nz; Nothing -> Air}
+        | nx<0 = case ndWest neighbors of {Just nv -> toEnum.fromIntegral$ nv`UV.unsafeIndex`blockIndex(chunkWidth-1)ny nz; Nothing -> Air}
+        | nz>=chunkDepth = case ndNorth neighbors of {Just nv -> toEnum.fromIntegral$ nv`UV.unsafeIndex`blockIndex nx ny 0; Nothing -> Air}
+        | nz<0 = case ndSouth neighbors of {Just nv -> toEnum.fromIntegral$ nv`UV.unsafeIndex`blockIndex nx ny(chunkDepth-1); Nothing -> Air}
+        | otherwise = toEnum.fromIntegral$ blocksVec`UV.unsafeIndex`blockIndex nx ny nz
+      {-# INLINE lb #-}
+      cAO bx by bz face lv = let ns=faceAONeighbors face; co((dx1,dy1,dz1),(dx2,dy2,dz2),(dxc,dyc,dzc))=lv*computeVertexAO(isSolid$lb(bx+dx1)(by+dy1)(bz+dz1))(isSolid$lb(bx+dx2)(by+dy2)(bz+dz2))(isSolid$lb(bx+dxc)(by+dyc)(bz+dzc)) in case ns of {[n0,n1,n2,n3]->(co n0,co n1,co n2,co n3);_->(lv,lv,lv,lv)}
+      go !x !y !z
+        | y>=chunkHeight = pure()
+        | z>=chunkDepth = go 0(y+1)0
+        | x>=chunkWidth = go 0 y(z+1)
+        | otherwise = do
+            let bt = toEnum.fromIntegral$ blocksVec`UV.unsafeIndex`blockIndex x y z
+            if bt==Air then go(x+1)y z else do
+              let bx=fromIntegral x; by=fromIntegral y; bz=fromIntegral z; pos=V3 bx by bz
+                  (vr,ir,vc) = if isTranslucent bt then (tVR,tIR,tVC) else (oVR,oIR,oVC)
+                  cfl nx ny nz face = do
+                    let nb=lb nx ny nz
+                    when(isTransparent nb && (not(isTranslucent bt)||bt/=nb))$ do
+                      ll <- getTotalLight lm nx ny nz
+                      let lv=max 0.1(fromIntegral ll/15.0)
+                      addF vr ir vc pos face bt (cAO x y z face lv)
+              cfl x(y+1)z FaceTop; cfl x(y-1)z FaceBottom; cfl x y(z+1)FaceNorth
+              cfl x y(z-1)FaceSouth; cfl(x+1)y z FaceEast; cfl(x-1)y z FaceWest
+              go(x+1)y z
+  go 0 0 0
+  ov<-VS.fromList.concat.reverse<$>readIORef oVR; oi<-VS.fromList.concat.reverse<$>readIORef oIR
+  tv<-VS.fromList.concat.reverse<$>readIORef tVR; ti<-VS.fromList.concat.reverse<$>readIORef tIR
+  pure(MeshData ov oi, MeshData tv ti)
+
 checkFaceVec :: UV.Vector Word8 -> V3 Float -> BlockFace -> BlockType
              -> (Int, Int, Int) -> (V3 Float -> BlockFace -> BlockType -> IO ()) -> IO ()
 checkFaceVec blocksVec pos face bt (nx, ny, nz) addFace = do
