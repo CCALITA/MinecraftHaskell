@@ -3129,7 +3129,16 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
       [x0, y0, r, g, b, a,  x1, y0, r, g, b, a,  x1, y1, r, g, b, a
       ,x0, y0, r, g, b, a,  x1, y1, r, g, b, a,  x0, y1, r, g, b, a]
 
-    crosshairVerts = quad (-cs) (-ct) cs ct w ++ quad (-ct) (-cs) ct cs w
+    -- Dark outline (1px larger, semi-transparent black) behind white crosshair
+    co = 0.003 :: Float  -- outline extra size
+    outline = (0.0, 0.0, 0.0, 0.5 :: Float)
+    crosshairVerts =
+      -- Outline quads (slightly larger, rendered first = behind)
+      quad (-cs - co) (-ct - co) (cs + co) (ct + co) outline
+      ++ quad (-ct - co) (-cs - co) (ct + co) (cs + co) outline
+      -- White crosshair on top
+      ++ quad (-cs) (-ct) cs ct w
+      ++ quad (-ct) (-cs) ct cs w
 
     -- Hotbar: 9 slots at bottom center (Vulkan Y: -1=top, +1=bottom)
     slotW = 0.09 :: Float  -- width per slot in NDC
@@ -3141,6 +3150,21 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
     hotbarBgVerts = quad (hotbarX0 - slotPad) (hotbarY - slotPad)
                         (hotbarX0 + 9 * slotW + slotPad) (1.0)
                         (0.15, 0.15, 0.15, 0.7)
+                    -- Dark border (1px outline) around each slot
+                    ++ concatMap slotBorder [0..8]
+    slotBorder i =
+      let bx = hotbarX0 + fromIntegral i * slotW
+          by = hotbarY
+          bdr = 0.003 :: Float  -- border thickness
+          bc = (0.1, 0.1, 0.1, 0.8 :: Float)
+      in -- Top edge
+         quad bx by (bx + slotW) (by + bdr) bc
+         -- Bottom edge
+         ++ quad bx (by + slotH - bdr) (bx + slotW) (by + slotH) bc
+         -- Left edge
+         ++ quad bx by (bx + bdr) (by + slotH) bc
+         -- Right edge
+         ++ quad (bx + slotW - bdr) by (bx + slotW) (by + slotH) bc
 
     -- Block icons for each slot's contents (3x3 mini-pattern)
     slotVerts = concatMap makeSlot [0..8]
@@ -3167,7 +3191,7 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
     -- Highlight selected slot
     sel = invSelected inv
     selX = hotbarX0 + fromIntegral sel * slotW
-    selectorVerts = quad selX hotbarY (selX + slotW) (hotbarY + slotH) (1.0, 1.0, 1.0, 0.3)
+    selectorVerts = quad selX hotbarY (selX + slotW) (hotbarY + slotH) (0.9, 0.9, 0.9, 0.4)
 
     -- Mining progress bar: thin bar below crosshair
     miningBarVerts
@@ -3189,9 +3213,9 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
           halfHeart = (i * 2 + 1) == health
           fullHeart = (i * 2 + 2) <= health
           color
-            | fullHeart = (0.85, 0.1, 0.1, 1.0)
-            | halfHeart = (0.85, 0.1, 0.1, 0.5)
-            | otherwise = (0.3, 0.1, 0.1, 0.4)
+            | fullHeart = (0.8, 0.1, 0.1, 1.0)
+            | halfHeart = (0.8, 0.1, 0.1, 0.5)
+            | otherwise = (0.3, 0.05, 0.05, 0.6)
       in quad heartX heartY (heartX + heartW) (heartY + heartH) color
 
     -- Hunger drumsticks: brown squares on the right side above hotbar
@@ -3238,8 +3262,19 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
     xpBarX0 = hotbarX0
     xpFill = xpProgress playerXP
     xpBarVerts =
+      -- Bright border (subtle glow) around XP bar
+      let xbdr = 0.003 :: Float  -- border thickness
+          gc = (0.3, 0.9, 0.3, 0.6 :: Float)
+      in -- Top border
+         quad (xpBarX0 - xbdr) (xpBarY - xbdr) (xpBarX0 + xpBarW + xbdr) xpBarY gc
+         -- Bottom border
+         ++ quad (xpBarX0 - xbdr) (xpBarY + xpBarH) (xpBarX0 + xpBarW + xbdr) (xpBarY + xpBarH + xbdr) gc
+         -- Left border
+         ++ quad (xpBarX0 - xbdr) xpBarY xpBarX0 (xpBarY + xpBarH) gc
+         -- Right border
+         ++ quad (xpBarX0 + xpBarW) xpBarY (xpBarX0 + xpBarW + xbdr) (xpBarY + xpBarH) gc
       -- Background (dark gray)
-      quad xpBarX0 xpBarY (xpBarX0 + xpBarW) (xpBarY + xpBarH) (0.1, 0.1, 0.1, 0.6)
+      ++ quad xpBarX0 xpBarY (xpBarX0 + xpBarW) (xpBarY + xpBarH) (0.1, 0.1, 0.1, 0.6)
       -- Filled portion (green)
       ++ if xpFill > 0
          then quad xpBarX0 xpBarY (xpBarX0 + xpBarW * xpFill) (xpBarY + xpBarH) (0.3, 0.9, 0.2, 0.85)
