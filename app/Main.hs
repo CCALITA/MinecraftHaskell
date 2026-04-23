@@ -697,18 +697,28 @@ main = do
               writeIORef furnaceStateRef (setFurnaceFuel fs cursor)
               writeIORef cursorItemRef slotContent
             Just FurnaceOutputSlot -> do
-              -- Output slot: only take, don't place
-              fs <- readIORef furnaceStateRef
-              cursor <- readIORef cursorItemRef
-              case (cursor, getFurnaceOutput fs) of
-                (Nothing, Just outStack) -> do
-                  writeIORef cursorItemRef (Just outStack)
-                  writeIORef furnaceStateRef (setFurnaceOutput fs Nothing)
-                (Just (ItemStack cItem cCount), Just (ItemStack oItem oCount))
-                  | cItem == oItem && cCount + oCount <= 64 -> do
-                      writeIORef cursorItemRef (Just (ItemStack cItem (cCount + oCount)))
+              -- Shift+click: auto-move output to player inventory
+              shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
+              if shiftHeld
+                then do
+                  fs <- readIORef furnaceStateRef
+                  inv <- readIORef inventoryRef
+                  let (fs', inv') = shiftClickFurnaceOutput fs inv
+                  writeIORef furnaceStateRef fs'
+                  writeIORef inventoryRef inv'
+                else do
+                  -- Output slot: only take, don't place
+                  fs <- readIORef furnaceStateRef
+                  cursor <- readIORef cursorItemRef
+                  case (cursor, getFurnaceOutput fs) of
+                    (Nothing, Just outStack) -> do
+                      writeIORef cursorItemRef (Just outStack)
                       writeIORef furnaceStateRef (setFurnaceOutput fs Nothing)
-                _ -> pure ()
+                    (Just (ItemStack cItem cCount), Just (ItemStack oItem oCount))
+                      | cItem == oItem && cCount + oCount <= 64 -> do
+                          writeIORef cursorItemRef (Just (ItemStack cItem (cCount + oCount)))
+                          writeIORef furnaceStateRef (setFurnaceOutput fs Nothing)
+                    _ -> pure ()
             Just (FurnaceInvSlot idx) -> do
               inv <- readIORef inventoryRef
               cursor <- readIORef cursorItemRef
