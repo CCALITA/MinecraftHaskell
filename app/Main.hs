@@ -42,7 +42,7 @@ import Game.SaveV3 (SaveDataV3(..), savev3Version, savePlayerV3, loadPlayerV3)
 import Game.DroppedItem
 import Game.BlockEntity
 import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), newGameState)
-import Game.Creative (creativeClickSlot, creativePickFromPalette, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
+import Game.Creative (creativeClickSlot, creativePickFromPalette, creativeConsumeItem, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Game.Achievement (AchievementState, checkAchievement, unlockAchievement, achievementName, AchievementTrigger(..))
 import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), ChatMessage(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
 import Game.ItemDisplay (itemColor, itemMiniIcon)
@@ -1401,13 +1401,19 @@ main = do
                                   else pure True
                                 -- Height limit: only place blocks in valid range [0, chunkHeight)
                                 when (placeY >= 0 && placeY < chunkHeight && canPlace) $ do
-                                    -- Consume from selected slot directly
-                                    case getSlot inv sel of
-                                      Just (ItemStack si cnt) | si == item ->
-                                        if cnt <= 1
-                                          then writeIORef inventoryRef (setSlot inv sel Nothing)
-                                          else writeIORef inventoryRef (setSlot inv sel (Just (ItemStack si (cnt - 1))))
-                                      _ -> pure ()
+                                    -- Consume from selected slot (creative mode: no-op)
+                                    pmode <- readIORef playModeRef
+                                    case pmode of
+                                      Creative ->
+                                        -- Infinite items: inventory unchanged
+                                        writeIORef inventoryRef (creativeConsumeItem inv sel)
+                                      Survival ->
+                                        case getSlot inv sel of
+                                          Just (ItemStack si cnt) | si == item ->
+                                            if cnt <= 1
+                                              then writeIORef inventoryRef (setSlot inv sel Nothing)
+                                              else writeIORef inventoryRef (setSlot inv sel (Just (ItemStack si (cnt - 1))))
+                                          _ -> pure ()
                                     -- Orient piston by player look direction
                                     let placeBt = if bt == Piston
                                           then let yawR = plYaw player * pi / 180

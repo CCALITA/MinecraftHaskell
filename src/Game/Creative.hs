@@ -5,6 +5,9 @@ module Game.Creative
     -- * Creative inventory click behavior
   , creativeClickSlot
   , creativePickFromPalette
+    -- * Creative item consumption (infinite items)
+  , creativeConsumeItem
+  , creativeRefillSlot
     -- * Palette slot detection
   , palettePageCount
   , palettePageItems
@@ -301,3 +304,24 @@ creativePickFromPalette slotIdx pageItems
           fullStack = itemStackLimit item
       in Just (ItemStack item fullStack)
   | otherwise = Nothing
+
+-- ---------------------------------------------------------------------------
+-- Creative item consumption (infinite items)
+-- ---------------------------------------------------------------------------
+
+-- | In creative mode, consuming an item from a slot is a no-op: the inventory
+-- is returned unchanged. This implements the "infinite items" behavior where
+-- placing blocks or using items never depletes the stack.
+creativeConsumeItem :: Inventory -> Int -> Inventory
+creativeConsumeItem inv _slotIdx = inv
+
+-- | Refill a slot to its full stack size in creative mode.
+-- If the slot contains an item, its count is set to the item's stack limit.
+-- If the slot is empty, the inventory is returned unchanged.
+creativeRefillSlot :: Inventory -> Int -> Inventory
+creativeRefillSlot inv slotIdx =
+  case getSlot inv slotIdx of
+    Just (ItemStack item _count) ->
+      let fullStack = itemStackLimit item
+      in setSlot inv slotIdx (Just (ItemStack item fullStack))
+    Nothing -> inv
