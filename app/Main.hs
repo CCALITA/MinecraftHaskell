@@ -42,7 +42,7 @@ import Game.SaveV3 (SaveDataV3(..), savev3Version, savePlayerV3, loadPlayerV3)
 import Game.DroppedItem
 import Game.BlockEntity
 import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), newGameState)
-import Game.Creative (creativeClickSlot, creativePickFromPalette, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
+import Game.Creative (creativeClickSlot, creativePickFromPalette, creativeConsumeItem, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Game.Achievement (AchievementState, checkAchievement, unlockAchievement, achievementName, AchievementTrigger(..))
 import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), ChatMessage(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
 import Game.ItemDisplay (itemColor, itemMiniIcon)
@@ -592,6 +592,33 @@ main = do
                         writeIORef inventoryRef (setSlot inv slotIdx cursor)
                         writeIORef cursorItemRef slotContent
 
+          -- Right-click stack splitting for InventoryOpen (Survival only)
+          when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'2) $ do
+            pmode <- readIORef playModeRef
+            when (pmode == Survival) $ do
+              (mx, my) <- readIORef mousePosRef
+              (winW, winH) <- getWindowSize wh
+              let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+                  ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
+                  mSlot = hitInventorySlot ndcX ndcY
+              case mSlot of
+                Nothing -> pure ()
+                Just slotIdx -> do
+                  inv <- readIORef inventoryRef
+                  cursor <- readIORef cursorItemRef
+                  let slotContent = getSlot inv slotIdx
+                  case cursor of
+                    Nothing -> do
+                      -- Pick up half
+                      let (newSlot, newCursor) = splitStack slotContent
+                      writeIORef inventoryRef (setSlot inv slotIdx newSlot)
+                      writeIORef cursorItemRef newCursor
+                    Just _ -> do
+                      -- Place 1 item
+                      let (newSlot, newCursor) = placeSingle cursor slotContent
+                      writeIORef inventoryRef (setSlot inv slotIdx newSlot)
+                      writeIORef cursorItemRef newCursor
+
         CraftingOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
           (winW, winH) <- getWindowSize wh
@@ -647,6 +674,29 @@ main = do
               writeIORef cursorItemRef slotContent
             Nothing -> pure ()
 
+          -- Right-click stack splitting for CraftingOpen inventory slots
+          when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'2) $ do
+            (mx, my) <- readIORef mousePosRef
+            (winW, winH) <- getWindowSize wh
+            let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+                ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
+                mSlot = hitCraftingSlot ndcX ndcY
+            case mSlot of
+              Just (CraftInvSlot idx) -> do
+                inv <- readIORef inventoryRef
+                cursor <- readIORef cursorItemRef
+                let slotContent = getSlot inv idx
+                case cursor of
+                  Nothing -> do
+                    let (newSlot, newCursor) = splitStack slotContent
+                    writeIORef inventoryRef (setSlot inv idx newSlot)
+                    writeIORef cursorItemRef newCursor
+                  Just _ -> do
+                    let (newSlot, newCursor) = placeSingle cursor slotContent
+                    writeIORef inventoryRef (setSlot inv idx newSlot)
+                    writeIORef cursorItemRef newCursor
+              _ -> pure ()
+
         ChestOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
           (winW, winH) <- getWindowSize wh
@@ -677,6 +727,30 @@ main = do
               modifyIORef' inventoryRef (\i -> setSlot i idx cursor)
               writeIORef cursorItemRef slotContent
             Nothing -> pure ()
+
+          -- Right-click stack splitting for ChestOpen inventory slots
+          when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'2) $ do
+            (mx, my) <- readIORef mousePosRef
+            (winW, winH) <- getWindowSize wh
+            let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+                ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
+                mSlot = hitChestSlot ndcX ndcY
+            case mSlot of
+              Just (ChestInvSlot idx) -> do
+                inv <- readIORef inventoryRef
+                cursor <- readIORef cursorItemRef
+                let slotContent = getSlot inv idx
+                case cursor of
+                  Nothing -> do
+                    let (newSlot, newCursor) = splitStack slotContent
+                    writeIORef inventoryRef (setSlot inv idx newSlot)
+                    writeIORef cursorItemRef newCursor
+                  Just _ -> do
+                    let (newSlot, newCursor) = placeSingle cursor slotContent
+                    writeIORef inventoryRef (setSlot inv idx newSlot)
+                    writeIORef cursorItemRef newCursor
+              _ -> pure ()
+
         FurnaceOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
           (winW, winH) <- getWindowSize wh
@@ -697,18 +771,28 @@ main = do
               writeIORef furnaceStateRef (setFurnaceFuel fs cursor)
               writeIORef cursorItemRef slotContent
             Just FurnaceOutputSlot -> do
-              -- Output slot: only take, don't place
-              fs <- readIORef furnaceStateRef
-              cursor <- readIORef cursorItemRef
-              case (cursor, getFurnaceOutput fs) of
-                (Nothing, Just outStack) -> do
-                  writeIORef cursorItemRef (Just outStack)
-                  writeIORef furnaceStateRef (setFurnaceOutput fs Nothing)
-                (Just (ItemStack cItem cCount), Just (ItemStack oItem oCount))
-                  | cItem == oItem && cCount + oCount <= 64 -> do
-                      writeIORef cursorItemRef (Just (ItemStack cItem (cCount + oCount)))
+              -- Shift+click: auto-move output to player inventory
+              shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
+              if shiftHeld
+                then do
+                  fs <- readIORef furnaceStateRef
+                  inv <- readIORef inventoryRef
+                  let (fs', inv') = shiftClickFurnaceOutput fs inv
+                  writeIORef furnaceStateRef fs'
+                  writeIORef inventoryRef inv'
+                else do
+                  -- Output slot: only take, don't place
+                  fs <- readIORef furnaceStateRef
+                  cursor <- readIORef cursorItemRef
+                  case (cursor, getFurnaceOutput fs) of
+                    (Nothing, Just outStack) -> do
+                      writeIORef cursorItemRef (Just outStack)
                       writeIORef furnaceStateRef (setFurnaceOutput fs Nothing)
-                _ -> pure ()
+                    (Just (ItemStack cItem cCount), Just (ItemStack oItem oCount))
+                      | cItem == oItem && cCount + oCount <= 64 -> do
+                          writeIORef cursorItemRef (Just (ItemStack cItem (cCount + oCount)))
+                          writeIORef furnaceStateRef (setFurnaceOutput fs Nothing)
+                    _ -> pure ()
             Just (FurnaceInvSlot idx) -> do
               inv <- readIORef inventoryRef
               cursor <- readIORef cursorItemRef
@@ -718,6 +802,29 @@ main = do
             Nothing -> pure ()
           -- Sync furnace IORef back to block entity after any UI interaction
           syncFurnaceToMap
+
+          -- Right-click stack splitting for FurnaceOpen inventory slots
+          when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'2) $ do
+            (mx, my) <- readIORef mousePosRef
+            (winW, winH) <- getWindowSize wh
+            let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+                ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
+                mSlot = hitFurnaceSlot ndcX ndcY
+            case mSlot of
+              Just (FurnaceInvSlot idx) -> do
+                inv <- readIORef inventoryRef
+                cursor <- readIORef cursorItemRef
+                let slotContent = getSlot inv idx
+                case cursor of
+                  Nothing -> do
+                    let (newSlot, newCursor) = splitStack slotContent
+                    writeIORef inventoryRef (setSlot inv idx newSlot)
+                    writeIORef cursorItemRef newCursor
+                  Just _ -> do
+                    let (newSlot, newCursor) = placeSingle cursor slotContent
+                    writeIORef inventoryRef (setSlot inv idx newSlot)
+                    writeIORef cursorItemRef newCursor
+              _ -> pure ()
 
         DispenserOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
@@ -747,6 +854,29 @@ main = do
               modifyIORef' inventoryRef (\i -> setSlot i idx cursor)
               writeIORef cursorItemRef slotContent
             Nothing -> pure ()
+
+          -- Right-click stack splitting for DispenserOpen inventory slots
+          when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'2) $ do
+            (mx, my) <- readIORef mousePosRef
+            (winW, winH) <- getWindowSize wh
+            let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
+                ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
+                mSlot = hitDispenserSlot ndcX ndcY
+            case mSlot of
+              Just (DispenserInvSlot idx) -> do
+                inv <- readIORef inventoryRef
+                cursor <- readIORef cursorItemRef
+                let slotContent = getSlot inv idx
+                case cursor of
+                  Nothing -> do
+                    let (newSlot, newCursor) = splitStack slotContent
+                    writeIORef inventoryRef (setSlot inv idx newSlot)
+                    writeIORef cursorItemRef newCursor
+                  Just _ -> do
+                    let (newSlot, newCursor) = placeSingle cursor slotContent
+                    writeIORef inventoryRef (setSlot inv idx newSlot)
+                    writeIORef cursorItemRef newCursor
+              _ -> pure ()
 
         EnchantingOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
@@ -1391,13 +1521,19 @@ main = do
                                   else pure True
                                 -- Height limit: only place blocks in valid range [0, chunkHeight)
                                 when (placeY >= 0 && placeY < chunkHeight && canPlace) $ do
-                                    -- Consume from selected slot directly
-                                    case getSlot inv sel of
-                                      Just (ItemStack si cnt) | si == item ->
-                                        if cnt <= 1
-                                          then writeIORef inventoryRef (setSlot inv sel Nothing)
-                                          else writeIORef inventoryRef (setSlot inv sel (Just (ItemStack si (cnt - 1))))
-                                      _ -> pure ()
+                                    -- Consume from selected slot (creative mode: no-op)
+                                    pmode <- readIORef playModeRef
+                                    case pmode of
+                                      Creative ->
+                                        -- Infinite items: inventory unchanged
+                                        writeIORef inventoryRef (creativeConsumeItem inv sel)
+                                      Survival ->
+                                        case getSlot inv sel of
+                                          Just (ItemStack si cnt) | si == item ->
+                                            if cnt <= 1
+                                              then writeIORef inventoryRef (setSlot inv sel Nothing)
+                                              else writeIORef inventoryRef (setSlot inv sel (Just (ItemStack si (cnt - 1))))
+                                          _ -> pure ()
                                     -- Orient piston by player look direction
                                     let placeBt = if bt == Piston
                                           then let yawR = plYaw player * pi / 180
