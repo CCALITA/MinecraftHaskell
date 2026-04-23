@@ -7525,6 +7525,62 @@ creativeInventorySpec = describe "Game.Creative" $ do
       pm <- readIORef (gsPlayMode gs)
       pm `shouldBe` Survival
 
+  -- Container capacity display
+  describe "Container capacity display" $ do
+    it "countNonEmptyChestSlots returns 0 for empty chest" $
+      countNonEmptyChestSlots emptyChestInventory `shouldBe` 0
+
+    it "countNonEmptyChestSlots counts occupied slots" $ do
+      let item = ItemStack (BlockItem Stone) 10
+          inv1 = setChestSlot emptyChestInventory 0 (Just item)
+          inv2 = setChestSlot inv1 5 (Just item)
+          inv3 = setChestSlot inv2 26 (Just item)
+      countNonEmptyChestSlots inv3 `shouldBe` 3
+
+    it "countNonEmptyChestSlots returns 27 for full chest" $ do
+      let item = ItemStack (BlockItem Stone) 1
+          inv = foldl (\acc i -> setChestSlot acc i (Just item)) emptyChestInventory [0..26]
+      countNonEmptyChestSlots inv `shouldBe` 27
+
+    it "countNonEmptyDispenserSlots returns 0 for empty dispenser" $
+      countNonEmptyDispenserSlots emptyDispenserInventory `shouldBe` 0
+
+    it "countNonEmptyDispenserSlots counts occupied slots" $ do
+      let item = ItemStack (BlockItem Dirt) 5
+          inv1 = setDispenserSlot emptyDispenserInventory 0 (Just item)
+          inv2 = setDispenserSlot inv1 4 (Just item)
+      countNonEmptyDispenserSlots inv2 `shouldBe` 2
+
+    it "countNonEmptyDispenserSlots returns 9 for full dispenser" $ do
+      let item = ItemStack (BlockItem Stone) 1
+          inv = foldl (\acc i -> setDispenserSlot acc i (Just item)) emptyDispenserInventory [0..8]
+      countNonEmptyDispenserSlots inv `shouldBe` 9
+
+    it "containerCapacityText formats correctly for empty container" $
+      containerCapacityText 0 27 `shouldBe` "USED: 0/27"
+
+    it "containerCapacityText formats correctly for partially filled" $
+      containerCapacityText 5 27 `shouldBe` "USED: 5/27"
+
+    it "containerCapacityText formats correctly for full container" $
+      containerCapacityText 27 27 `shouldBe` "USED: 27/27"
+
+    it "containerCapacityText works for dispenser capacity" $
+      containerCapacityText 3 9 `shouldBe` "USED: 3/9"
+
+    it "countNonEmptyChestSlots ignores cleared slots" $ do
+      let item = ItemStack (BlockItem Stone) 10
+          inv1 = setChestSlot emptyChestInventory 0 (Just item)
+          inv2 = setChestSlot inv1 1 (Just item)
+          inv3 = setChestSlot inv2 0 Nothing
+      countNonEmptyChestSlots inv3 `shouldBe` 1
+
+    it "countNonEmptyDispenserSlots ignores cleared slots" $ do
+      let item = ItemStack (BlockItem Dirt) 3
+          inv1 = setDispenserSlot emptyDispenserInventory 0 (Just item)
+          inv2 = setDispenserSlot inv1 1 (Just item)
+          inv3 = setDispenserSlot inv2 1 Nothing
+      countNonEmptyDispenserSlots inv3 `shouldBe` 1
 -- =========================================================================
 -- Stack Splitting (splitStack / placeSingle)
 -- =========================================================================
