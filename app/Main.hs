@@ -254,6 +254,7 @@ main = do
         villagerProfRef     = gsVillagerProf gs
         villagerTradesRef   = gsVillagerTrades gs
         playModeRef         = gsPlayMode gs
+        lastClickRef        = gsLastClick gs
     palettePageRef <- newIORef (0 :: Int)
 
     -- World save management: use world1 as default
@@ -588,9 +589,26 @@ main = do
                           -- Not an armor item: shift-click quick-move between sections
                           writeIORef inventoryRef (moveToSection inv slotIdx)
                       else do
+                        now <- maybe 0 id <$> GLFW.getTime
+                        (prevSlot, prevTime) <- readIORef lastClickRef
                         cursor <- readIORef cursorItemRef
-                        writeIORef inventoryRef (setSlot inv slotIdx cursor)
-                        writeIORef cursorItemRef slotContent
+                        let isDoubleClick = slotIdx == prevSlot && (now - prevTime) < 0.3
+                        case cursor of
+                          Just (ItemStack cItem cCount) | isDoubleClick -> do
+                            -- Double-click with cursor held: collect all matching items
+                            let maxStack = itemStackLimit cItem
+                                space = maxStack - cCount
+                            when (space > 0) $ do
+                              inv' <- readIORef inventoryRef
+                              let (newInv, collected) = collectAll inv' cItem space
+                              writeIORef inventoryRef newInv
+                              writeIORef cursorItemRef (Just (ItemStack cItem (cCount + collected)))
+                            writeIORef lastClickRef (-1, 0.0)
+                          _ -> do
+                            -- Normal single click: swap cursor and slot
+                            writeIORef inventoryRef (setSlot inv slotIdx cursor)
+                            writeIORef cursorItemRef slotContent
+                            writeIORef lastClickRef (slotIdx, now)
 
         CraftingOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef

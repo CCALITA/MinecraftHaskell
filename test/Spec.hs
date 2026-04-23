@@ -149,6 +149,7 @@ main = hspec $ do
   hotbarNumberKeySpec
   inventoryComprehensiveSpec
   creativeInventorySpec
+  collectAllSpec
 
 -- =========================================================================
 -- Block
@@ -7483,3 +7484,91 @@ creativeInventorySpec = describe "Game.Creative" $ do
       writeIORef (gsPlayMode gs) Survival
       pm <- readIORef (gsPlayMode gs)
       pm `shouldBe` Survival
+
+-- =========================================================================
+-- collectAll (double-click collect matching items)
+-- =========================================================================
+collectAllSpec :: Spec
+collectAllSpec = describe "Game.Inventory.collectAll" $ do
+  let stone = BlockItem Stone
+      dirt  = BlockItem Dirt
+      tool  = ToolItem Pickaxe Diamond 1561
+
+  it "collects all matching items from multiple slots" $ do
+    let (inv1, _) = addItem emptyInventory stone 30
+        (inv2, _) = addItem inv1 dirt 10
+        (inv3, _) = addItem inv2 stone 20
+        -- stone is in slots 0 (30) and 2 (20), dirt in slot 1 (10)
+        (inv', collected) = collectAll inv3 stone 64
+    collected `shouldBe` 50
+    countItem inv' stone `shouldBe` 0
+
+  it "respects maxStack limit" $ do
+    let (inv1, _) = addItem emptyInventory stone 64
+        (inv2, _) = addItem inv1 stone 64
+        -- 128 total stone, but maxStack is 64
+        (inv', collected) = collectAll inv2 stone 64
+    collected `shouldBe` 64
+    countItem inv' stone `shouldBe` 64
+
+  it "returns 0 when no matching items exist" $ do
+    let (inv1, _) = addItem emptyInventory dirt 10
+        (inv', collected) = collectAll inv1 stone 64
+    collected `shouldBe` 0
+    countItem inv' dirt `shouldBe` 10
+
+  it "collects from empty inventory returns 0" $ do
+    let (inv', collected) = collectAll emptyInventory stone 64
+    collected `shouldBe` 0
+    inv' `shouldBe` emptyInventory
+
+  it "partial collection from a slot leaves remainder" $ do
+    let (inv1, _) = addItem emptyInventory stone 40
+        -- maxStack=10 means collect only 10 from the 40
+        (inv', collected) = collectAll inv1 stone 10
+    collected `shouldBe` 10
+    countItem inv' stone `shouldBe` 30
+
+  it "collects from scattered slots across inventory" $ do
+    let inv0 = setSlot emptyInventory 0  (Just (ItemStack stone 5))
+        inv1 = setSlot inv0           10 (Just (ItemStack stone 15))
+        inv2 = setSlot inv1           20 (Just (ItemStack stone 10))
+        inv3 = setSlot inv2           35 (Just (ItemStack stone 8))
+        (inv', collected) = collectAll inv3 stone 64
+    collected `shouldBe` 38
+    countItem inv' stone `shouldBe` 0
+
+  it "does not collect items of different type" $ do
+    let (inv1, _) = addItem emptyInventory stone 30
+        (inv2, _) = addItem inv1 dirt 20
+        (inv', collected) = collectAll inv2 stone 64
+    collected `shouldBe` 30
+    countItem inv' dirt `shouldBe` 20
+
+  it "handles maxStack of 0 gracefully" $ do
+    let (inv1, _) = addItem emptyInventory stone 30
+        (inv', collected) = collectAll inv1 stone 0
+    collected `shouldBe` 0
+    countItem inv' stone `shouldBe` 30
+
+  it "collects tool items (stackLimit 1)" $ do
+    let inv0 = setSlot emptyInventory 0 (Just (ItemStack tool 1))
+        inv1 = setSlot inv0           5 (Just (ItemStack tool 1))
+        inv2 = setSlot inv1          10 (Just (ItemStack tool 1))
+        (inv', collected) = collectAll inv2 tool 1
+    collected `shouldBe` 1
+    countItem inv' tool `shouldBe` 2
+
+  it "collects exactly remaining space" $ do
+    let (inv1, _) = addItem emptyInventory stone 20
+        (inv2, _) = addItem inv1 stone 30
+        -- 50 total; collect with maxStack=50 should get all
+        (inv', collected) = collectAll inv2 stone 50
+    collected `shouldBe` 50
+    countItem inv' stone `shouldBe` 0
+
+  it "preserves invSelected" $ do
+    let inv0 = selectHotbar emptyInventory 5
+        (inv1, _) = addItem inv0 stone 30
+        (inv', _) = collectAll inv1 stone 64
+    invSelected inv' `shouldBe` 5

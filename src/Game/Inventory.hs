@@ -18,6 +18,7 @@ module Game.Inventory
   , hotbarNumberKey
   , sortInventory
   , moveToSection
+  , collectAll
   ) where
 
 import Game.Item (Item(..), itemStackLimit)
@@ -247,3 +248,21 @@ findEmpty lo hi inv = go lo
       | otherwise = case getSlot inv i of
           Nothing -> Just i
           _       -> go (i + 1)
+
+-- | Double-click collect-all: scan all slots, remove items of matching type
+-- up to maxStack, return updated inventory and total collected count.
+collectAll :: Inventory -> Item -> Int -> (Inventory, Int)
+collectAll inv item maxStack = go inv 0 0
+  where
+    go inv' idx collected
+      | idx >= inventorySlots = (inv', collected)
+      | collected >= maxStack = (inv', collected)
+      | otherwise = case getSlot inv' idx of
+          Just (ItemStack sItem cnt) | sItem == item ->
+            let space = maxStack - collected
+                toTake = min space cnt
+                newCnt = cnt - toTake
+                newSlot = if newCnt <= 0 then Nothing else Just (ItemStack item newCnt)
+                inv'' = setSlot inv' idx newSlot
+            in go inv'' (idx + 1) (collected + toTake)
+          _ -> go inv' (idx + 1) collected
