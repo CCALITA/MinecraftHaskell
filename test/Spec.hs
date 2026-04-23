@@ -8461,3 +8461,88 @@ hotbarPopupSpec = describe "Hotbar item name popup" $ do
         Nothing                 -> writeIORef ref Nothing
       popup <- readIORef ref
       popup `shouldBe` Just ("Sand", 2.0)
+
+-- =========================================================================
+-- Enchantment Glow Border
+-- =========================================================================
+enchantGlowSpec :: Spec
+enchantGlowSpec = describe "UI.EnchantGlow" $ do
+
+  describe "glowColor" $ do
+    it "has purple shimmer RGBA (0.7, 0.3, 1.0, 0.4)" $
+      glowColor `shouldBe` (0.7, 0.3, 1.0, 0.4)
+
+  describe "glowThickness" $ do
+    it "is a positive value" $
+      glowThickness `shouldSatisfy` (> 0)
+
+    it "is small enough to be a thin border" $
+      glowThickness `shouldSatisfy` (< 0.02)
+
+  describe "isSlotEnchanted" $ do
+    it "returns False for empty map" $ do
+      let m = Map.empty
+      isSlotEnchanted m 0 `shouldBe` False
+
+    it "returns False for slot not in map" $ do
+      let m = Map.singleton 5 [Enchantment Sharpness 1]
+      isSlotEnchanted m 0 `shouldBe` False
+
+    it "returns True for slot with enchantments" $ do
+      let m = Map.singleton 0 [Enchantment Sharpness 1]
+      isSlotEnchanted m 0 `shouldBe` True
+
+    it "returns True for slot with multiple enchantments" $ do
+      let m = Map.singleton 3 [Enchantment Sharpness 2, Enchantment Unbreaking 1]
+      isSlotEnchanted m 3 `shouldBe` True
+
+    it "returns False for slot with empty enchantment list" $ do
+      let m = Map.singleton 0 []
+      isSlotEnchanted m 0 `shouldBe` False
+
+    it "checks correct slot index in multi-slot map" $ do
+      let m = Map.fromList [(0, [Enchantment Sharpness 1]), (5, [Enchantment Protection 2])]
+      isSlotEnchanted m 0 `shouldBe` True
+      isSlotEnchanted m 5 `shouldBe` True
+      isSlotEnchanted m 3 `shouldBe` False
+
+  describe "enchantGlowBorder" $ do
+    it "produces 4 quads (4 * 6 verts * 6 floats = 144 floats)" $ do
+      let verts = enchantGlowBorder 0.0 0.0 0.1 0.1
+      length verts `shouldBe` 144
+
+    it "produces 144 floats even for zero-size slot" $ do
+      let verts = enchantGlowBorder 0.0 0.0 0.0 0.0
+      length verts `shouldBe` 144
+
+    it "all color components match glow color" $ do
+      let verts = enchantGlowBorder 0.0 0.0 0.1 0.1
+          extractColors [] = []
+          extractColors (_x:_y:r:g:b:a:rest) = (r, g, b, a) : extractColors rest
+          extractColors _ = []
+          colors = extractColors verts
+      all (== glowColor) colors `shouldBe` True
+
+    it "border coords stay within slot bounds" $ do
+      let x0 = 0.1; y0 = 0.2; w = 0.5; h = 0.4
+          verts = enchantGlowBorder x0 y0 w h
+          extractXY [] = []
+          extractXY (x:y:_r:_g:_b:_a:rest) = (x, y) : extractXY rest
+          extractXY _ = []
+          coords = extractXY verts
+          xs = fmap fst coords
+          ys = fmap snd coords
+      minimum xs `shouldSatisfy` (>= x0 - 0.001)
+      maximum xs `shouldSatisfy` (<= x0 + w + 0.001)
+      minimum ys `shouldSatisfy` (>= y0 - 0.001)
+      maximum ys `shouldSatisfy` (<= y0 + h + 0.001)
+
+    it "different positions produce different vertex data" $ do
+      let verts1 = enchantGlowBorder 0.0 0.0 0.1 0.1
+          verts2 = enchantGlowBorder 0.5 0.5 0.1 0.1
+      verts1 `shouldNotBe` verts2
+
+    it "different sizes produce different vertex data" $ do
+      let verts1 = enchantGlowBorder 0.0 0.0 0.1 0.1
+          verts2 = enchantGlowBorder 0.0 0.0 0.2 0.2
+      verts1 `shouldNotBe` verts2

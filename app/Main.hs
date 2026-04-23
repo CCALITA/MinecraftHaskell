@@ -27,6 +27,7 @@ import Game.Item
 import Game.Bucket (BucketAction(..), determineBucketAction)
 import Game.Crafting
 import Game.Enchanting
+import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted)
 import Game.DayNight
 import World.Biome (biomeAt)
 import World.Weather (WeatherState(..), WeatherType(..), newWeatherState, updateWeather, isRaining, weatherSkyMultiplier, weatherAmbientMultiplier)
@@ -2900,7 +2901,8 @@ main = do
             chatState <- readIORef chatStateRef
             mVillProf <- readIORef villagerProfRef
             villTrades <- readIORef villagerTradesRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player') hotbarPopupText
+            enchantSnap <- readIORef enchantMapRef
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player') enchantSnap hotbarPopupText
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -3529,8 +3531,13 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
           sh = slotH - 4 * slotPad
           pixW = sw / 3
           pixH = sh / 3
+          -- Enchantment glow border around the full slot area
+          glowVerts =
+            if isSlotEnchanted enchantSnap i
+            then enchantGlowBorder (hotbarX0 + fromIntegral i * slotW) hotbarY slotW slotH
+            else []
       in case getSlot inv i of
-        Nothing -> []
+        Nothing -> glowVerts
         Just (ItemStack item cnt) ->
           let colors = itemMiniIcon item
               iconVerts = concatMap (\(row, col, c) ->
@@ -3541,7 +3548,7 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
                 then renderText (x0 + sw - 0.025) (y0 + sh - 0.02) 0.6 (1,1,1,1) (show cnt)
                 else []
               durBar = durabilityBarVerts x0 (y0 + sh) sw item
-          in iconVerts ++ countText ++ durBar
+          in iconVerts ++ countText ++ durBar ++ glowVerts
 
     -- Highlight selected slot
     sel = invSelected inv
@@ -3900,8 +3907,12 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
               sw = invSlotW - 2 * invSlotPad
               sh = invSlotH - 2 * invSlotPad
               slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
+              glowVerts =
+                if isSlotEnchanted enchantSnap idx
+                then enchantGlowBorder x y sw sh
+                else []
           in case getSlot inv idx of
-            Nothing -> slotBg
+            Nothing -> slotBg ++ glowVerts
             Just (ItemStack item _) ->
               let colors = itemMiniIcon item
                   pixW = sw / 3; pixH = sh / 3
@@ -3909,7 +3920,7 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
                        quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                             (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
                   durBar = durabilityBarVerts x (y + sh) sw item
-              in slotBg ++ iconVerts ++ durBar
+              in slotBg ++ iconVerts ++ durBar ++ glowVerts
 
         -- 2x2 crafting grid positions (above inventory)
         craft2x2X0 = -0.03 :: Float
