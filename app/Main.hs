@@ -1685,6 +1685,10 @@ main = do
               writeIORef lastCursorRef Nothing
             GLFW.Key'F ->
               modifyIORef' inputRef $ \inp -> inp { piToggleFly = True }
+            GLFW.Key'LeftControl ->
+              modifyIORef' playerRef $ \p -> p { plSprintToggled = not (plSprintToggled p) }
+            GLFW.Key'F -> do
+              modifyIORef' inventoryRef $ \inv -> swapHotbarWithInventory inv 9
             GLFW.Key'F3 ->
               modifyIORef' debugOverlayRef not
             GLFW.Key'E -> do
@@ -1942,7 +1946,7 @@ main = do
 
             -- Build input
             baseInput <- readIORef inputRef
-            let input = baseInput
+            let rawInput = baseInput
                   { piForward  = wDown
                   , piBackward = sDown
                   , piLeft     = aDown
@@ -1951,6 +1955,11 @@ main = do
                   , piSneak    = shiftDown
                   , piSprint   = ctrlDown
                   }
+
+            -- Apply toggle-sprint: when toggled on, force sprint while moving
+            curPlayer <- readIORef playerRef
+            let (input, updatedPlayer) = applySprintToggle rawInput curPlayer
+            writeIORef playerRef updatedPlayer
 
             -- Fixed timestep physics (skip when UI is open)
             accum <- readIORef accumRef
@@ -3038,8 +3047,9 @@ cameraFromPlayer player =
       pitchR = plPitch player * pi / 180
       front  = V3 (sin yawR * cos pitchR) (sin pitchR) (cos yawR * cos pitchR)
       fov    = if plSprinting player then 55 else 45
+      eye    = if plSneaking player then eyeHeight - sneakEyeOffset else eyeHeight
   in defaultCamera
-    { camPosition = plPos player + V3 0 1.62 0  -- eye height
+    { camPosition = plPos player + V3 0 eye 0
     , camFront    = front
     , camYaw      = plYaw player
     , camPitch    = plPitch player
@@ -4631,6 +4641,7 @@ playerFromSaveDataV3 sd =
     , plOnGround  = False
     , plFlying    = sv3Flying sd
     , plSprinting = False
+    , plSneaking  = False
     , plHealth    = round (sv3Health sd)
     , plHunger    = sv3Hunger sd
     , plFallDist  = sv3FallDist sd
@@ -4638,6 +4649,7 @@ playerFromSaveDataV3 sd =
     , plArmorSlots = map (fmap (\(i, c) -> ItemStack i c)) (sv3ArmorSlots sd)
     , plAirSupply = sv3AirSupply sd
     , plSaturation = sv3Saturation sd
+    , plSprintToggled = False
     }
 
 -- | Restore player, inventory, day/night, weather, XP, and spawn from SaveDataV3

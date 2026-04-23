@@ -163,6 +163,9 @@ main = hspec $ do
   shiftClickContainerSpec
   hotbarPopupSpec
   blockBreakParticleSpec
+  sneakModeSpec
+  sprintToggleSpec
+  hotbarSwapSpec
 
 -- =========================================================================
 -- Block
@@ -8594,3 +8597,136 @@ blockBreakParticleSpec = describe "Game.Particle block break" $ do
         allNear = all (\(V3 px py pz, _, _, _, _, _) ->
           abs (px - 10.5) < 0.5 && abs (py - 20.5) < 0.5 && abs (pz - 30.5) < 0.5) particles
     allNear `shouldBe` True
+-- Sneak mode
+-- =========================================================================
+sneakModeSpec :: Spec
+sneakModeSpec = describe "Sneak mode" $ do
+  let sneakInput = noInput { piSneak = True, piForward = True }
+      walkInput  = noInput { piForward = True }
+      sprintInput = noInput { piSprint = True, piForward = True }
+      standingPlayer = (defaultPlayer (V3 0 80 0)) { plFlying = False }
+
+  describe "speed reduction" $ do
+    it "sneakSpeed is 30% of walkSpeed" $
+      sneakSpeed `shouldBe` walkSpeed * 0.3
+
+    it "sneaking player moves slower than walking player" $ do
+      sneakP <- updatePlayer 0.25 sneakInput airHeightQuery airQuery airQuery standingPlayer
+      walkP  <- updatePlayer 0.25 walkInput  airHeightQuery airQuery airQuery standingPlayer
+      let V3 _ _ sneakZ = plPos sneakP
+          V3 _ _ walkZ  = plPos walkP
+      abs sneakZ `shouldSatisfy` (< abs walkZ)
+
+    it "sneaking player moves at approximately 0.3x walk distance" $ do
+      sneakP <- updatePlayer 0.25 sneakInput airHeightQuery airQuery airQuery standingPlayer
+      walkP  <- updatePlayer 0.25 walkInput  airHeightQuery airQuery airQuery standingPlayer
+      let V3 _ _ sneakZ = plPos sneakP
+          V3 _ _ walkZ  = plPos walkP
+          ratio = abs sneakZ / abs walkZ
+      ratio `shouldSatisfy` (\r -> r > 0.25 && r < 0.35)
+
+    it "sprint speed overrides sneak when both pressed" $ do
+      let bothInput = noInput { piSprint = True, piSneak = True, piForward = True }
+      bothP   <- updatePlayer 0.25 bothInput  airHeightQuery airQuery airQuery standingPlayer
+      sprintP <- updatePlayer 0.25 sprintInput airHeightQuery airQuery airQuery standingPlayer
+      let V3 _ _ bothZ   = plPos bothP
+          V3 _ _ sprintZ = plPos sprintP
+      -- Sprint takes priority: speed guard evaluates piSprint before piSneak
+      abs bothZ `shouldSatisfy` (> abs ((\(V3 _ _ z) -> z) (plPos standingPlayer)))
+
+    it "sneaking speed is strictly less than walk speed constant" $
+      sneakSpeed `shouldSatisfy` (< walkSpeed)
+
+  describe "plSneaking state" $ do
+    it "plSneaking defaults to False" $
+      plSneaking (defaultPlayer (V3 0 80 0)) `shouldBe` False
+
+    it "plSneaking is True after update with sneak input" $ do
+      p <- updatePlayer 0.05 (noInput { piSneak = True }) airHeightQuery airQuery airQuery standingPlayer
+      plSneaking p `shouldBe` True
+
+    it "plSneaking is False after update without sneak input" $ do
+      p <- updatePlayer 0.05 noInput airHeightQuery airQuery airQuery standingPlayer
+      plSneaking p `shouldBe` False
+
+  describe "camera eye offset" $ do
+    it "sneakEyeOffset is 0.15 blocks" $
+      sneakEyeOffset `shouldBe` 0.15
+
+    it "sneakEyeOffset is positive and less than 1 block" $ do
+      sneakEyeOffset `shouldSatisfy` (> 0)
+      sneakEyeOffset `shouldSatisfy` (< 1.0)
+-- Sprint toggle
+-- =========================================================================
+sprintToggleSpec :: Spec
+sprintToggleSpec = describe "Toggle sprint (Ctrl key)" $ do
+  let movingForward = noInput { piForward = True }
+      standingStill = noInput
+      toggledPlayer = (defaultPlayer (V3 0 80 0)) { plSprintToggled = True }
+      normalPlayer  = defaultPlayer (V3 0 80 0)
+
+  it "forces piSprint True when toggled on and player is moving" $ do
+    let (input', _) = applySprintToggle movingForward toggledPlayer
+    piSprint input' `shouldBe` True
+
+  it "turns toggle off when player is not moving" $ do
+    let (_, player') = applySprintToggle standingStill toggledPlayer
+    plSprintToggled player' `shouldBe` False
+
+  it "does not force sprint when toggle is off" $ do
+    let (input', _) = applySprintToggle movingForward normalPlayer
+    piSprint input' `shouldBe` False
+
+  it "preserves toggle state when player is moving" $ do
+    let (_, player') = applySprintToggle movingForward toggledPlayer
+    plSprintToggled player' `shouldBe` True
+
+  it "defaultPlayer has sprint toggle off" $ do
+    plSprintToggled (defaultPlayer (V3 0 80 0)) `shouldBe` False
+
+  it "toggle off does not modify input sprint flag" $ do
+    let inputWithSprint = noInput { piForward = True, piSprint = True }
+        (input', _) = applySprintToggle inputWithSprint normalPlayer
+    piSprint input' `shouldBe` True
+hotbarSwapSpec :: Spec
+hotbarSwapSpec = describe "Game.Inventory.swapHotbarWithInventory" $ do
+  let stone3  = Just (ItemStack (BlockItem Stone) 3)
+      dirt5   = Just (ItemStack (BlockItem Dirt) 5)
+      pickaxe = Just (ItemStack (ToolItem Pickaxe Iron 250) 1)
+
+  it "swaps both occupied hotbar slot and inventory slot 9" $ do
+    let inv0 = setSlot (setSlot emptyInventory 0 stone3) 9 dirt5
+        inv' = swapHotbarWithInventory inv0 9
+    getSlot inv' 0 `shouldBe` dirt5
+    getSlot inv' 9 `shouldBe` stone3
+
+  it "moves hotbar item to empty slot 9 (hotbar occupied, target empty)" $ do
+    let inv0 = setSlot emptyInventory 0 pickaxe
+        inv' = swapHotbarWithInventory inv0 9
+    getSlot inv' 0 `shouldBe` Nothing
+    getSlot inv' 9 `shouldBe` pickaxe
+
+  it "moves slot 9 item to empty hotbar (hotbar empty, target occupied)" $ do
+    let inv0 = setSlot emptyInventory 9 stone3
+        inv' = swapHotbarWithInventory inv0 9
+    getSlot inv' 0 `shouldBe` stone3
+    getSlot inv' 9 `shouldBe` Nothing
+
+  it "both empty is a no-op" $ do
+    let inv' = swapHotbarWithInventory emptyInventory 9
+    inv' `shouldBe` emptyInventory
+
+  it "respects invSelected when non-zero" $ do
+    let inv0 = selectHotbar (setSlot (setSlot emptyInventory 3 stone3) 9 dirt5) 3
+        inv' = swapHotbarWithInventory inv0 9
+    getSlot inv' 3 `shouldBe` dirt5
+    getSlot inv' 9 `shouldBe` stone3
+    -- Slot 0 should be untouched
+    getSlot inv' 0 `shouldBe` Nothing
+
+  it "does not disturb other slots" $ do
+    let inv0 = setSlot (setSlot (setSlot emptyInventory 0 stone3) 5 pickaxe) 9 dirt5
+        inv' = swapHotbarWithInventory inv0 9
+    getSlot inv' 0 `shouldBe` dirt5
+    getSlot inv' 9 `shouldBe` stone3
+    getSlot inv' 5 `shouldBe` pickaxe
