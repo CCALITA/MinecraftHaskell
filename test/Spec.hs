@@ -52,7 +52,7 @@ import Entity.Pathfinding (findPath, pathDistance)
 import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
 import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, isDawn, isDusk, getTimeOfDay, TimeOfDay(..))
 import Game.State (GameState(..), GameMode(..), PlayMode(..), newGameState)
-import Game.Creative (creativePalette, creativePaletteSize, creativeClickSlot, creativePickFromPalette, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteCols, paletteSlotsPerPage, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
+import Game.Creative (creativePalette, creativePaletteSize, creativeClickSlot, creativePickFromPalette, creativeConsumeItem, creativeRefillSlot, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteCols, paletteSlotsPerPage, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
 
 import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
@@ -1198,6 +1198,46 @@ furnaceSpec = describe "Game.Furnace" $ do
   it "MaterialItem does not convert to block" $ do
     itemToBlock (MaterialItem IronIngot) `shouldBe` Nothing
     itemToBlock (MaterialItem GoldIngot) `shouldBe` Nothing
+
+  describe "shiftClickFurnaceOutput" $ do
+    it "moves output items into empty inventory" $ do
+      let fs = setFurnaceOutput newFurnaceState (Just (ItemStack (MaterialItem IronIngot) 5))
+          inv = emptyInventory
+          (fs', inv') = shiftClickFurnaceOutput fs inv
+      getFurnaceOutput fs' `shouldBe` Nothing
+      countItem inv' (MaterialItem IronIngot) `shouldBe` 5
+
+    it "no-op when output slot is empty" $ do
+      let fs = newFurnaceState
+          inv = emptyInventory
+          (fs', inv') = shiftClickFurnaceOutput fs inv
+      getFurnaceOutput fs' `shouldBe` Nothing
+      inv' `shouldBe` inv
+
+    it "merges output into existing inventory stacks" $ do
+      let inv0 = fst $ addItem emptyInventory (MaterialItem IronIngot) 10
+          fs = setFurnaceOutput newFurnaceState (Just (ItemStack (MaterialItem IronIngot) 3))
+          (fs', inv') = shiftClickFurnaceOutput fs inv0
+      getFurnaceOutput fs' `shouldBe` Nothing
+      countItem inv' (MaterialItem IronIngot) `shouldBe` 13
+
+    it "leaves leftover in output when inventory is full" $ do
+      -- Fill all 36 slots with dirt (different item)
+      let fillInv = foldl (\i idx -> setSlot i idx (Just (ItemStack (BlockItem Dirt) 64))) emptyInventory [0..35]
+          fs = setFurnaceOutput newFurnaceState (Just (ItemStack (MaterialItem IronIngot) 5))
+          (fs', inv') = shiftClickFurnaceOutput fs fillInv
+      -- Output should still have the items since inventory is full
+      getFurnaceOutput fs' `shouldBe` Just (ItemStack (MaterialItem IronIngot) 5)
+      countItem inv' (MaterialItem IronIngot) `shouldBe` 0
+
+    it "partially moves output when inventory has limited space" $ do
+      -- Fill 35 slots with dirt, leave one slot empty
+      let fillInv = foldl (\i idx -> setSlot i idx (Just (ItemStack (BlockItem Dirt) 64))) emptyInventory [0..34]
+          fs = setFurnaceOutput newFurnaceState (Just (ItemStack (MaterialItem IronIngot) 100))
+          (fs', inv') = shiftClickFurnaceOutput fs fillInv
+      -- Only 64 should fit (one empty slot, stack limit 64)
+      countItem inv' (MaterialItem IronIngot) `shouldBe` 64
+      getFurnaceOutput fs' `shouldBe` Just (ItemStack (MaterialItem IronIngot) 36)
 
 -- =========================================================================
 -- Void damage
@@ -7570,3 +7610,90 @@ stackSplittingSpec = describe "Game.Inventory stack splitting" $ do
               in if n <= 0 then slot else placeBack newCur newSlot
           restored = placeBack cursorAfterSplit slotAfterSplit
       restored `shouldBe` original
+  -- Creative infinite items: creativeConsumeItem
+  describe "creativeConsumeItem (infinite items)" $ do
+    it "consuming from a slot with items returns inventory unchanged" $ do
+      let inv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 10))
+          result = creativeConsumeItem inv 0
+      getSlot result 0 `shouldBe` Just (ItemStack (BlockItem Stone) 10)
+
+    it "consuming from empty slot returns inventory unchanged" $ do
+      let inv = emptyInventory
+          result = creativeConsumeItem inv 0
+      getSlot result 0 `shouldBe` Nothing
+
+    it "consuming from slot with 1 item still keeps that item" $ do
+      let inv = setSlot emptyInventory 3 (Just (ItemStack (BlockItem Dirt) 1))
+          result = creativeConsumeItem inv 3
+      getSlot result 3 `shouldBe` Just (ItemStack (BlockItem Dirt) 1)
+
+    it "consuming a tool item keeps the tool" $ do
+      let inv = setSlot emptyInventory 0 (Just (ItemStack (ToolItem Pickaxe Diamond 1561) 1))
+          result = creativeConsumeItem inv 0
+      getSlot result 0 `shouldBe` Just (ItemStack (ToolItem Pickaxe Diamond 1561) 1)
+
+    it "consuming does not affect other slots" $ do
+      let inv = setSlot (setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 32)))
+                        1 (Just (ItemStack (BlockItem Dirt) 16))
+          result = creativeConsumeItem inv 0
+      getSlot result 0 `shouldBe` Just (ItemStack (BlockItem Stone) 32)
+      getSlot result 1 `shouldBe` Just (ItemStack (BlockItem Dirt) 16)
+
+    it "consuming from out-of-range slot returns inventory unchanged" $ do
+      let inv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 5))
+          result = creativeConsumeItem inv 999
+      getSlot result 0 `shouldBe` Just (ItemStack (BlockItem Stone) 5)
+
+    it "repeated consumption never depletes a stack" $ do
+      let inv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Cobblestone) 64))
+          consumed = iterate (\i -> creativeConsumeItem i 0) inv !! 100
+      getSlot consumed 0 `shouldBe` Just (ItemStack (BlockItem Cobblestone) 64)
+
+    it "consuming a food item keeps the food" $ do
+      let inv = setSlot emptyInventory 2 (Just (ItemStack (FoodItem Apple) 10))
+          result = creativeConsumeItem inv 2
+      getSlot result 2 `shouldBe` Just (ItemStack (FoodItem Apple) 10)
+
+  -- Creative refill slot
+  describe "creativeRefillSlot" $ do
+    it "refills a block item to stack of 64" $ do
+      let inv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 3))
+          result = creativeRefillSlot inv 0
+      getSlot result 0 `shouldBe` Just (ItemStack (BlockItem Stone) 64)
+
+    it "refills a tool item to stack of 1" $ do
+      let inv = setSlot emptyInventory 0 (Just (ItemStack (ToolItem Pickaxe Iron 250) 1))
+          result = creativeRefillSlot inv 0
+      getSlot result 0 `shouldBe` Just (ItemStack (ToolItem Pickaxe Iron 250) 1)
+
+    it "refilling empty slot is a no-op" $ do
+      let inv = emptyInventory
+          result = creativeRefillSlot inv 0
+      getSlot result 0 `shouldBe` Nothing
+
+    it "refills a partially used block stack" $ do
+      let inv = setSlot emptyInventory 5 (Just (ItemStack (BlockItem OakPlanks) 1))
+          result = creativeRefillSlot inv 5
+      getSlot result 5 `shouldBe` Just (ItemStack (BlockItem OakPlanks) 64)
+
+    it "does not affect other slots" $ do
+      let inv = setSlot (setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 2)))
+                        1 (Just (ItemStack (BlockItem Dirt) 5))
+          result = creativeRefillSlot inv 0
+      getSlot result 0 `shouldBe` Just (ItemStack (BlockItem Stone) 64)
+      getSlot result 1 `shouldBe` Just (ItemStack (BlockItem Dirt) 5)
+
+    it "refills armor to stack of 1" $ do
+      let inv = setSlot emptyInventory 0 (Just (ItemStack (ArmorItem Helmet DiamondArmor 363) 1))
+          result = creativeRefillSlot inv 0
+      getSlot result 0 `shouldBe` Just (ItemStack (ArmorItem Helmet DiamondArmor 363) 1)
+
+    it "refills food item to stack of 64" $ do
+      let inv = setSlot emptyInventory 0 (Just (ItemStack (FoodItem Bread) 5))
+          result = creativeRefillSlot inv 0
+      getSlot result 0 `shouldBe` Just (ItemStack (FoodItem Bread) 64)
+
+    it "refills material item to stack of 64" $ do
+      let inv = setSlot emptyInventory 0 (Just (ItemStack (MaterialItem Coal) 1))
+          result = creativeRefillSlot inv 0
+      getSlot result 0 `shouldBe` Just (ItemStack (MaterialItem Coal) 64)

@@ -42,7 +42,7 @@ import Game.SaveV3 (SaveDataV3(..), savev3Version, savePlayerV3, loadPlayerV3)
 import Game.DroppedItem
 import Game.BlockEntity
 import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), newGameState)
-import Game.Creative (creativeClickSlot, creativePickFromPalette, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
+import Game.Creative (creativeClickSlot, creativePickFromPalette, creativeConsumeItem, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Game.Achievement (AchievementState, checkAchievement, unlockAchievement, achievementName, AchievementTrigger(..))
 import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), ChatMessage(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
 import Game.ItemDisplay (itemColor, itemMiniIcon)
@@ -771,18 +771,28 @@ main = do
               writeIORef furnaceStateRef (setFurnaceFuel fs cursor)
               writeIORef cursorItemRef slotContent
             Just FurnaceOutputSlot -> do
-              -- Output slot: only take, don't place
-              fs <- readIORef furnaceStateRef
-              cursor <- readIORef cursorItemRef
-              case (cursor, getFurnaceOutput fs) of
-                (Nothing, Just outStack) -> do
-                  writeIORef cursorItemRef (Just outStack)
-                  writeIORef furnaceStateRef (setFurnaceOutput fs Nothing)
-                (Just (ItemStack cItem cCount), Just (ItemStack oItem oCount))
-                  | cItem == oItem && cCount + oCount <= 64 -> do
-                      writeIORef cursorItemRef (Just (ItemStack cItem (cCount + oCount)))
+              -- Shift+click: auto-move output to player inventory
+              shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
+              if shiftHeld
+                then do
+                  fs <- readIORef furnaceStateRef
+                  inv <- readIORef inventoryRef
+                  let (fs', inv') = shiftClickFurnaceOutput fs inv
+                  writeIORef furnaceStateRef fs'
+                  writeIORef inventoryRef inv'
+                else do
+                  -- Output slot: only take, don't place
+                  fs <- readIORef furnaceStateRef
+                  cursor <- readIORef cursorItemRef
+                  case (cursor, getFurnaceOutput fs) of
+                    (Nothing, Just outStack) -> do
+                      writeIORef cursorItemRef (Just outStack)
                       writeIORef furnaceStateRef (setFurnaceOutput fs Nothing)
-                _ -> pure ()
+                    (Just (ItemStack cItem cCount), Just (ItemStack oItem oCount))
+                      | cItem == oItem && cCount + oCount <= 64 -> do
+                          writeIORef cursorItemRef (Just (ItemStack cItem (cCount + oCount)))
+                          writeIORef furnaceStateRef (setFurnaceOutput fs Nothing)
+                    _ -> pure ()
             Just (FurnaceInvSlot idx) -> do
               inv <- readIORef inventoryRef
               cursor <- readIORef cursorItemRef
@@ -1511,13 +1521,19 @@ main = do
                                   else pure True
                                 -- Height limit: only place blocks in valid range [0, chunkHeight)
                                 when (placeY >= 0 && placeY < chunkHeight && canPlace) $ do
-                                    -- Consume from selected slot directly
-                                    case getSlot inv sel of
-                                      Just (ItemStack si cnt) | si == item ->
-                                        if cnt <= 1
-                                          then writeIORef inventoryRef (setSlot inv sel Nothing)
-                                          else writeIORef inventoryRef (setSlot inv sel (Just (ItemStack si (cnt - 1))))
-                                      _ -> pure ()
+                                    -- Consume from selected slot (creative mode: no-op)
+                                    pmode <- readIORef playModeRef
+                                    case pmode of
+                                      Creative ->
+                                        -- Infinite items: inventory unchanged
+                                        writeIORef inventoryRef (creativeConsumeItem inv sel)
+                                      Survival ->
+                                        case getSlot inv sel of
+                                          Just (ItemStack si cnt) | si == item ->
+                                            if cnt <= 1
+                                              then writeIORef inventoryRef (setSlot inv sel Nothing)
+                                              else writeIORef inventoryRef (setSlot inv sel (Just (ItemStack si (cnt - 1))))
+                                          _ -> pure ()
                                     -- Orient piston by player look direction
                                     let placeBt = if bt == Piston
                                           then let yawR = plYaw player * pi / 180
