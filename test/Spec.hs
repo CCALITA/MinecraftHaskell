@@ -55,7 +55,7 @@ import Engine.Mesh (MeshData(..), NeighborData(..), meshChunkWithLight, emptyNei
 import Entity.Pathfinding (findPath, pathDistance)
 import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
 import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, isDawn, isDusk, getTimeOfDay, TimeOfDay(..))
-import Game.State (GameState(..), GameMode(..), PlayMode(..), newGameState)
+import Game.State (GameState(..), GameMode(..), PlayMode(..), newGameState, attackCooldownPeriod, stepAttackCooldown, applyAttackCooldown, attackCooldownFraction)
 import Game.Creative (creativePalette, creativePaletteSize, creativeClickSlot, creativePickFromPalette, creativeConsumeItem, creativeRefillSlot, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteCols, paletteSlotsPerPage, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Game.ItemDisplay (durabilityFraction, durabilityBarColor)
 import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
@@ -166,6 +166,7 @@ main = hspec $ do
   sneakModeSpec
   sprintToggleSpec
   hotbarSwapSpec
+  attackCooldownSpec
 
 -- =========================================================================
 -- Block
@@ -8730,3 +8731,62 @@ hotbarSwapSpec = describe "Game.Inventory.swapHotbarWithInventory" $ do
     getSlot inv' 0 `shouldBe` dirt5
     getSlot inv' 9 `shouldBe` stone3
     getSlot inv' 5 `shouldBe` pickaxe
+
+-- =========================================================================
+-- Attack Cooldown
+-- =========================================================================
+attackCooldownSpec :: Spec
+attackCooldownSpec = describe "Game.State attack cooldown" $ do
+  it "attackCooldownPeriod is 0.5 seconds" $
+    attackCooldownPeriod `shouldBe` 0.5
+
+  it "stepAttackCooldown increments cooldown by dt/0.5" $ do
+    let result = stepAttackCooldown 0.1 0.0
+    -- 0.0 + 0.1/0.5 = 0.2
+    abs (result - 0.2) `shouldSatisfy` (< 0.001)
+
+  it "stepAttackCooldown clamps at 1.0" $ do
+    let result = stepAttackCooldown 1.0 0.8
+    -- 0.8 + 1.0/0.5 = 2.8, clamped to 1.0
+    result `shouldBe` 1.0
+
+  it "stepAttackCooldown from 0.0 with full period reaches 1.0" $ do
+    let result = stepAttackCooldown 0.5 0.0
+    -- 0.0 + 0.5/0.5 = 1.0
+    abs (result - 1.0) `shouldSatisfy` (< 0.001)
+
+  it "stepAttackCooldown with zero dt does not change value" $ do
+    let result = stepAttackCooldown 0.0 0.6
+    abs (result - 0.6) `shouldSatisfy` (< 0.001)
+
+  it "applyAttackCooldown at full cooldown returns full damage" $ do
+    let result = applyAttackCooldown 1.0 10.0
+    result `shouldBe` 10.0
+
+  it "applyAttackCooldown at zero cooldown returns zero damage" $ do
+    let result = applyAttackCooldown 0.0 10.0
+    result `shouldBe` 0.0
+
+  it "applyAttackCooldown at half cooldown returns half damage" $ do
+    let result = applyAttackCooldown 0.5 10.0
+    abs (result - 5.0) `shouldSatisfy` (< 0.001)
+
+  it "attackCooldownFraction clamps negative values to 0" $
+    attackCooldownFraction (-0.5) `shouldBe` 0.0
+
+  it "attackCooldownFraction clamps values above 1 to 1" $
+    attackCooldownFraction 1.5 `shouldBe` 1.0
+
+  it "attackCooldownFraction passes through valid values" $
+    attackCooldownFraction 0.7 `shouldSatisfy` (\v -> abs (v - 0.7) < 0.001)
+
+  it "multiple steps accumulate correctly" $ do
+    let step1 = stepAttackCooldown 0.1 0.0   -- 0.2
+        step2 = stepAttackCooldown 0.1 step1  -- 0.4
+        step3 = stepAttackCooldown 0.1 step2  -- 0.6
+    abs (step3 - 0.6) `shouldSatisfy` (< 0.001)
+
+  it "newGameState initializes cooldown to 1.0" $ do
+    gs <- newGameState (V3 0 70 0)
+    cd <- readIORef (gsAttackCooldown gs)
+    cd `shouldBe` 1.0

@@ -4,6 +4,10 @@ module Game.State
   , PlayMode(..)
   , Projectile(..)
   , newGameState
+  , attackCooldownPeriod
+  , stepAttackCooldown
+  , applyAttackCooldown
+  , attackCooldownFraction
   ) where
 
 import Data.IORef
@@ -129,6 +133,8 @@ data GameState = GameState
   , gsVillagerTrades   :: !(IORef [TradeOffer])
     -- Hotbar popup (item name, remaining seconds)
   , gsHotbarPopup      :: !(IORef (Maybe (String, Float)))
+    -- Attack cooldown (0.0 = just attacked, 1.0 = fully recharged)
+  , gsAttackCooldown   :: !(IORef Float)
   }
 
 -- | Create a fresh GameState with default initial values.
@@ -214,3 +220,22 @@ newGameState spawnPos = do
     <*> newIORef Nothing
     <*> newIORef []
     <*> newIORef Nothing  -- gsHotbarPopup
+    <*> newIORef 1.0     -- gsAttackCooldown (fully recharged)
+
+-- | The cooldown recharge period in seconds (0.5s = Minecraft default).
+attackCooldownPeriod :: Float
+attackCooldownPeriod = 0.5
+
+-- | Advance the attack cooldown by a frame delta-time.
+-- Returns the new cooldown value clamped to [0, 1].
+stepAttackCooldown :: Float -> Float -> Float
+stepAttackCooldown dt current = min 1.0 (current + dt / attackCooldownPeriod)
+
+-- | Scale raw damage by the current cooldown fraction.
+-- A cooldown of 1.0 deals full damage; 0.0 deals zero damage.
+applyAttackCooldown :: Float -> Float -> Float
+applyAttackCooldown cooldown rawDmg = rawDmg * cooldown
+
+-- | Convenience: clamp a cooldown value to the valid [0, 1] range.
+attackCooldownFraction :: Float -> Float
+attackCooldownFraction = max 0.0 . min 1.0

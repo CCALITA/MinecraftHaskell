@@ -42,7 +42,7 @@ import Game.Save
 import Game.SaveV3 (SaveDataV3(..), savev3Version, savePlayerV3, loadPlayerV3)
 import Game.DroppedItem
 import Game.BlockEntity
-import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), newGameState)
+import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), newGameState, stepAttackCooldown, applyAttackCooldown)
 import Game.Creative (creativeClickSlot, creativePickFromPalette, creativeConsumeItem, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Game.Achievement (AchievementState, checkAchievement, unlockAchievement, achievementName, AchievementTrigger(..))
 import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), ChatMessage(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
@@ -260,6 +260,7 @@ main = do
         villagerTradesRef   = gsVillagerTrades gs
         playModeRef         = gsPlayMode gs
         hotbarPopupRef      = gsHotbarPopup gs
+        attackCooldownRef   = gsAttackCooldown gs
         lastClickRef        = gsLastClick gs
     palettePageRef <- newIORef (0 :: Int)
 
@@ -1131,13 +1132,16 @@ main = do
                 putStrLn $ "Broke boat at " ++ show (entPosition closestBoat)
               [] -> case selectedItem inv of
                 Just (ItemStack (ToolItem Sword material _) _) -> do
-                  let attackDmg = tiAttackDamage (toolInfo material)
+                  cooldown <- readIORef attackCooldownRef
+                  let rawDmg    = tiAttackDamage (toolInfo material)
+                      attackDmg = applyAttackCooldown cooldown rawDmg
                   case nearby of
                     [] -> pure ()
                     _  -> do
                       let closest = closestTo (plPos player) nearby
                       updateEntity entityWorld (entId closest) (\e -> damageEntity e attackDmg)
-                      putStrLn $ "Attacked " ++ entTag closest ++ " for " ++ show attackDmg ++ " damage!"
+                      putStrLn $ "Attacked " ++ entTag closest ++ " for " ++ show attackDmg ++ " damage (cooldown " ++ show cooldown ++ ")"
+                  writeIORef attackCooldownRef 0.0
                 _ -> pure ()
 
           -- Stop mining on LMB release (Playing mode only)
@@ -2903,6 +2907,10 @@ main = do
             damageFlash <- readIORef damageFlashRef
             when (damageFlash > 0) $
               writeIORef damageFlashRef (max 0 (damageFlash - dt))
+            -- Attack cooldown: recharge toward 1.0
+            attackCooldown <- readIORef attackCooldownRef
+            when (attackCooldown < 1.0) $
+              writeIORef attackCooldownRef (stepAttackCooldown dt attackCooldown)
             let particleVerts = if mode == Playing then renderParticles particles vp else []
             spawnPos <- readIORef spawnPointRef
             playerXP <- readIORef playerXPRef
@@ -2910,7 +2918,7 @@ main = do
             mVillProf <- readIORef villagerProfRef
             villTrades <- readIORef villagerTradesRef
             enchantSnap <- readIORef enchantMapRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player') enchantSnap hotbarPopupText
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player') enchantSnap hotbarPopupText attackCooldown
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -3455,12 +3463,13 @@ tryTriggerAchievement achRef toastRef trigger = do
 -- sleepMsgText: Just "message" when a bed-related message should be shown
 -- achToastText: Just "name" when an achievement toast should be shown
 -- hotbarPopupText: Just "item name" when a hotbar item name popup should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> Maybe String -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots hotbarPopupText = VS.fromList $
+-- attackCooldown: 0.0 = just attacked, 1.0 = fully recharged
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> Maybe String -> Float -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots hotbarPopupText attackCooldown = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
-    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ achToastVerts ++ chatMessageVerts ++ hotbarPopupVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ cooldownBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ achToastVerts ++ chatMessageVerts ++ hotbarPopupVerts
     ChatInput -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ healthVerts ++ hungerVerts ++ chatInputVerts ++ chatMessageVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts ++ invTooltipVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts ++ craftTooltipVerts
@@ -3573,6 +3582,16 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
               barY = 0.03  -- below crosshair
               fillW = barW * min 1.0 miningProgress
           in quad (-barW) barY ((-barW) + fillW * 2) (barY + barH) (0.9, 0.9, 0.2, 0.9)
+
+    -- Attack cooldown bar: thin white bar below crosshair (shown while recharging)
+    cooldownBarVerts
+      | attackCooldown >= 1.0 = []  -- fully recharged, hide bar
+      | otherwise =
+          let cdBarW = 0.10
+              cdBarH = 0.008
+              cdBarY = 0.05  -- below mining bar
+              cdFillW = cdBarW * attackCooldown
+          in quad (-cdBarW) cdBarY ((-cdBarW) + cdFillW * 2) (cdBarY + cdBarH) (1.0, 1.0, 1.0, 0.9)
 
     -- Health hearts: red squares above hotbar
     healthVerts = concatMap makeHeart [0..9]
