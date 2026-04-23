@@ -918,6 +918,72 @@ blockEntitySpec = describe "Game.BlockEntity" $ do
     setChestInventory bem cPos emptyChestInventory
     furnaces <- allFurnaceEntities bem
     length furnaces `shouldBe` 2
+
+  -- Container capacity (slot counting) tests
+  it "countUsedSlots returns 0 for empty chest" $ do
+    countUsedSlots emptyChestInventory `shouldBe` 0
+
+  it "countUsedSlots returns 0 for empty dispenser" $ do
+    countUsedSlots emptyDispenserInventory `shouldBe` 0
+
+  it "countUsedSlots counts single occupied slot in chest" $ do
+    let inv = setChestSlot emptyChestInventory 0 (Just (ItemStack (BlockItem Stone) 1))
+    countUsedSlots inv `shouldBe` 1
+
+  it "countUsedSlots counts multiple occupied slots in chest" $ do
+    let inv = setChestSlot
+                (setChestSlot
+                  (setChestSlot emptyChestInventory 0 (Just (ItemStack (BlockItem Stone) 1)))
+                  13 (Just (ItemStack (BlockItem Dirt) 5)))
+                26 (Just (ItemStack (MaterialItem Coal) 10))
+    countUsedSlots inv `shouldBe` 3
+
+  it "countUsedSlots returns 27 for full chest" $ do
+    let fillSlot inv idx = setChestSlot inv idx (Just (ItemStack (BlockItem Stone) 1))
+        fullInv = foldl fillSlot emptyChestInventory [0..26]
+    countUsedSlots fullInv `shouldBe` 27
+
+  it "countUsedSlots counts single occupied slot in dispenser" $ do
+    let inv = setDispenserSlot emptyDispenserInventory 4 (Just (ItemStack (BlockItem Stone) 1))
+    countUsedSlots inv `shouldBe` 1
+
+  it "countUsedSlots returns 9 for full dispenser" $ do
+    let fillSlot inv idx = setDispenserSlot inv idx (Just (ItemStack (BlockItem Stone) 1))
+        fullInv = foldl fillSlot emptyDispenserInventory [0..8]
+    countUsedSlots fullInv `shouldBe` 9
+
+  it "containerCapacityText shows correct format for empty chest" $ do
+    containerCapacityText emptyChestInventory chestSlots `shouldBe` "USED: 0/27"
+
+  it "containerCapacityText shows correct format for partially filled chest" $ do
+    let inv = setChestSlot
+                (setChestSlot emptyChestInventory 0 (Just (ItemStack (BlockItem Stone) 1)))
+                5 (Just (ItemStack (BlockItem Dirt) 3))
+    containerCapacityText inv chestSlots `shouldBe` "USED: 2/27"
+
+  it "containerCapacityText shows correct format for full chest" $ do
+    let fillSlot inv idx = setChestSlot inv idx (Just (ItemStack (BlockItem Stone) 1))
+        fullInv = foldl fillSlot emptyChestInventory [0..26]
+    containerCapacityText fullInv chestSlots `shouldBe` "USED: 27/27"
+
+  it "containerCapacityText shows correct format for empty dispenser" $ do
+    containerCapacityText emptyDispenserInventory dispenserSlots `shouldBe` "USED: 0/9"
+
+  it "containerCapacityText shows correct format for partially filled dispenser" $ do
+    let inv = setDispenserSlot emptyDispenserInventory 0 (Just (ItemStack (BlockItem Stone) 1))
+    containerCapacityText inv dispenserSlots `shouldBe` "USED: 1/9"
+
+  it "containerCapacityText shows correct format for full dispenser" $ do
+    let fillSlot inv idx = setDispenserSlot inv idx (Just (ItemStack (BlockItem Stone) 1))
+        fullInv = foldl fillSlot emptyDispenserInventory [0..8]
+    containerCapacityText fullInv dispenserSlots `shouldBe` "USED: 9/9"
+
+  it "countUsedSlots decreases when slot is cleared" $ do
+    let inv1 = setChestSlot emptyChestInventory 0 (Just (ItemStack (BlockItem Stone) 1))
+        inv2 = setChestSlot inv1 0 Nothing
+    countUsedSlots inv1 `shouldBe` 1
+    countUsedSlots inv2 `shouldBe` 0
+
 -- Furnace
 -- =========================================================================
 furnaceSpec :: Spec

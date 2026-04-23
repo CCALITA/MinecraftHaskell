@@ -19,6 +19,8 @@ module Game.BlockEntity
   , setDispenserInventory
   , getDispenserSlot
   , setDispenserSlot
+  , countUsedSlots
+  , containerCapacityText
   ) where
 
 import Data.IORef
@@ -142,3 +144,12 @@ setDispenserSlot :: Inventory -> Int -> Maybe ItemStack -> Inventory
 setDispenserSlot inv idx stack
   | idx >= 0 && idx < dispenserSlots = inv { invSlots = invSlots inv V.// [(idx, stack)] }
   | otherwise = inv
+
+-- | Count the number of non-empty slots in an inventory
+countUsedSlots :: Inventory -> Int
+countUsedSlots inv = V.length (V.filter (/= Nothing) (invSlots inv))
+
+-- | Build a capacity display string like "USED: 5/27"
+containerCapacityText :: Inventory -> Int -> String
+containerCapacityText inv maxSlots =
+  "USED: " ++ show (countUsedSlots inv) ++ "/" ++ show maxSlots

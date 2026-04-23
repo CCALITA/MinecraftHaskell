@@ -3633,6 +3633,8 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
       quad (-1) (-1) 1 1 (0, 0, 0, 0.5)
       -- Title label area
       ++ renderTextCentered (-0.45) 1.0 (1, 1, 1, 1) "CHEST"
+      -- Capacity display
+      ++ chestCapacityVerts
       -- Chest slots: 3 rows of 9 at top
       ++ quad (invGridX0 - 0.02) (chestGridY0 - 0.02)
               (invGridX0 + 9 * invSlotW + 0.02) (chestGridY0 + 3 * invSlotH + 0.02)
@@ -3646,6 +3648,12 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
       where
         chestGridY0 = -0.35 :: Float  -- top edge of chest grid
         chestInvY0  = 0.1 :: Float    -- top edge of player inventory
+
+        chestCapacityVerts = case mChestInv of
+          Nothing -> []
+          Just chestInv ->
+            let capText = containerCapacityText chestInv chestSlots
+            in renderTextCentered (-0.38) 0.7 (0.9, 0.9, 0.6, 1.0) capText
 
         renderChestSlot idx =
           let row = idx `div` 9
@@ -3796,6 +3804,8 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
       quad (-1) (-1) 1 1 (0, 0, 0, 0.5)
       -- Title label area
       ++ renderTextCentered (-0.45) 1.0 (1, 1, 1, 1) "DISPENSER"
+      -- Capacity display
+      ++ dispenserCapacityVerts
       -- Dispenser slots: 3 rows of 3 at top
       ++ quad (dispGridX0 - 0.02) (dispGridY0 - 0.02)
               (dispGridX0 + 3 * invSlotW + 0.02) (dispGridY0 + 3 * invSlotH + 0.02)
@@ -3810,6 +3820,12 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
         dispGridX0 = -0.2 :: Float   -- centered 3-wide grid
         dispGridY0 = -0.35 :: Float  -- top edge of dispenser grid
         dispInvY0  = 0.1 :: Float    -- top edge of player inventory
+
+        dispenserCapacityVerts = case mDispInv of
+          Nothing -> []
+          Just dispInv ->
+            let capText = containerCapacityText dispInv dispenserSlots
+            in renderTextCentered (-0.38) 0.7 (0.9, 0.9, 0.6, 1.0) capText
 
         renderDispSlot idx =
           let row = idx `div` 3
