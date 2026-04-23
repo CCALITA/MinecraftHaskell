@@ -80,6 +80,8 @@ data GameState = GameState
   , gsInput            :: !(IORef PlayerInput)
   , gsLastCursor       :: !(IORef (Maybe (Double, Double)))
   , gsMousePos         :: !(IORef (Double, Double))
+    -- Double-click tracking (slot index, timestamp)
+  , gsLastClick        :: !(IORef (Int, Double))
     -- Combat & effects
   , gsDamageFlash      :: !(IORef Float)
   , gsCactusDmgTimer   :: !(IORef Float)
@@ -162,6 +164,8 @@ newGameState spawnPos = do
     <*> newIORef noInput
     <*> newIORef Nothing
     <*> newIORef (0.0, 0.0)
+    -- Double-click tracking
+    <*> newIORef (-1, 0.0)
     -- Combat & effects
     <*> newIORef 0.0
     <*> newIORef 0.0

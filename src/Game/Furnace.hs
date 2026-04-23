@@ -14,10 +14,11 @@ module Game.Furnace
   , setFurnaceOutput
   , furnaceFuelFraction
   , furnaceSmeltFraction
+  , shiftClickFurnaceOutput
   ) where
 
 import Game.Item (Item(..), MaterialType(..), FoodType(..))
-import Game.Inventory (ItemStack(..))
+import Game.Inventory (ItemStack(..), Inventory, addItem)
 import World.Block (BlockType(..))
 
 -- | State of a furnace block
@@ -189,3 +190,17 @@ furnaceSmeltFraction fs
         Just r  -> max 0 (min 1 (fsSmeltTime fs / srTime r))
         Nothing -> 0
       Nothing -> 0
+-- | Shift-click on furnace output slot: move all output items into the player
+-- inventory via 'addItem'. Returns the updated furnace state (output cleared
+-- or reduced) and the updated inventory. Items that don't fit remain in the
+-- output slot.
+shiftClickFurnaceOutput :: FurnaceState -> Inventory -> (FurnaceState, Inventory)
+shiftClickFurnaceOutput fs inv =
+  case fsOutput fs of
+    Nothing -> (fs, inv)
+    Just (ItemStack item count) ->
+      let (inv', leftover) = addItem inv item count
+          newOutput = if leftover <= 0
+                        then Nothing
+                        else Just (ItemStack item leftover)
+      in (fs { fsOutput = newOutput }, inv')

@@ -19,6 +19,9 @@ module Game.BlockEntity
   , setDispenserInventory
   , getDispenserSlot
   , setDispenserSlot
+  , countNonEmptyChestSlots
+  , countNonEmptyDispenserSlots
+  , containerCapacityText
   ) where
 
 import Data.IORef
@@ -26,6 +29,7 @@ import qualified Data.HashMap.Strict as HM
 import Linear (V3(..))
 import qualified Data.Vector as V
 
+import Data.Maybe (isJust)
 import Game.Inventory (Inventory(..), ItemStack)
 import Game.Furnace (FurnaceState)
 
@@ -142,3 +146,17 @@ setDispenserSlot :: Inventory -> Int -> Maybe ItemStack -> Inventory
 setDispenserSlot inv idx stack
   | idx >= 0 && idx < dispenserSlots = inv { invSlots = invSlots inv V.// [(idx, stack)] }
   | otherwise = inv
+
+-- | Count non-empty slots in a chest inventory (out of 27)
+countNonEmptyChestSlots :: Inventory -> Int
+countNonEmptyChestSlots inv =
+  V.length $ V.filter isJust $ V.take chestSlots (invSlots inv)
+
+-- | Count non-empty slots in a dispenser inventory (out of 9)
+countNonEmptyDispenserSlots :: Inventory -> Int
+countNonEmptyDispenserSlots inv =
+  V.length $ V.filter isJust $ V.take dispenserSlots (invSlots inv)
+
+-- | Build a capacity display string like "USED: 5/27" for a container
+containerCapacityText :: Int -> Int -> String
+containerCapacityText used total = "USED: " ++ show used ++ "/" ++ show total
