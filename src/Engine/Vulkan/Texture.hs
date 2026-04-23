@@ -242,11 +242,20 @@ tileFull tileIdx lx ly = case tileIdx of
           v = if border then 80 else fromIntegral (100 + blockN `mod` 40)
       in (v, v, v, 255)
 
-    -- Bedrock: very dark with slight variation
+    -- Bedrock: very dark gray (25-45) with irregular mineral inclusions
     bedrockPattern x y =
-      let n = pixHash x y 900 `mod` 30
-          v = fromIntegral (30 + n)
-      in (v, v, v, 255)
+      let n = pixHash x y 900 `mod` 100
+          inclusionN = pixHash (x + y * 13) (y + x * 7) 901 `mod` 100
+          -- ~10% mineral inclusions
+          isInclusion = inclusionN < 10
+          -- Type of inclusion: brownish or lighter gray
+          isBrownish = (inclusionN `mod` 2) == 0
+          baseV = fromIntegral (25 + n `mod` 21) :: Word8  -- 25..45 range
+      in if isInclusion
+         then if isBrownish
+              then (60, 50, 40, 255)   -- brownish speck
+              else (75, 75, 80, 255)   -- lighter gray speck
+         else (baseV, baseV, baseV, 255)
 
     -- Ore: stone base with colored spots
     orePattern x y (or', og, ob) =
@@ -289,13 +298,63 @@ tileFull tileIdx lx ly = case tileIdx of
           isMortar = y `mod` 4 == 0 || bx `mod` 8 == 0
       in if isMortar then (160, 160, 160, 255) else (170, 80, 60, 255)
 
-    -- TNT side: red with white band
+    -- TNT side: red middle band with white bands top/bottom + dark stripes
     tntSide x y =
-      let band = y >= 5 && y <= 10
-      in if band then (220, 220, 220, 255) else (200, 50, 40, 255)
+      let -- Dark border rows at edges of red band
+          isBorderRow = y == 4 || y == 11
+          -- Dark horizontal stripe through middle of red band
+          isDarkStripe = y == 7 || y == 8
+          -- "TNT" letter shapes on the red band (y 5-10, centered)
+          -- T: x 1-5, top bar y=5,6; stem x=2,3 y=7-10
+          isLetterT = (x >= 1 && x <= 5 && (y == 5 || y == 6))
+                   || (x >= 2 && x <= 3 && y >= 7 && y <= 10)
+          -- N: x 6-9; left stem x=6, right stem x=9, diag
+          isLetterN = (x == 6 && y >= 5 && y <= 10)
+                   || (x == 9 && y >= 5 && y <= 10)
+                   || (x == 7 && (y == 6 || y == 7))
+                   || (x == 8 && (y == 8 || y == 9))
+          -- T2: x 10-14, top bar y=5,6; stem x=11,12 y=7-10
+          isLetterT2 = (x >= 10 && x <= 14 && (y == 5 || y == 6))
+                    || (x >= 11 && x <= 12 && y >= 7 && y <= 10)
+          isLetter = isLetterT || isLetterN || isLetterT2
+          -- White bands: top y 0-3, bottom y 12-15
+          isWhiteBand = y <= 3 || y >= 12
+          n = pixHash x y 850 `mod` 10
+      in if isWhiteBand
+         then let v = 220 + fromIntegral n * 3 in (v, v, v, 255)
+         else if isBorderRow
+         then (140, 25, 25, 255)
+         else if isLetter
+         then (50, 15, 15, 255)
+         else if isDarkStripe
+         then (160, 30, 30, 255)
+         else (200, 40, 40, 255)
 
-    tntTop _ _ = (180, 180, 180, 255)
-    tntBottom _ _ = (180, 180, 180, 255)
+    -- TNT top: tan/beige base with dark fuse circle in center
+    tntTop x y =
+      let dx = x - 7
+          dy = y - 7
+          distSq = dx * dx + dy * dy
+          -- Fuse hole: small dark circle radius ~2
+          isFuse = distSq <= 4
+          -- Fuse ring: slightly larger
+          isFuseRing = distSq <= 9 && distSq > 4
+          n = pixHash x y 860 `mod` 15
+          -- Tan base with subtle grain
+          baseR = 200 + fromIntegral n
+          baseG = 180 + fromIntegral n
+          baseB = 130 + fromIntegral (n `div` 2)
+      in if isFuse then (40, 35, 30, 255)
+         else if isFuseRing then (120, 100, 70, 255)
+         else (baseR, baseG, baseB, 255)
+
+    -- TNT bottom: flat tan surface
+    tntBottom x y =
+      let n = pixHash x y 870 `mod` 12
+          r = 195 + fromIntegral n
+          g = 175 + fromIntegral n
+          b = 125 + fromIntegral (n `div` 2)
+      in (r, g, b, 255)
 
     -- Chest: brown wood box
     chestPattern x y =
@@ -344,11 +403,21 @@ tileFull tileIdx lx ly = case tileIdx of
          else if isStick then (120, 90, 40, 255)
          else (0, 0, 0, 0)  -- transparent
 
-    -- Obsidian: very dark purple/black with faint purple streaks
+    -- Obsidian: deep purple-black base with glassy reflection spots and purple streaks
     obsidianPattern x y =
       let n = pixHash x y 2000 `mod` 100
-          streak = pixHash (x `div` 3) (y `div` 2) 2001 `mod` 10 < 2
-          (r, g, b) = if streak then (30, 10, 40) else if n < 30 then (15, 10, 20) else (20, 15, 25)
+          -- Glassy reflection spots: ~8% of pixels slightly brighter
+          isReflection = n < 8
+          -- Purple highlight streak: diagonal bands
+          streakN = pixHash (x + y `div` 2) (y `div` 3) 2001 `mod` 20
+          isStreak = streakN < 2
+          -- Subtle variation in base color
+          vari = pixHash (x * 3 + 1) (y * 7 + 2) 2002 `mod` 8
+          (r, g, b)
+            | isReflection = (40, 20, 50)
+            | isStreak     = (45, 15, 60)
+            | n < 40       = (20 + fromIntegral vari, 10 + fromIntegral (vari `div` 2), 30 + fromIntegral vari)
+            | otherwise    = (20, 10, 30)
       in (r, g, b, 255)
 
     -- Oak door closed: brown planks with border and doorknob
