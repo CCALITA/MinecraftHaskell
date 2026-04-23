@@ -18,6 +18,11 @@ module Game.Player
   , isPlayerDead
   , totalArmorDefense
   , calcArmorDamageReduction
+  , walkSpeed
+  , sprintSpeed
+  , sneakSpeed
+  , sneakEyeOffset
+  , eyeHeight
   , applySprintToggle
   ) where
 
@@ -38,6 +43,7 @@ data Player = Player
   , plOnGround     :: !Bool
   , plFlying       :: !Bool         -- creative-mode flying
   , plSprinting    :: !Bool
+  , plSneaking     :: !Bool         -- sneak/crouch mode (Left Shift)
   , plHealth       :: !Int          -- 0-20 (10 hearts)
   , plHunger       :: !Int          -- 0-20 (10 drumsticks)
   , plFallDist     :: !Float        -- accumulated fall distance
@@ -92,6 +98,7 @@ defaultPlayer spawnPos = Player
   , plOnGround     = False
   , plFlying       = True  -- start in creative fly mode
   , plSprinting    = False
+  , plSneaking     = False
   , plHealth       = maxHealth
   , plHunger       = maxHunger
   , plFallDist     = 0
@@ -111,14 +118,19 @@ endFrameInput physicsTickRan input =
   noInput { piToggleFly = not physicsTickRan && piToggleFly input }
 
 -- | Movement speeds
-walkSpeed, sprintSpeed, flySpeed :: Float
+walkSpeed, sprintSpeed, flySpeed, sneakSpeed :: Float
 walkSpeed   = 4.317
 sprintSpeed = 5.612
 flySpeed    = 11.0
+sneakSpeed  = walkSpeed * 0.3
 
 -- | Eye/head height above feet position
 eyeHeight :: Float
 eyeHeight = 1.62
+
+-- | Eye height offset when sneaking (camera lowers by this amount)
+sneakEyeOffset :: Float
+sneakEyeOffset = 0.15
 
 -- | Jump velocity (blocks/s upward)
 jumpVelocity :: Float
@@ -153,6 +165,7 @@ updatePlayer dt input isSolidBlock isWaterBlock isLadderBlock player = do
   let speed
         | flying              = flySpeed
         | piSprint input      = sprintSpeed
+        | piSneak input       = sneakSpeed
         | otherwise           = walkSpeed
 
   let V3 vx vy vz = plVelocity player
@@ -175,6 +188,7 @@ updatePlayer dt input isSolidBlock isWaterBlock isLadderBlock player = do
         , plPitch    = pitch'
         , plOnGround = False
         , plFlying   = flying
+        , plSneaking = piSneak input
         , plHealth   = plHealth player
         , plFallDist = 0
         , plAirSupply = maxAirSupply
@@ -284,6 +298,7 @@ updatePlayer dt input isSolidBlock isWaterBlock isLadderBlock player = do
         , plOnGround  = onGround'
         , plFlying    = flying
         , plSprinting = piSprint input
+        , plSneaking  = piSneak input
         , plHealth    = finalHealth'
         , plHunger    = newHunger
         , plFallDist  = finalFallDist

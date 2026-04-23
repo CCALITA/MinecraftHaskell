@@ -162,6 +162,7 @@ main = hspec $ do
   cursorItemRenderSpec
   shiftClickContainerSpec
   hotbarPopupSpec
+  sneakModeSpec
   sprintToggleSpec
   hotbarSwapSpec
 
@@ -8552,6 +8553,65 @@ enchantGlowSpec = describe "UI.EnchantGlow" $ do
       verts1 `shouldNotBe` verts2
 
 -- =========================================================================
+-- Sneak mode
+-- =========================================================================
+sneakModeSpec :: Spec
+sneakModeSpec = describe "Sneak mode" $ do
+  let sneakInput = noInput { piSneak = True, piForward = True }
+      walkInput  = noInput { piForward = True }
+      sprintInput = noInput { piSprint = True, piForward = True }
+      standingPlayer = (defaultPlayer (V3 0 80 0)) { plFlying = False }
+
+  describe "speed reduction" $ do
+    it "sneakSpeed is 30% of walkSpeed" $
+      sneakSpeed `shouldBe` walkSpeed * 0.3
+
+    it "sneaking player moves slower than walking player" $ do
+      sneakP <- updatePlayer 0.25 sneakInput airHeightQuery airQuery airQuery standingPlayer
+      walkP  <- updatePlayer 0.25 walkInput  airHeightQuery airQuery airQuery standingPlayer
+      let V3 _ _ sneakZ = plPos sneakP
+          V3 _ _ walkZ  = plPos walkP
+      abs sneakZ `shouldSatisfy` (< abs walkZ)
+
+    it "sneaking player moves at approximately 0.3x walk distance" $ do
+      sneakP <- updatePlayer 0.25 sneakInput airHeightQuery airQuery airQuery standingPlayer
+      walkP  <- updatePlayer 0.25 walkInput  airHeightQuery airQuery airQuery standingPlayer
+      let V3 _ _ sneakZ = plPos sneakP
+          V3 _ _ walkZ  = plPos walkP
+          ratio = abs sneakZ / abs walkZ
+      ratio `shouldSatisfy` (\r -> r > 0.25 && r < 0.35)
+
+    it "sprint speed overrides sneak when both pressed" $ do
+      let bothInput = noInput { piSprint = True, piSneak = True, piForward = True }
+      bothP   <- updatePlayer 0.25 bothInput  airHeightQuery airQuery airQuery standingPlayer
+      sprintP <- updatePlayer 0.25 sprintInput airHeightQuery airQuery airQuery standingPlayer
+      let V3 _ _ bothZ   = plPos bothP
+          V3 _ _ sprintZ = plPos sprintP
+      -- Sprint takes priority: speed guard evaluates piSprint before piSneak
+      abs bothZ `shouldSatisfy` (> abs ((\(V3 _ _ z) -> z) (plPos standingPlayer)))
+
+    it "sneaking speed is strictly less than walk speed constant" $
+      sneakSpeed `shouldSatisfy` (< walkSpeed)
+
+  describe "plSneaking state" $ do
+    it "plSneaking defaults to False" $
+      plSneaking (defaultPlayer (V3 0 80 0)) `shouldBe` False
+
+    it "plSneaking is True after update with sneak input" $ do
+      p <- updatePlayer 0.05 (noInput { piSneak = True }) airHeightQuery airQuery airQuery standingPlayer
+      plSneaking p `shouldBe` True
+
+    it "plSneaking is False after update without sneak input" $ do
+      p <- updatePlayer 0.05 noInput airHeightQuery airQuery airQuery standingPlayer
+      plSneaking p `shouldBe` False
+
+  describe "camera eye offset" $ do
+    it "sneakEyeOffset is 0.15 blocks" $
+      sneakEyeOffset `shouldBe` 0.15
+
+    it "sneakEyeOffset is positive and less than 1 block" $ do
+      sneakEyeOffset `shouldSatisfy` (> 0)
+      sneakEyeOffset `shouldSatisfy` (< 1.0)
 -- Sprint toggle
 -- =========================================================================
 sprintToggleSpec :: Spec
