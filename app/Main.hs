@@ -8,6 +8,7 @@ import Engine.Window
 import Engine.Camera
 import Engine.Mesh (BlockVertex(..), MeshData(..), NeighborData(..), meshChunkWithLight, emptyNeighborData)
 import Engine.BitmapFont
+import Engine.EntityRender (entityColor, buildEntityQuad)
 import Engine.Types (defaultEngineConfig, EngineConfig(..), UniformBufferObject(..))
 import Engine.Vulkan.Init
 import Engine.Vulkan.Swapchain
@@ -2964,36 +2965,9 @@ main = do
                 camRight = normalize (camFwd `cross` worldUp)
                 -- Camera up (perpendicular to right and forward)
                 camUp' = normalize (camRight `cross` camFwd)
-                -- Build 6 vertices (two triangles) per entity billboard
-                buildEntityQuad :: Entity -> [Float]
-                buildEntityQuad ent =
-                  let V3 px' py' pz' = entPosition ent
-                      -- Billboard half extents
-                      hw = 0.4 :: Float  -- half width
-                      hh = 0.9 :: Float  -- half height
-                      V3 rx ry rz = camRight ^* hw
-                      V3 ux uy uz = camUp' ^* hh
-                      -- Center offset: entity pos + half height so feet are at ground level
-                      cx' = px'; cy' = py' + hh; cz' = pz'
-                      -- Four corners: bottom-left, bottom-right, top-left, top-right
-                      blx = cx' - rx - ux; bly = cy' - ry - uy; blz = cz' - rz - uz
-                      brx = cx' + rx - ux; bry = cy' + ry - uy; brz = cz' + rz - uz
-                      tlx = cx' - rx + ux; tly = cy' - ry + uy; tlz = cz' - rz + uz
-                      trx = cx' + rx + ux; try' = cy' + ry + uy; trz = cz' + rz + uz
-                      -- Color based on mob type
-                      (cr, cg, cb, ca) = entityColor (entTag ent)
-                  in -- Triangle 1: BL, BR, TL
-                     [ blx, bly, blz, cr, cg, cb, ca
-                     , brx, bry, brz, cr, cg, cb, ca
-                     , tlx, tly, tlz, cr, cg, cb, ca
-                     -- Triangle 2: BR, TR, TL
-                     , brx, bry, brz, cr, cg, cb, ca
-                     , trx, try', trz, cr, cg, cb, ca
-                     , tlx, tly, tlz, cr, cg, cb, ca
-                     ]
                 -- Filter entities within render distance
                 nearEnts = filter (\e -> distance (entPosition e) camPos < 64) ents
-                entityFloats = concatMap buildEntityQuad nearEnts
+                entityFloats = concatMap (\e -> buildEntityQuad camRight camUp' (entPosition e) (entTag e)) nearEnts
                 entityVertCount = length nearEnts * 6
             writeIORef entVertCountRef entityVertCount
             when (entityVertCount > 0) $ do
@@ -4713,21 +4687,4 @@ restoreFromSaveV3 playerRef inventoryRef dayNightRef weatherRef xpRef spawnRef s
 clamp :: Ord a => a -> a -> a -> a
 clamp lo hi x = max lo (min hi x)
 
--- | Get RGBA color for an entity based on its tag
-entityColor :: String -> (Float, Float, Float, Float)
-entityColor "Zombie"           = (0.2,  0.6,  0.2,  1.0)  -- green
-entityColor "Skeleton"         = (0.85, 0.85, 0.85, 1.0)  -- bone white
-entityColor "Creeper"          = (0.0,  0.8,  0.0,  1.0)  -- bright green
-entityColor "Spider"           = (0.3,  0.2,  0.2,  1.0)  -- dark brown
-entityColor "Pig"              = (0.95, 0.7,  0.7,  1.0)  -- pink
-entityColor "Cow"              = (0.55, 0.35, 0.2,  1.0)  -- brown
-entityColor "Sheep"            = (0.9,  0.9,  0.9,  1.0)  -- white wool
-entityColor "Chicken"          = (1.0,  1.0,  1.0,  1.0)  -- white
-entityColor "Wolf"             = (0.7,  0.7,  0.7,  1.0)  -- gray
-entityColor "TamedWolf"        = (0.4,  0.6,  0.9,  1.0)  -- blue tint
-entityColor "TamedWolfSitting" = (0.4,  0.6,  0.9,  1.0)
-entityColor "Painting"         = (0.8,  0.65, 0.3,  1.0)  -- gold frame
-entityColor "Minecart"         = (0.5,  0.5,  0.5,  1.0)  -- iron gray
-entityColor "Boat"             = (0.6,  0.45, 0.25, 1.0)  -- wood brown
-entityColor _                  = (1.0,  0.0,  1.0,  1.0)  -- magenta (unknown)
 
