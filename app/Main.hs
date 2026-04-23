@@ -723,9 +723,9 @@ main = do
           let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
               ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
               mSlot = hitChestSlot ndcX ndcY
+          shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
           case mSlot of
             Just (ChestSlot idx) -> do
-              -- Click on chest slot (0-26): swap with cursor
               mChestPos <- readIORef chestPosRef
               case mChestPos of
                 Nothing -> pure ()
@@ -733,19 +733,44 @@ main = do
                   mChestInv <- getChestInventory blockEntityMapRef cPos
                   case mChestInv of
                     Nothing -> pure ()
-                    Just chestInv -> do
-                      cursor <- readIORef cursorItemRef
-                      let slotContent = getChestSlot chestInv idx
-                          newChestInv = setChestSlot chestInv idx cursor
-                      setChestInventory blockEntityMapRef cPos newChestInv
-                      writeIORef cursorItemRef slotContent
+                    Just chestInv ->
+                      if shiftHeld
+                        then do
+                          -- Shift-click on chest slot: move item to player inventory
+                          inv <- readIORef inventoryRef
+                          let (chestInv', inv') = shiftClickChestToInventory chestInv idx inv
+                          setChestInventory blockEntityMapRef cPos chestInv'
+                          writeIORef inventoryRef inv'
+                        else do
+                          -- Normal click: swap with cursor
+                          cursor <- readIORef cursorItemRef
+                          let slotContent = getChestSlot chestInv idx
+                              newChestInv = setChestSlot chestInv idx cursor
+                          setChestInventory blockEntityMapRef cPos newChestInv
+                          writeIORef cursorItemRef slotContent
             Just (ChestInvSlot idx) -> do
-              -- Click on player inventory slot: swap with cursor
-              curInv <- readIORef inventoryRef
-              cursor <- readIORef cursorItemRef
-              let slotContent = getSlot curInv idx
-              modifyIORef' inventoryRef (\i -> setSlot i idx cursor)
-              writeIORef cursorItemRef slotContent
+              if shiftHeld
+                then do
+                  -- Shift-click on player inventory slot: move to chest
+                  mChestPos <- readIORef chestPosRef
+                  case mChestPos of
+                    Nothing -> pure ()
+                    Just cPos -> do
+                      mChestInv <- getChestInventory blockEntityMapRef cPos
+                      case mChestInv of
+                        Nothing -> pure ()
+                        Just chestInv -> do
+                          inv <- readIORef inventoryRef
+                          let (chestInv', inv') = shiftClickInventoryToChest chestInv idx inv
+                          setChestInventory blockEntityMapRef cPos chestInv'
+                          writeIORef inventoryRef inv'
+                else do
+                  -- Normal click: swap with cursor
+                  curInv <- readIORef inventoryRef
+                  cursor <- readIORef cursorItemRef
+                  let slotContent = getSlot curInv idx
+                  modifyIORef' inventoryRef (\i -> setSlot i idx cursor)
+                  writeIORef cursorItemRef slotContent
             Nothing -> pure ()
 
           -- Right-click stack splitting for ChestOpen inventory slots
@@ -777,22 +802,39 @@ main = do
           let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
               ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
               mSlot = hitFurnaceSlot ndcX ndcY
+          shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
           case mSlot of
             Just FurnaceInputSlot -> do
-              fs <- readIORef furnaceStateRef
-              cursor <- readIORef cursorItemRef
-              let slotContent = getFurnaceInput fs
-              writeIORef furnaceStateRef (setFurnaceInput fs cursor)
-              writeIORef cursorItemRef slotContent
+              if shiftHeld
+                then do
+                  -- Shift-click on input slot: move to player inventory
+                  fs <- readIORef furnaceStateRef
+                  inv <- readIORef inventoryRef
+                  let (fs', inv') = shiftClickFurnaceInputToInventory fs inv
+                  writeIORef furnaceStateRef fs'
+                  writeIORef inventoryRef inv'
+                else do
+                  fs <- readIORef furnaceStateRef
+                  cursor <- readIORef cursorItemRef
+                  let slotContent = getFurnaceInput fs
+                  writeIORef furnaceStateRef (setFurnaceInput fs cursor)
+                  writeIORef cursorItemRef slotContent
             Just FurnaceFuelSlot -> do
-              fs <- readIORef furnaceStateRef
-              cursor <- readIORef cursorItemRef
-              let slotContent = getFurnaceFuel fs
-              writeIORef furnaceStateRef (setFurnaceFuel fs cursor)
-              writeIORef cursorItemRef slotContent
+              if shiftHeld
+                then do
+                  -- Shift-click on fuel slot: move to player inventory
+                  fs <- readIORef furnaceStateRef
+                  inv <- readIORef inventoryRef
+                  let (fs', inv') = shiftClickFurnaceFuelToInventory fs inv
+                  writeIORef furnaceStateRef fs'
+                  writeIORef inventoryRef inv'
+                else do
+                  fs <- readIORef furnaceStateRef
+                  cursor <- readIORef cursorItemRef
+                  let slotContent = getFurnaceFuel fs
+                  writeIORef furnaceStateRef (setFurnaceFuel fs cursor)
+                  writeIORef cursorItemRef slotContent
             Just FurnaceOutputSlot -> do
-              -- Shift+click: auto-move output to player inventory
-              shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
               if shiftHeld
                 then do
                   fs <- readIORef furnaceStateRef
@@ -814,11 +856,20 @@ main = do
                           writeIORef furnaceStateRef (setFurnaceOutput fs Nothing)
                     _ -> pure ()
             Just (FurnaceInvSlot idx) -> do
-              inv <- readIORef inventoryRef
-              cursor <- readIORef cursorItemRef
-              let slotContent = getSlot inv idx
-              writeIORef inventoryRef (setSlot inv idx cursor)
-              writeIORef cursorItemRef slotContent
+              if shiftHeld
+                then do
+                  -- Shift-click on player inventory: move to furnace input slot
+                  fs <- readIORef furnaceStateRef
+                  inv <- readIORef inventoryRef
+                  let (fs', inv') = shiftClickInventoryToFurnaceInput fs idx inv
+                  writeIORef furnaceStateRef fs'
+                  writeIORef inventoryRef inv'
+                else do
+                  inv <- readIORef inventoryRef
+                  cursor <- readIORef cursorItemRef
+                  let slotContent = getSlot inv idx
+                  writeIORef inventoryRef (setSlot inv idx cursor)
+                  writeIORef cursorItemRef slotContent
             Nothing -> pure ()
           -- Sync furnace IORef back to block entity after any UI interaction
           syncFurnaceToMap
@@ -852,6 +903,7 @@ main = do
           let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
               ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
               mSlot = hitDispenserSlot ndcX ndcY
+          shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
           case mSlot of
             Just (DispenserSlot idx) -> do
               mDispPos <- readIORef dispenserPosRef
@@ -861,18 +913,44 @@ main = do
                   mDispInv <- getDispenserInventory blockEntityMapRef dPos
                   case mDispInv of
                     Nothing -> pure ()
-                    Just dispInv -> do
-                      cursor <- readIORef cursorItemRef
-                      let slotContent = getDispenserSlot dispInv idx
-                          newDispInv = setDispenserSlot dispInv idx cursor
-                      setDispenserInventory blockEntityMapRef dPos newDispInv
-                      writeIORef cursorItemRef slotContent
+                    Just dispInv ->
+                      if shiftHeld
+                        then do
+                          -- Shift-click on dispenser slot: move item to player inventory
+                          inv <- readIORef inventoryRef
+                          let (dispInv', inv') = shiftClickDispenserToInventory dispInv idx inv
+                          setDispenserInventory blockEntityMapRef dPos dispInv'
+                          writeIORef inventoryRef inv'
+                        else do
+                          -- Normal click: swap with cursor
+                          cursor <- readIORef cursorItemRef
+                          let slotContent = getDispenserSlot dispInv idx
+                              newDispInv = setDispenserSlot dispInv idx cursor
+                          setDispenserInventory blockEntityMapRef dPos newDispInv
+                          writeIORef cursorItemRef slotContent
             Just (DispenserInvSlot idx) -> do
-              curInv <- readIORef inventoryRef
-              cursor <- readIORef cursorItemRef
-              let slotContent = getSlot curInv idx
-              modifyIORef' inventoryRef (\i -> setSlot i idx cursor)
-              writeIORef cursorItemRef slotContent
+              if shiftHeld
+                then do
+                  -- Shift-click on player inventory slot: move to dispenser
+                  mDispPos <- readIORef dispenserPosRef
+                  case mDispPos of
+                    Nothing -> pure ()
+                    Just dPos -> do
+                      mDispInv <- getDispenserInventory blockEntityMapRef dPos
+                      case mDispInv of
+                        Nothing -> pure ()
+                        Just dispInv -> do
+                          inv <- readIORef inventoryRef
+                          let (dispInv', inv') = shiftClickInventoryToDispenser dispInv idx inv
+                          setDispenserInventory blockEntityMapRef dPos dispInv'
+                          writeIORef inventoryRef inv'
+                else do
+                  -- Normal click: swap with cursor
+                  curInv <- readIORef inventoryRef
+                  cursor <- readIORef cursorItemRef
+                  let slotContent = getSlot curInv idx
+                  modifyIORef' inventoryRef (\i -> setSlot i idx cursor)
+                  writeIORef cursorItemRef slotContent
             Nothing -> pure ()
 
           -- Right-click stack splitting for DispenserOpen inventory slots
