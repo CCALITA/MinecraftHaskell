@@ -42,6 +42,9 @@ import Game.ItemDisplay (armorSlotSilhouette, itemMiniIcon)
 import UI.Tooltip
 import UI.Screen
 
+import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts, cursorIconSize)
+import Engine.BitmapFont (renderText, charSpacing)
+
 import Game.PotionEffect
 import Game.Particle (WeatherParticle(..), WeatherParticleType(..), spawnWeatherParticles, tickWeatherParticles, renderWeatherParticles, weatherParticleRadius, weatherParticleHeight, weatherParticleCount, rainFallSpeed, snowFallSpeed, isSnowBiome, clampParticleXZ, clampParticleY)
 
@@ -152,6 +155,7 @@ main = hspec $ do
   creativeInventorySpec
   collectAllSpec
   stackSplittingSpec
+  cursorItemRenderSpec
   shiftClickContainerSpec
 
 -- =========================================================================
@@ -7937,6 +7941,105 @@ stackSplittingSpec = describe "Game.Inventory stack splitting" $ do
       getSlot result 0 `shouldBe` Just (ItemStack (MaterialItem Coal) 64)
 
 -- =========================================================================
+-- Cursor Item Rendering
+-- =========================================================================
+cursorItemRenderSpec :: Spec
+cursorItemRenderSpec = describe "Game.ItemDisplay.buildCursorItemVerts" $ do
+
+  describe "Nothing cursor produces no vertices" $ do
+    it "returns empty list for Nothing at origin" $
+      buildCursorItemVerts Nothing 0.0 0.0 `shouldBe` []
+
+    it "returns empty list for Nothing at arbitrary position" $
+      buildCursorItemVerts Nothing 0.5 (-0.3) `shouldBe` []
+
+  describe "single-count item renders icon only (no count text)" $ do
+    it "produces non-empty vertex data for a stone block item (count=1)" $ do
+      let verts = buildCursorItemVerts (Just (ItemStack (BlockItem Stone) 1)) 0.0 0.0
+      length verts `shouldSatisfy` (> 0)
+
+    it "vertex count is divisible by 6 (vec2 pos + vec4 color per vertex)" $ do
+      let verts = buildCursorItemVerts (Just (ItemStack (BlockItem Dirt) 1)) 0.0 0.0
+      length verts `mod` 6 `shouldBe` 0
+
+    it "vertex count equals icon-only vertices (no count text for count=1)" $ do
+      let verts1 = buildCursorItemVerts (Just (ItemStack (BlockItem Stone) 1)) 0.0 0.0
+          -- 3x3 solid fill = 9 pixels, each pixel = 6 vertices * 6 floats = 36 floats
+          -- Total = 9 * 36 = 324 floats for a solid-fill mini-icon
+          iconPixels = length (itemMiniIcon (BlockItem Stone))
+          expectedFloats = iconPixels * 6 * 6  -- 6 verts per pixel, 6 floats per vert
+      length verts1 `shouldBe` expectedFloats
+
+  describe "multi-count item renders icon plus count text" $ do
+    it "produces more vertices than count=1 (count text added)" $ do
+      let verts1 = buildCursorItemVerts (Just (ItemStack (BlockItem Stone) 1)) 0.0 0.0
+          verts5 = buildCursorItemVerts (Just (ItemStack (BlockItem Stone) 5)) 0.0 0.0
+      length verts5 `shouldSatisfy` (> length verts1)
+
+    it "count=2 includes text vertices for digit '2'" $ do
+      let verts2 = buildCursorItemVerts (Just (ItemStack (BlockItem Stone) 2)) 0.0 0.0
+          verts1 = buildCursorItemVerts (Just (ItemStack (BlockItem Stone) 1)) 0.0 0.0
+          textVerts = length verts2 - length verts1
+      -- renderText for "2" produces some pixels, each pixel = 6 verts * 6 floats
+      textVerts `shouldSatisfy` (> 0)
+      textVerts `mod` 6 `shouldBe` 0
+
+    it "count=64 includes text vertices for two-digit '64'" $ do
+      let verts64 = buildCursorItemVerts (Just (ItemStack (BlockItem Stone) 64)) 0.0 0.0
+          verts1 = buildCursorItemVerts (Just (ItemStack (BlockItem Stone) 1)) 0.0 0.0
+          textVerts = length verts64 - length verts1
+      textVerts `shouldSatisfy` (> 0)
+
+    it "count=64 has more text vertices than count=5 (two digits vs one)" $ do
+      let verts64 = buildCursorItemVerts (Just (ItemStack (BlockItem Stone) 64)) 0.0 0.0
+          verts5  = buildCursorItemVerts (Just (ItemStack (BlockItem Stone) 5)) 0.0 0.0
+          verts1  = buildCursorItemVerts (Just (ItemStack (BlockItem Stone) 1)) 0.0 0.0
+          text64  = length verts64 - length verts1
+          text5   = length verts5  - length verts1
+      text64 `shouldSatisfy` (> text5)
+
+  describe "cursor position affects vertex coordinates" $ do
+    it "different mouse positions produce different vertex data" $ do
+      let stack = Just (ItemStack (BlockItem Stone) 1)
+          vertsA = buildCursorItemVerts stack 0.0 0.0
+          vertsB = buildCursorItemVerts stack 0.5 0.5
+      vertsA `shouldNotBe` vertsB
+
+    it "icon is centered on mouse position" $ do
+      let stack = Just (ItemStack (BlockItem Stone) 1)
+          verts = buildCursorItemVerts stack 0.0 0.0
+          -- First vertex x should be at -cursorIconSize/2
+          firstX = head verts
+          expectedX = -(cursorIconSize / 2)
+      abs (firstX - expectedX) `shouldSatisfy` (< 0.001)
+
+  describe "different item types produce correct vertex data" $ do
+    it "tool item (pickaxe) produces vertices" $ do
+      let verts = buildCursorItemVerts (Just (ItemStack (ToolItem Pickaxe Iron 250) 1)) 0.0 0.0
+      length verts `shouldSatisfy` (> 0)
+      length verts `mod` 6 `shouldBe` 0
+
+    it "food item (bread) produces vertices" $ do
+      let verts = buildCursorItemVerts (Just (ItemStack (FoodItem Bread) 10)) 0.0 0.0
+      length verts `shouldSatisfy` (> 0)
+
+    it "material item (diamond) produces vertices with count" $ do
+      let verts = buildCursorItemVerts (Just (ItemStack (MaterialItem DiamondGem) 32)) 0.0 0.0
+          verts1 = buildCursorItemVerts (Just (ItemStack (MaterialItem DiamondGem) 1)) 0.0 0.0
+      length verts `shouldSatisfy` (> length verts1)
+
+    it "stick item with count=1 has no count text" $ do
+      let verts = buildCursorItemVerts (Just (ItemStack StickItem 1)) 0.0 0.0
+          iconPixels = length (itemMiniIcon StickItem)
+          expectedFloats = iconPixels * 6 * 6
+      length verts `shouldBe` expectedFloats
+
+  describe "cursorIconSize constant" $ do
+    it "is a positive value" $
+      cursorIconSize `shouldSatisfy` (> 0)
+
+    it "is within reasonable NDC range" $
+      cursorIconSize `shouldSatisfy` (< 1.0)
 -- Shift-Click Between Containers and Player Inventory
 -- =========================================================================
 shiftClickContainerSpec :: Spec
