@@ -14,6 +14,7 @@ module Game.Inventory
   , hasItem
   , countItem
   , stackLimit
+  , dropFromSlot
   ) where
 
 import Game.Item (Item(..), itemStackLimit)
@@ -143,3 +144,17 @@ countItem inv item = go 0 0
 
 hasItem :: Inventory -> Item -> Int -> Bool
 hasItem inv item count = countItem inv item >= count
+
+-- | Drop items from a specific slot.
+--   If dropAll is True, drops the entire stack; otherwise drops 1.
+--   Returns (updated inventory, maybe (item, count dropped)).
+--   Returns Nothing if the slot is empty.
+dropFromSlot :: Inventory -> Int -> Bool -> (Inventory, Maybe (Item, Int))
+dropFromSlot inv slotIdx dropAll =
+  case getSlot inv slotIdx of
+    Nothing -> (inv, Nothing)
+    Just (ItemStack item cnt)
+      | dropAll || cnt <= 1 ->
+          (setSlot inv slotIdx Nothing, Just (item, cnt))
+      | otherwise ->
+          (setSlot inv slotIdx (Just (ItemStack item (cnt - 1))), Just (item, 1))

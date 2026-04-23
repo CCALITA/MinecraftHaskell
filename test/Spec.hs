@@ -143,6 +143,7 @@ main = hspec $ do
   meshAOSpec
   directionalPistonSpec
   sunsetSunriseSpec
+  dropFromSlotSpec
 
 -- =========================================================================
 -- Block
@@ -6532,3 +6533,63 @@ sunsetSunriseSpec = describe "Sunset and sunrise sky colors" $ do
       abs (r1 - r2) `shouldSatisfy` (< 0.05)
       abs (g1 - g2) `shouldSatisfy` (< 0.05)
       abs (b1 - b2) `shouldSatisfy` (< 0.05)
+
+-- =========================================================================
+-- Q key item drop (dropFromSlot)
+-- =========================================================================
+dropFromSlotSpec :: Spec
+dropFromSlotSpec = describe "Game.Inventory.dropFromSlot" $ do
+  it "returns Nothing when selected slot is empty" $ do
+    let (inv', mDrop) = dropFromSlot emptyInventory 0 False
+    mDrop `shouldBe` Nothing
+    inv' `shouldBe` emptyInventory
+
+  it "drops 1 item from a stack of many (Q press)" $ do
+    let (inv, _) = addItem emptyInventory (BlockItem Stone) 10
+        (inv', mDrop) = dropFromSlot inv 0 False
+    mDrop `shouldBe` Just (BlockItem Stone, 1)
+    getSlot inv' 0 `shouldBe` Just (ItemStack (BlockItem Stone) 9)
+
+  it "drops entire stack when shift is held (Shift+Q)" $ do
+    let (inv, _) = addItem emptyInventory (BlockItem Stone) 10
+        (inv', mDrop) = dropFromSlot inv 0 True
+    mDrop `shouldBe` Just (BlockItem Stone, 10)
+    getSlot inv' 0 `shouldBe` Nothing
+
+  it "drops the last item and clears the slot" $ do
+    let (inv, _) = addItem emptyInventory (BlockItem Dirt) 1
+        (inv', mDrop) = dropFromSlot inv 0 False
+    mDrop `shouldBe` Just (BlockItem Dirt, 1)
+    getSlot inv' 0 `shouldBe` Nothing
+
+  it "shift+Q on single item clears the slot" $ do
+    let (inv, _) = addItem emptyInventory (BlockItem Dirt) 1
+        (inv', mDrop) = dropFromSlot inv 0 True
+    mDrop `shouldBe` Just (BlockItem Dirt, 1)
+    getSlot inv' 0 `shouldBe` Nothing
+
+  it "does not affect other slots" $ do
+    let (inv1, _) = addItem emptyInventory (BlockItem Stone) 10
+        (inv2, _) = addItem inv1 (BlockItem Dirt) 5
+        (inv', _) = dropFromSlot inv2 0 False
+    getSlot inv' 1 `shouldBe` Just (ItemStack (BlockItem Dirt) 5)
+
+  it "drops from non-zero hotbar slot" $ do
+    let inv0 = selectHotbar emptyInventory 3
+        inv1 = setSlot inv0 3 (Just (ItemStack (BlockItem OakLog) 16))
+        (inv', mDrop) = dropFromSlot inv1 3 False
+    mDrop `shouldBe` Just (BlockItem OakLog, 1)
+    getSlot inv' 3 `shouldBe` Just (ItemStack (BlockItem OakLog) 15)
+
+  it "shift+Q drops full stack from non-zero hotbar slot" $ do
+    let inv0 = selectHotbar emptyInventory 5
+        inv1 = setSlot inv0 5 (Just (ItemStack (BlockItem OakLog) 32))
+        (inv', mDrop) = dropFromSlot inv1 5 True
+    mDrop `shouldBe` Just (BlockItem OakLog, 32)
+    getSlot inv' 5 `shouldBe` Nothing
+
+  it "preserves invSelected after drop" $ do
+    let inv0 = selectHotbar emptyInventory 4
+        (inv1, _) = addItem inv0 (BlockItem Stone) 10
+        (inv', _) = dropFromSlot inv1 0 False
+    invSelected inv' `shouldBe` 4
