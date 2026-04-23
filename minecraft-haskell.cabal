@@ -82,6 +82,7 @@ library
     Game.DayNight
     Game.Save
     Game.SaveV3
+    Game.SaveIO
     Game.State
     Game.Bucket
     Game.ItemDisplay
