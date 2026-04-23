@@ -240,6 +240,7 @@ newGameState spawnPos = do
     <*> newIORef 0.0     -- gsBobTime
 
     <*> newIORef 1.0     -- gsAttackCooldown (fully recharged)
+    <*> newIORef FirstPerson  -- gsCameraMode
 
 -- | The cooldown recharge period in seconds (0.5s = Minecraft default).
 attackCooldownPeriod :: Float
@@ -258,4 +259,3 @@ applyAttackCooldown cooldown rawDmg = rawDmg * cooldown
 -- | Convenience: clamp a cooldown value to the valid [0, 1] range.
 attackCooldownFraction :: Float -> Float
 attackCooldownFraction = max 0.0 . min 1.0
-    <*> newIORef FirstPerson  -- gsCameraMode
