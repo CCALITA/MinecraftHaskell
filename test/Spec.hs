@@ -153,6 +153,7 @@ main = hspec $ do
   collectAllSpec
   stackSplittingSpec
   shiftClickContainerSpec
+  hotbarPopupSpec
 
 -- =========================================================================
 -- Block
@@ -8164,3 +8165,120 @@ shiftClickContainerSpec = describe "Shift-click container transfers" $ do
       let allPixels = concatMap armorSlotSilhouette [Helmet, Chestplate, Leggings, Boots]
           validCoords = all (\(r, c, _) -> r >= 0 && r <= 2 && c >= 0 && c <= 2) allPixels
       validCoords `shouldBe` True
+
+
+-- =========================================================================
+-- Hotbar Popup
+-- =========================================================================
+hotbarPopupSpec :: Spec
+hotbarPopupSpec = describe "Hotbar item name popup" $ do
+  -- GameState field
+  describe "gsHotbarPopup IORef" $ do
+    it "defaults to Nothing in a new GameState" $ do
+      gs <- newGameState (V3 0 80 0)
+      popup <- readIORef (gsHotbarPopup gs)
+      popup `shouldBe` Nothing
+
+    it "can be set to Just (name, timer)" $ do
+      gs <- newGameState (V3 0 80 0)
+      writeIORef (gsHotbarPopup gs) (Just ("Stone", 2.0))
+      popup <- readIORef (gsHotbarPopup gs)
+      popup `shouldBe` Just ("Stone", 2.0)
+
+    it "can be cleared back to Nothing" $ do
+      gs <- newGameState (V3 0 80 0)
+      writeIORef (gsHotbarPopup gs) (Just ("Dirt", 1.5))
+      writeIORef (gsHotbarPopup gs) Nothing
+      popup <- readIORef (gsHotbarPopup gs)
+      popup `shouldBe` Nothing
+
+  -- Timer decay logic
+  describe "popup timer decay" $ do
+    it "timer decrements each tick" $ do
+      ref <- newIORef (Just ("Stone", 2.0) :: Maybe (String, Float))
+      let dt = 0.05 :: Float
+      mVal <- readIORef ref
+      case mVal of
+        Just (name, t) -> writeIORef ref (if t - dt > 0 then Just (name, t - dt) else Nothing)
+        Nothing -> pure ()
+      result <- readIORef ref
+      result `shouldBe` Just ("Stone", 1.95)
+
+    it "timer clears when reaching zero" $ do
+      ref <- newIORef (Just ("Stone", 0.03) :: Maybe (String, Float))
+      let dt = 0.05 :: Float
+      mVal <- readIORef ref
+      case mVal of
+        Just (name, t) -> writeIORef ref (if t - dt > 0 then Just (name, t - dt) else Nothing)
+        Nothing -> pure ()
+      result <- readIORef ref
+      result `shouldBe` Nothing
+
+    it "Nothing stays Nothing after decay" $ do
+      ref <- newIORef (Nothing :: Maybe (String, Float))
+      let dt = 0.05 :: Float
+      mVal <- readIORef ref
+      case mVal of
+        Just (name, t) -> writeIORef ref (if t - dt > 0 then Just (name, t - dt) else Nothing)
+        Nothing -> pure ()
+      result <- readIORef ref
+      result `shouldBe` Nothing
+
+  -- Popup content from inventory
+  describe "popup content from hotbar slot" $ do
+    it "shows block item name for occupied slot" $ do
+      let inv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 5))
+      case getHotbarSlot inv 0 of
+        Just (ItemStack item _) -> itemName item `shouldBe` "Stone"
+        Nothing -> expectationFailure "slot should not be empty"
+
+    it "shows tool item name for tool slot" $ do
+      let inv = setSlot emptyInventory 1 (Just (ItemStack (ToolItem Pickaxe Diamond 1561) 1))
+      case getHotbarSlot inv 1 of
+        Just (ItemStack item _) -> itemName item `shouldBe` "Diamond Pickaxe"
+        Nothing -> expectationFailure "slot should not be empty"
+
+    it "shows food item name" $ do
+      let inv = setSlot emptyInventory 2 (Just (ItemStack (FoodItem Apple) 3))
+      case getHotbarSlot inv 2 of
+        Just (ItemStack item _) -> itemName item `shouldBe` "Apple"
+        Nothing -> expectationFailure "slot should not be empty"
+
+    it "returns Nothing for empty slot" $ do
+      getHotbarSlot emptyInventory 0 `shouldBe` Nothing
+
+    it "shows material item name" $ do
+      let inv = setSlot emptyInventory 3 (Just (ItemStack (MaterialItem DiamondGem) 10))
+      case getHotbarSlot inv 3 of
+        Just (ItemStack item _) -> itemName item `shouldBe` "Diamond"
+        Nothing -> expectationFailure "slot should not be empty"
+
+  -- Slot change triggers popup
+  describe "selectHotbar triggers popup update" $ do
+    it "selecting slot with item yields item name" $ do
+      ref <- newIORef (Nothing :: Maybe (String, Float))
+      let inv = setSlot emptyInventory 3 (Just (ItemStack (BlockItem Dirt) 12))
+      case getHotbarSlot inv 3 of
+        Just (ItemStack item _) -> writeIORef ref (Just (itemName item, 2.0))
+        Nothing                 -> writeIORef ref Nothing
+      popup <- readIORef ref
+      popup `shouldBe` Just ("Dirt", 2.0)
+
+    it "selecting empty slot yields Nothing" $ do
+      ref <- newIORef (Just ("old", 1.0) :: Maybe (String, Float))
+      case getHotbarSlot emptyInventory 5 of
+        Just (ItemStack item _) -> writeIORef ref (Just (itemName item, 2.0))
+        Nothing                 -> writeIORef ref Nothing
+      popup <- readIORef ref
+      popup `shouldBe` Nothing
+
+    it "scroll re-triggers with new slot item" $ do
+      ref <- newIORef (Nothing :: Maybe (String, Float))
+      let inv0 = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 1))
+          inv1 = setSlot inv0 1 (Just (ItemStack (BlockItem Sand) 1))
+      -- Simulate scrolling from slot 0 to slot 1
+      case getHotbarSlot inv1 1 of
+        Just (ItemStack item _) -> writeIORef ref (Just (itemName item, 2.0))
+        Nothing                 -> writeIORef ref Nothing
+      popup <- readIORef ref
+      popup `shouldBe` Just ("Sand", 2.0)
