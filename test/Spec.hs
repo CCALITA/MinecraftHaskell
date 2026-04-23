@@ -46,7 +46,7 @@ import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts, cursorIc
 import Engine.BitmapFont (renderText, charSpacing)
 
 import Game.PotionEffect
-import Game.Particle (WeatherParticle(..), WeatherParticleType(..), spawnWeatherParticles, tickWeatherParticles, renderWeatherParticles, weatherParticleRadius, weatherParticleHeight, weatherParticleCount, rainFallSpeed, snowFallSpeed, isSnowBiome, clampParticleXZ, clampParticleY)
+import Game.Particle (WeatherParticle(..), WeatherParticleType(..), spawnWeatherParticles, tickWeatherParticles, renderWeatherParticles, weatherParticleRadius, weatherParticleHeight, weatherParticleCount, rainFallSpeed, snowFallSpeed, isSnowBiome, clampParticleXZ, clampParticleY, spawnBlockBreakParticles)
 
 import Game.Bucket (BucketAction(..), determineBucketAction, bucketTypeToFluidBlock, fluidBlockToBucketType)
 import World.Fluid (FluidState, FluidType(..), newFluidState, addFluidSource, removeFluid, getFluid, FluidBlock(..))
@@ -162,6 +162,7 @@ main = hspec $ do
   cursorItemRenderSpec
   shiftClickContainerSpec
   hotbarPopupSpec
+  blockBreakParticleSpec
   sneakModeSpec
   sprintToggleSpec
   hotbarSwapSpec
@@ -8553,6 +8554,49 @@ enchantGlowSpec = describe "UI.EnchantGlow" $ do
       verts1 `shouldNotBe` verts2
 
 -- =========================================================================
+-- Block Break Particles
+-- =========================================================================
+blockBreakParticleSpec :: Spec
+blockBreakParticleSpec = describe "Game.Particle block break" $ do
+  it "produces exactly 12 particles" $ do
+    let particles = spawnBlockBreakParticles Stone (V3 0 0 0)
+    length particles `shouldBe` 12
+
+  it "uses the correct color for Stone" $ do
+    let particles = spawnBlockBreakParticles Stone (V3 0 0 0)
+        (cr, cg, cb, _) = itemColor (BlockItem Stone)
+        allMatch = all (\(_, _, _, r, g, b) -> r == cr && g == cg && b == cb) particles
+    allMatch `shouldBe` True
+
+  it "uses the correct color for Grass" $ do
+    let particles = spawnBlockBreakParticles Grass (V3 5 10 5)
+        (cr, cg, cb, _) = itemColor (BlockItem Grass)
+        allMatch = all (\(_, _, _, r, g, b) -> r == cr && g == cg && b == cb) particles
+    allMatch `shouldBe` True
+
+  it "all velocities point upward (hemisphere above break point)" $ do
+    let particles = spawnBlockBreakParticles Dirt (V3 0 0 0)
+        allUpward = all (\(_, V3 _ vy _, _, _, _, _) -> vy > 0) particles
+    allUpward `shouldBe` True
+
+  it "particle sizes are between 0.03 and 0.08" $ do
+    let particles = spawnBlockBreakParticles OakLog (V3 0 0 0)
+        allValid = all (\(_, _, sz, _, _, _) -> sz >= 0.03 - 1e-6 && sz <= 0.08 + 1e-6) particles
+    allValid `shouldBe` True
+
+  it "different block types produce different colors" $ do
+    let stonePs = spawnBlockBreakParticles Stone (V3 0 0 0)
+        grassPs = spawnBlockBreakParticles Grass (V3 0 0 0)
+        stoneColor = (\(_, _, _, r, g, b) -> (r, g, b)) (head stonePs)
+        grassColor = (\(_, _, _, r, g, b) -> (r, g, b)) (head grassPs)
+    stoneColor `shouldNotBe` grassColor
+
+  it "particle positions are near the block center" $ do
+    let center = V3 10 20 30
+        particles = spawnBlockBreakParticles Sand center
+        allNear = all (\(V3 px py pz, _, _, _, _, _) ->
+          abs (px - 10.5) < 0.5 && abs (py - 20.5) < 0.5 && abs (pz - 30.5) < 0.5) particles
+    allNear `shouldBe` True
 -- Sneak mode
 -- =========================================================================
 sneakModeSpec :: Spec

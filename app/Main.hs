@@ -2162,9 +2162,8 @@ main = do
                           -- Block is broken!
                           worldSetBlock world blockPos Air
                           -- Spawn visual break particles
-                          let blockColor = itemColor (BlockItem bt)
-                              blockCenter = fmap fromIntegral blockPos :: V3 Float
-                          spawnBlockBreakParticles particleSystemRef blockCenter blockColor
+                          let blockCenter = fmap fromIntegral blockPos :: V3 Float
+                          spawnBlockBreakParticlesIO particleSystemRef bt blockCenter
                           when (bt == Water || bt == Lava) $
                             removeFluid fluidState world blockPos
                           -- Drop items as entities in the world
