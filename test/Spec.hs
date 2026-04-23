@@ -163,6 +163,8 @@ main = hspec $ do
   shiftClickContainerSpec
   hotbarPopupSpec
   sneakModeSpec
+  sprintToggleSpec
+  hotbarSwapSpec
 
 -- =========================================================================
 -- Block
@@ -8610,3 +8612,77 @@ sneakModeSpec = describe "Sneak mode" $ do
     it "sneakEyeOffset is positive and less than 1 block" $ do
       sneakEyeOffset `shouldSatisfy` (> 0)
       sneakEyeOffset `shouldSatisfy` (< 1.0)
+-- Sprint toggle
+-- =========================================================================
+sprintToggleSpec :: Spec
+sprintToggleSpec = describe "Toggle sprint (Ctrl key)" $ do
+  let movingForward = noInput { piForward = True }
+      standingStill = noInput
+      toggledPlayer = (defaultPlayer (V3 0 80 0)) { plSprintToggled = True }
+      normalPlayer  = defaultPlayer (V3 0 80 0)
+
+  it "forces piSprint True when toggled on and player is moving" $ do
+    let (input', _) = applySprintToggle movingForward toggledPlayer
+    piSprint input' `shouldBe` True
+
+  it "turns toggle off when player is not moving" $ do
+    let (_, player') = applySprintToggle standingStill toggledPlayer
+    plSprintToggled player' `shouldBe` False
+
+  it "does not force sprint when toggle is off" $ do
+    let (input', _) = applySprintToggle movingForward normalPlayer
+    piSprint input' `shouldBe` False
+
+  it "preserves toggle state when player is moving" $ do
+    let (_, player') = applySprintToggle movingForward toggledPlayer
+    plSprintToggled player' `shouldBe` True
+
+  it "defaultPlayer has sprint toggle off" $ do
+    plSprintToggled (defaultPlayer (V3 0 80 0)) `shouldBe` False
+
+  it "toggle off does not modify input sprint flag" $ do
+    let inputWithSprint = noInput { piForward = True, piSprint = True }
+        (input', _) = applySprintToggle inputWithSprint normalPlayer
+    piSprint input' `shouldBe` True
+hotbarSwapSpec :: Spec
+hotbarSwapSpec = describe "Game.Inventory.swapHotbarWithInventory" $ do
+  let stone3  = Just (ItemStack (BlockItem Stone) 3)
+      dirt5   = Just (ItemStack (BlockItem Dirt) 5)
+      pickaxe = Just (ItemStack (ToolItem Pickaxe Iron 250) 1)
+
+  it "swaps both occupied hotbar slot and inventory slot 9" $ do
+    let inv0 = setSlot (setSlot emptyInventory 0 stone3) 9 dirt5
+        inv' = swapHotbarWithInventory inv0 9
+    getSlot inv' 0 `shouldBe` dirt5
+    getSlot inv' 9 `shouldBe` stone3
+
+  it "moves hotbar item to empty slot 9 (hotbar occupied, target empty)" $ do
+    let inv0 = setSlot emptyInventory 0 pickaxe
+        inv' = swapHotbarWithInventory inv0 9
+    getSlot inv' 0 `shouldBe` Nothing
+    getSlot inv' 9 `shouldBe` pickaxe
+
+  it "moves slot 9 item to empty hotbar (hotbar empty, target occupied)" $ do
+    let inv0 = setSlot emptyInventory 9 stone3
+        inv' = swapHotbarWithInventory inv0 9
+    getSlot inv' 0 `shouldBe` stone3
+    getSlot inv' 9 `shouldBe` Nothing
+
+  it "both empty is a no-op" $ do
+    let inv' = swapHotbarWithInventory emptyInventory 9
+    inv' `shouldBe` emptyInventory
+
+  it "respects invSelected when non-zero" $ do
+    let inv0 = selectHotbar (setSlot (setSlot emptyInventory 3 stone3) 9 dirt5) 3
+        inv' = swapHotbarWithInventory inv0 9
+    getSlot inv' 3 `shouldBe` dirt5
+    getSlot inv' 9 `shouldBe` stone3
+    -- Slot 0 should be untouched
+    getSlot inv' 0 `shouldBe` Nothing
+
+  it "does not disturb other slots" $ do
+    let inv0 = setSlot (setSlot (setSlot emptyInventory 0 stone3) 5 pickaxe) 9 dirt5
+        inv' = swapHotbarWithInventory inv0 9
+    getSlot inv' 0 `shouldBe` dirt5
+    getSlot inv' 9 `shouldBe` stone3
+    getSlot inv' 5 `shouldBe` pickaxe

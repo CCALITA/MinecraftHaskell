@@ -23,6 +23,7 @@ module Game.Player
   , sneakSpeed
   , sneakEyeOffset
   , eyeHeight
+  , applySprintToggle
   ) where
 
 import Game.Physics
@@ -50,6 +51,7 @@ data Player = Player
   , plArmorSlots   :: ![Maybe ItemStack]  -- 4 armor slots: helmet, chestplate, leggings, boots
   , plAirSupply    :: !Float        -- 15.0 = full, decrements when head submerged
   , plSaturation   :: !Float        -- depletes before hunger, 0.0-20.0
+  , plSprintToggled :: !Bool        -- toggle-sprint: when True, auto-sprint while moving
   } deriving stock (Show, Eq)
 
 -- | Max health (10 hearts = 20 half-hearts)
@@ -104,6 +106,7 @@ defaultPlayer spawnPos = Player
   , plArmorSlots   = [Nothing, Nothing, Nothing, Nothing]
   , plAirSupply    = maxAirSupply
   , plSaturation   = defaultSaturation
+  , plSprintToggled = False
   }
 
 noInput :: PlayerInput
@@ -378,6 +381,18 @@ respawnPlayer spawnPos player = player
 -- | Is the player dead?
 isPlayerDead :: Player -> Bool
 isPlayerDead = (<= 0) . plHealth
+
+-- | Apply sprint toggle logic to input and player.
+--   When sprint is toggled on and the player is moving, force piSprint = True.
+--   When the player stops moving (no directional keys), turn toggle off.
+--   Returns updated (PlayerInput, Player) pair.
+applySprintToggle :: PlayerInput -> Player -> (PlayerInput, Player)
+applySprintToggle input player
+  | not (plSprintToggled player) = (input, player)
+  | not isMoving = (input, player { plSprintToggled = False })
+  | otherwise    = (input { piSprint = True }, player)
+  where
+    isMoving = piForward input || piBackward input || piLeft input || piRight input
 
 -- | Result of a block raycast
 data RayHit = RayHit
