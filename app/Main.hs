@@ -2878,7 +2878,8 @@ main = do
             chatState <- readIORef chatStateRef
             mVillProf <- readIORef villagerProfRef
             villTrades <- readIORef villagerTradesRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player')
+            enchantSnap <- readIORef enchantMapRef
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player') enchantSnap
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -3421,8 +3422,8 @@ tryTriggerAchievement achRef toastRef trigger = do
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- sleepMsgText: Just "message" when a bed-related message should be shown
 -- achToastText: Just "name" when an achievement toast should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> Map.Map Int [Enchantment] -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots enchantSnap = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
@@ -4326,10 +4327,14 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
     tooltipOffset :: Float
     tooltipOffset = 0.02
 
-    mkTooltipVerts :: Maybe Item -> [Float]
-    mkTooltipVerts mItem = case (cursorItem, mItem) of
-      (Nothing, Just item) ->
-        let info = buildTooltip item []
+    -- Look up enchantments for a slot index from the snapshot
+    slotEnchants :: Int -> [Enchantment]
+    slotEnchants idx = Map.findWithDefault [] idx enchantSnap
+
+    mkTooltipVerts :: Maybe (Item, [Enchantment]) -> [Float]
+    mkTooltipVerts mItemEnch = case (cursorItem, mItemEnch) of
+      (Nothing, Just (item, enchants)) ->
+        let info = buildTooltip item enchants
         in renderTooltipVertices info (mouseX + tooltipOffset) (mouseY + tooltipOffset)
       _ -> []
 
@@ -4337,29 +4342,29 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
     invTooltipVerts :: [Float]
     invTooltipVerts =
       let mSlot = hitInventorySlot mouseX mouseY
-          mItem = mSlot >>= \idx -> fmap isItem (getSlot inv idx)
-      in mkTooltipVerts mItem
+          mItemEnch = mSlot >>= \idx -> fmap (\s -> (isItem s, slotEnchants idx)) (getSlot inv idx)
+      in mkTooltipVerts mItemEnch
 
     -- CraftingOpen tooltip: detect hovered crafting or inventory slot
     craftTooltipVerts :: [Float]
     craftTooltipVerts =
       let mCraft = hitCraftingSlot mouseX mouseY
-          mItem = case mCraft of
-            Just (CraftGrid row col)  -> getCraftingSlot craftGrid row col
-            Just CraftOutput          -> fmap fst (craftPreview craftGrid)
-            Just (CraftInvSlot idx)   -> fmap isItem (getSlot inv idx)
+          mItemEnch = case mCraft of
+            Just (CraftGrid row col)  -> fmap (\i -> (i, [])) (getCraftingSlot craftGrid row col)
+            Just CraftOutput          -> fmap (\(i, _) -> (i, [])) (craftPreview craftGrid)
+            Just (CraftInvSlot idx)   -> fmap (\s -> (isItem s, slotEnchants idx)) (getSlot inv idx)
             Nothing                   -> Nothing
-      in mkTooltipVerts mItem
+      in mkTooltipVerts mItemEnch
 
     -- ChestOpen tooltip: detect hovered chest or inventory slot
     chestTooltipVerts :: [Float]
     chestTooltipVerts =
       let mChest = hitChestSlot mouseX mouseY
-          mItem = case mChest of
-            Just (ChestSlot idx)    -> mChestInv >>= \ci -> fmap isItem (getChestSlot ci idx)
-            Just (ChestInvSlot idx) -> fmap isItem (getSlot inv idx)
+          mItemEnch = case mChest of
+            Just (ChestSlot idx)    -> mChestInv >>= \ci -> fmap (\s -> (isItem s, [])) (getChestSlot ci idx)
+            Just (ChestInvSlot idx) -> fmap (\s -> (isItem s, slotEnchants idx)) (getSlot inv idx)
             Nothing                 -> Nothing
-      in mkTooltipVerts mItem
+      in mkTooltipVerts mItemEnch
 
     -- Main menu screen
     menuVerts =

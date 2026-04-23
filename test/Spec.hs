@@ -3234,6 +3234,43 @@ tooltipSpec = describe "UI.Tooltip" $ do
         alphas = [verts !! i | i <- [5, 11 .. length verts - 1]]
     all (\a -> a >= 0 && a <= 1) alphas `shouldBe` True
 
+  -- Enchantment-aware tooltip tests
+  it "tooltip with multiple enchantments renders more verts than without" $ do
+    let ttNo   = buildTooltip (ToolItem Pickaxe Iron 250) []
+        ttWith = buildTooltip (ToolItem Pickaxe Iron 250) [Enchantment Efficiency 3, Enchantment Unbreaking 2]
+        vertsNo   = renderTooltipVertices ttNo   0.0 0.0
+        vertsWith = renderTooltipVertices ttWith 0.0 0.0
+    length vertsWith `shouldSatisfy` (> length vertsNo)
+
+  it "tooltip for ArmorItem with enchantments renders without crashing" $ do
+    let tt = buildTooltip (ArmorItem Boots LeatherArmor 80) [Enchantment Protection 2]
+        verts = renderTooltipVertices tt 0.1 0.1
+    length verts `shouldSatisfy` (> 0)
+    (length verts `mod` 6) `shouldBe` 0
+
+  it "tooltip for BucketItem renders without crashing" $ do
+    let tt = buildTooltip (BucketItem BucketLava) []
+        verts = renderTooltipVertices tt 0.0 0.0
+    length verts `shouldSatisfy` (> 0)
+
+  it "tooltip for PotionItem with enchantment renders without crashing" $ do
+    let tt = buildTooltip (PotionItem SpeedPotion) [Enchantment Power 3]
+        verts = renderTooltipVertices tt 0.0 0.0
+    ttName tt `shouldBe` "Speed Potion"
+    ttLoreLines tt `shouldBe` ["Increases speed"]
+    length verts `shouldSatisfy` (> 0)
+
+  it "tooltip enchantments list three enchants when given three" $ do
+    let enchants = [Enchantment Sharpness 5, Enchantment Knockback 2, Enchantment Unbreaking 3]
+        tt = buildTooltip (ToolItem Sword Diamond 1561) enchants
+    length (ttEnchantments tt) `shouldBe` 3
+    ttEnchantments tt `shouldBe` ["Sharpness V", "Knockback II", "Unbreaking III"]
+
+  it "tooltip at negative coordinates renders without crashing" $ do
+    let tt = buildTooltip (MaterialItem Coal) []
+        verts = renderTooltipVertices tt (-0.9) (-0.9)
+    length verts `shouldSatisfy` (> 0)
+
 -- =========================================================================
 -- World structures
 -- =========================================================================
