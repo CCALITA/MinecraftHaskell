@@ -10,6 +10,7 @@ layout(binding = 0) uniform UniformBufferObject {
     float fogStart;
     float fogEnd;
     vec4 fogColor;
+    float underwater;
 } ubo;
 
 layout(binding = 1) uniform sampler2D texSampler;
@@ -88,9 +89,21 @@ void main() {
         litColor *= flicker;
     }
 
-    // Distance fog: smoothstep blend from lit color to fog color
-    float fogFactor = smoothstep(ubo.fogStart, ubo.fogEnd, fragViewDist);
+    // Distance fog: reduce fog distance when underwater for murky visibility
+    float fStart = ubo.fogStart;
+    float fEnd   = ubo.fogEnd;
+    if (ubo.underwater > 0.5) {
+        fStart *= 0.3;
+        fEnd   *= 0.3;
+    }
+    float fogFactor = smoothstep(fStart, fEnd, fragViewDist);
     vec3 finalColor = mix(litColor, ubo.fogColor.rgb, fogFactor);
+
+    // Underwater blue tint
+    if (ubo.underwater > 0.5) {
+        vec3 waterTint = vec3(0.1, 0.3, 0.6);
+        finalColor = mix(finalColor, waterTint, 0.3);
+    }
 
     outColor = vec4(finalColor, texColor.a);
 }
