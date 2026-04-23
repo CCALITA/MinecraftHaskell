@@ -162,6 +162,7 @@ main = hspec $ do
   cursorItemRenderSpec
   shiftClickContainerSpec
   hotbarPopupSpec
+  sprintToggleSpec
 
 -- =========================================================================
 -- Block
@@ -8548,3 +8549,37 @@ enchantGlowSpec = describe "UI.EnchantGlow" $ do
       let verts1 = enchantGlowBorder 0.0 0.0 0.1 0.1
           verts2 = enchantGlowBorder 0.0 0.0 0.2 0.2
       verts1 `shouldNotBe` verts2
+
+-- =========================================================================
+-- Sprint toggle
+-- =========================================================================
+sprintToggleSpec :: Spec
+sprintToggleSpec = describe "Toggle sprint (Ctrl key)" $ do
+  let movingForward = noInput { piForward = True }
+      standingStill = noInput
+      toggledPlayer = (defaultPlayer (V3 0 80 0)) { plSprintToggled = True }
+      normalPlayer  = defaultPlayer (V3 0 80 0)
+
+  it "forces piSprint True when toggled on and player is moving" $ do
+    let (input', _) = applySprintToggle movingForward toggledPlayer
+    piSprint input' `shouldBe` True
+
+  it "turns toggle off when player is not moving" $ do
+    let (_, player') = applySprintToggle standingStill toggledPlayer
+    plSprintToggled player' `shouldBe` False
+
+  it "does not force sprint when toggle is off" $ do
+    let (input', _) = applySprintToggle movingForward normalPlayer
+    piSprint input' `shouldBe` False
+
+  it "preserves toggle state when player is moving" $ do
+    let (_, player') = applySprintToggle movingForward toggledPlayer
+    plSprintToggled player' `shouldBe` True
+
+  it "defaultPlayer has sprint toggle off" $ do
+    plSprintToggled (defaultPlayer (V3 0 80 0)) `shouldBe` False
+
+  it "toggle off does not modify input sprint flag" $ do
+    let inputWithSprint = noInput { piForward = True, piSprint = True }
+        (input', _) = applySprintToggle inputWithSprint normalPlayer
+    piSprint input' `shouldBe` True

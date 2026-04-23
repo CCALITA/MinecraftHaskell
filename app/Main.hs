@@ -1685,6 +1685,8 @@ main = do
               writeIORef lastCursorRef Nothing
             GLFW.Key'F ->
               modifyIORef' inputRef $ \inp -> inp { piToggleFly = True }
+            GLFW.Key'LeftControl ->
+              modifyIORef' playerRef $ \p -> p { plSprintToggled = not (plSprintToggled p) }
             GLFW.Key'F3 ->
               modifyIORef' debugOverlayRef not
             GLFW.Key'E -> do
@@ -1942,7 +1944,7 @@ main = do
 
             -- Build input
             baseInput <- readIORef inputRef
-            let input = baseInput
+            let rawInput = baseInput
                   { piForward  = wDown
                   , piBackward = sDown
                   , piLeft     = aDown
@@ -1951,6 +1953,11 @@ main = do
                   , piSneak    = shiftDown
                   , piSprint   = ctrlDown
                   }
+
+            -- Apply toggle-sprint: when toggled on, force sprint while moving
+            curPlayer <- readIORef playerRef
+            let (input, updatedPlayer) = applySprintToggle rawInput curPlayer
+            writeIORef playerRef updatedPlayer
 
             -- Fixed timestep physics (skip when UI is open)
             accum <- readIORef accumRef
@@ -4639,6 +4646,7 @@ playerFromSaveDataV3 sd =
     , plArmorSlots = map (fmap (\(i, c) -> ItemStack i c)) (sv3ArmorSlots sd)
     , plAirSupply = sv3AirSupply sd
     , plSaturation = sv3Saturation sd
+    , plSprintToggled = False
     }
 
 -- | Restore player, inventory, day/night, weather, XP, and spawn from SaveDataV3
