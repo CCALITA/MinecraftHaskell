@@ -41,7 +41,8 @@ import Game.Save
 import Game.SaveV3 (SaveDataV3(..), savev3Version, savePlayerV3, loadPlayerV3)
 import Game.DroppedItem
 import Game.BlockEntity
-import Game.State (GameState(..), GameMode(..), Projectile(..), newGameState)
+import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), newGameState)
+import Game.Creative (creativeClickSlot, creativePickFromPalette, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Game.Achievement (AchievementState, checkAchievement, unlockAchievement, achievementName, AchievementTrigger(..))
 import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), ChatMessage(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
 import Game.ItemDisplay (itemColor, itemMiniIcon)
@@ -252,6 +253,8 @@ main = do
         chatStateRef        = gsChatState gs
         villagerProfRef     = gsVillagerProf gs
         villagerTradesRef   = gsVillagerTrades gs
+        playModeRef         = gsPlayMode gs
+    palettePageRef <- newIORef (0 :: Int)
 
     -- World save management: use world1 as default
     let defaultSaveDir = savesRoot </> "world1"
@@ -478,78 +481,116 @@ main = do
           (winW, winH) <- getWindowSize wh
           let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
               ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
-          -- Check 2x2 crafting grid (above inventory, center-right)
-          let craft2x2X0 = -0.03 :: Float
-              craft2x2Y0 = -0.80 :: Float
-              craft2x2Sz = 0.10 :: Float
-              craftCol = floor ((ndcX - craft2x2X0) / craft2x2Sz) :: Int
-              craftRow = floor ((ndcY - craft2x2Y0) / craft2x2Sz) :: Int
-              inCraftGrid = craftCol >= 0 && craftCol < 2 && craftRow >= 0 && craftRow < 2
-              -- Output slot area
-              outX0 = 0.35 :: Float; outY0 = -0.75 :: Float; outSz = 0.10 :: Float
-              inOutput = ndcX >= outX0 && ndcX <= outX0 + outSz && ndcY >= outY0 && ndcY <= outY0 + outSz
-          if inCraftGrid then do
-            -- Click on 2x2 crafting grid slot
-            cursor <- readIORef cursorItemRef
-            grid <- readIORef craftingGridRef
-            let slotContent = getCraftingSlot grid craftRow craftCol
-            case cursor of
-              Just (ItemStack item 1) -> do
-                writeIORef craftingGridRef (setCraftingSlot grid craftRow craftCol (Just item))
-                writeIORef cursorItemRef (fmap (\i -> ItemStack i 1) slotContent)
-              Just (ItemStack item n) | n > 1 -> case slotContent of
+          pmode <- readIORef playModeRef
+          case pmode of
+            Creative -> do
+              -- Creative mode: palette grid + inventory below
+              let mPSlot = hitPaletteSlot ndcX ndcY
+              case mPSlot of
+                Just slotIdx -> do
+                  page <- readIORef palettePageRef
+                  let items = palettePageItems page
+                      mPicked = creativePickFromPalette slotIdx items
+                  case mPicked of
+                    Just stack -> writeIORef cursorItemRef (Just stack)
+                    Nothing    -> pure ()
                 Nothing -> do
-                  writeIORef craftingGridRef (setCraftingSlot grid craftRow craftCol (Just item))
-                  writeIORef cursorItemRef (Just (ItemStack item (n - 1)))
-                _ -> pure ()
-              Nothing -> do
-                writeIORef craftingGridRef (setCraftingSlot grid craftRow craftCol Nothing)
-                writeIORef cursorItemRef (fmap (\i -> ItemStack i 1) slotContent)
-              _ -> pure ()
-          else if inOutput then do
-            -- Take crafted output from 2x2 grid
-            grid <- readIORef craftingGridRef
-            case tryCraft grid of
-              CraftSuccess item count -> do
+                  -- Check prev/next page buttons (below palette grid)
+                  let btnY = paletteY0 + fromIntegral paletteRows * paletteSlotH + 0.02
+                      btnH = 0.06
+                      prevX0p = paletteX0; prevX1p = paletteX0 + 0.20
+                      nextX0p = paletteX0 + 0.70; nextX1p = paletteX0 + 0.90
+                  if ndcY >= btnY && ndcY <= btnY + btnH
+                     && ((ndcX >= prevX0p && ndcX <= prevX1p) || (ndcX >= nextX0p && ndcX <= nextX1p))
+                    then do
+                      if ndcX >= prevX0p && ndcX <= prevX1p
+                        then modifyIORef' palettePageRef (\p -> max 0 (p - 1))
+                        else modifyIORef' palettePageRef (\p -> min (palettePageCount - 1) (p + 1))
+                    else do
+                      -- Check inventory slot (shifted below palette)
+                      let invOffsetY = fromIntegral paletteRows * paletteSlotH + 0.14
+                          mSlot = hitInventorySlot ndcX (ndcY - invOffsetY)
+                      case mSlot of
+                        Nothing -> pure ()
+                        Just si -> do
+                          inv <- readIORef inventoryRef
+                          cursor <- readIORef cursorItemRef
+                          let (newInv, newCursor) = creativeClickSlot inv si cursor
+                          writeIORef inventoryRef newInv
+                          writeIORef cursorItemRef newCursor
+            Survival -> do
+              -- Check 2x2 crafting grid (above inventory, center-right)
+              let craft2x2X0 = -0.03 :: Float
+                  craft2x2Y0 = -0.80 :: Float
+                  craft2x2Sz = 0.10 :: Float
+                  craftCol = floor ((ndcX - craft2x2X0) / craft2x2Sz) :: Int
+                  craftRow = floor ((ndcY - craft2x2Y0) / craft2x2Sz) :: Int
+                  inCraftGrid = craftCol >= 0 && craftCol < 2 && craftRow >= 0 && craftRow < 2
+                  -- Output slot area
+                  outX0 = 0.35 :: Float; outY0 = -0.75 :: Float; outSz = 0.10 :: Float
+                  inOutput = ndcX >= outX0 && ndcX <= outX0 + outSz && ndcY >= outY0 && ndcY <= outY0 + outSz
+              if inCraftGrid then do
+                -- Click on 2x2 crafting grid slot
                 cursor <- readIORef cursorItemRef
+                grid <- readIORef craftingGridRef
+                let slotContent = getCraftingSlot grid craftRow craftCol
                 case cursor of
+                  Just (ItemStack item 1) -> do
+                    writeIORef craftingGridRef (setCraftingSlot grid craftRow craftCol (Just item))
+                    writeIORef cursorItemRef (fmap (\i -> ItemStack i 1) slotContent)
+                  Just (ItemStack item n) | n > 1 -> case slotContent of
+                    Nothing -> do
+                      writeIORef craftingGridRef (setCraftingSlot grid craftRow craftCol (Just item))
+                      writeIORef cursorItemRef (Just (ItemStack item (n - 1)))
+                    _ -> pure ()
                   Nothing -> do
-                    writeIORef cursorItemRef (Just (ItemStack item count))
-                    writeIORef craftingGridRef (emptyCraftingGrid 2)
-                    -- Achievement: craft item trigger
-                    tryTriggerAchievement achievementsRef achievementToastRef (TrigCraftItem item)
+                    writeIORef craftingGridRef (setCraftingSlot grid craftRow craftCol Nothing)
+                    writeIORef cursorItemRef (fmap (\i -> ItemStack i 1) slotContent)
                   _ -> pure ()
-              CraftFailure -> pure ()
-          else do
-            -- Check inventory slot
-            let mSlot = hitInventorySlot ndcX ndcY
-            case mSlot of
-              Nothing -> pure ()
-              Just slotIdx -> do
-                -- Shift-click: equip armor items to matching player armor slot
-                shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
-                inv <- readIORef inventoryRef
-                let slotContent = getSlot inv slotIdx
-                if shiftHeld
-                  then case slotContent of
-                    Just (ItemStack (ArmorItem aSlot aMat aDur) cnt) -> do
-                      let armorIdx = fromEnum aSlot  -- Helmet=0, Chestplate=1, Leggings=2, Boots=3
-                      player <- readIORef playerRef
-                      let currentArmor = plArmorSlots player
-                          existing = currentArmor !! armorIdx
-                          newArmorSlots = take armorIdx currentArmor
-                                       ++ [Just (ItemStack (ArmorItem aSlot aMat aDur) cnt)]
-                                       ++ drop (armorIdx + 1) currentArmor
-                      -- Put any existing armor piece back into the inventory slot
-                      writeIORef inventoryRef (setSlot inv slotIdx existing)
-                      modifyIORef' playerRef (\p -> p { plArmorSlots = newArmorSlots })
-                    _ -> do
-                      -- Not an armor item: shift-click quick-move between sections
-                      writeIORef inventoryRef (moveToSection inv slotIdx)
-                  else do
+              else if inOutput then do
+                -- Take crafted output from 2x2 grid
+                grid <- readIORef craftingGridRef
+                case tryCraft grid of
+                  CraftSuccess item count -> do
                     cursor <- readIORef cursorItemRef
-                    writeIORef inventoryRef (setSlot inv slotIdx cursor)
-                    writeIORef cursorItemRef slotContent
+                    case cursor of
+                      Nothing -> do
+                        writeIORef cursorItemRef (Just (ItemStack item count))
+                        writeIORef craftingGridRef (emptyCraftingGrid 2)
+                        -- Achievement: craft item trigger
+                        tryTriggerAchievement achievementsRef achievementToastRef (TrigCraftItem item)
+                      _ -> pure ()
+                  CraftFailure -> pure ()
+              else do
+                -- Check inventory slot
+                let mSlot = hitInventorySlot ndcX ndcY
+                case mSlot of
+                  Nothing -> pure ()
+                  Just slotIdx -> do
+                    -- Shift-click: equip armor items to matching player armor slot
+                    shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
+                    inv <- readIORef inventoryRef
+                    let slotContent = getSlot inv slotIdx
+                    if shiftHeld
+                      then case slotContent of
+                        Just (ItemStack (ArmorItem aSlot aMat aDur) cnt) -> do
+                          let armorIdx = fromEnum aSlot  -- Helmet=0, Chestplate=1, Leggings=2, Boots=3
+                          player <- readIORef playerRef
+                          let currentArmor = plArmorSlots player
+                              existing = currentArmor !! armorIdx
+                              newArmorSlots = take armorIdx currentArmor
+                                           ++ [Just (ItemStack (ArmorItem aSlot aMat aDur) cnt)]
+                                           ++ drop (armorIdx + 1) currentArmor
+                          -- Put any existing armor piece back into the inventory slot
+                          writeIORef inventoryRef (setSlot inv slotIdx existing)
+                          modifyIORef' playerRef (\p -> p { plArmorSlots = newArmorSlots })
+                        _ -> do
+                          -- Not an armor item: shift-click quick-move between sections
+                          writeIORef inventoryRef (moveToSection inv slotIdx)
+                      else do
+                        cursor <- readIORef cursorItemRef
+                        writeIORef inventoryRef (setSlot inv slotIdx cursor)
+                        writeIORef cursorItemRef slotContent
 
         CraftingOpen -> when (action == GLFW.MouseButtonState'Pressed && button == GLFW.MouseButton'1) $ do
           (mx, my) <- readIORef mousePosRef
@@ -1492,8 +1533,11 @@ main = do
                           "rain"  -> modifyIORef' weatherRef (\w -> w { wsType = Rain })
                           _       -> modifyIORef' chatStateRef (addChatMessage ("Unknown weather: " ++ val) 3.0)
                         CmdGamemode val -> case val of
-                          "creative" -> writeIORef gameModeRef Playing
-                          "survival" -> writeIORef gameModeRef Playing
+                          "creative" -> do
+                            writeIORef playModeRef Creative
+                            modifyIORef' playerRef (\p -> p { plFlying = True })
+                          "survival" -> do
+                            writeIORef playModeRef Survival
                           _          -> modifyIORef' chatStateRef (addChatMessage ("Unknown mode: " ++ val) 3.0)
                         CmdKill ->
                           modifyIORef' playerRef (\p -> p { plHealth = 0 })

@@ -75,6 +75,7 @@ library
     Game.Achievement
     Game.Config
     Game.Crafting
+    Game.Creative
     Game.RecipeRegistry
     Game.Enchanting
     Game.Event
