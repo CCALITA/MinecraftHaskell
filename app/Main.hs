@@ -1683,8 +1683,8 @@ main = do
               writeIORef gameModeRef Paused
               GLFW.setCursorInputMode (whWindow wh) GLFW.CursorInputMode'Normal
               writeIORef lastCursorRef Nothing
-            GLFW.Key'F ->
-              modifyIORef' inputRef $ \inp -> inp { piToggleFly = True }
+            GLFW.Key'F -> do
+              modifyIORef' inventoryRef $ \inv -> swapHotbarWithInventory inv 9
             GLFW.Key'F3 ->
               modifyIORef' debugOverlayRef not
             GLFW.Key'E -> do
