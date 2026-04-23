@@ -43,6 +43,7 @@ library
     Engine.Camera
     Engine.Mesh
     Engine.BitmapFont
+    Engine.EntityRender
     Engine.Sound
     Engine.Vulkan.Init
     Engine.Vulkan.Swapchain
