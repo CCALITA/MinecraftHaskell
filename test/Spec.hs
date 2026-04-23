@@ -143,6 +143,7 @@ main = hspec $ do
   meshAOSpec
   directionalPistonSpec
   sunsetSunriseSpec
+  hotbarNumberKeySpec
 
 -- =========================================================================
 -- Block
@@ -6532,3 +6533,128 @@ sunsetSunriseSpec = describe "Sunset and sunrise sky colors" $ do
       abs (r1 - r2) `shouldSatisfy` (< 0.05)
       abs (g1 - g2) `shouldSatisfy` (< 0.05)
       abs (b1 - b2) `shouldSatisfy` (< 0.05)
+
+-- =========================================================================
+-- Hotbar Number Key Assignment
+-- =========================================================================
+hotbarNumberKeySpec :: Spec
+hotbarNumberKeySpec = describe "Game.Inventory.hotbarNumberKey" $ do
+  let stone3  = Just (ItemStack (BlockItem Stone) 3)
+      dirt5   = Just (ItemStack (BlockItem Dirt) 5)
+      sand10  = Just (ItemStack (BlockItem Sand) 10)
+      pickaxe = Just (ItemStack (ToolItem Pickaxe Iron 250) 1)
+
+  describe "cursor holds item, hotbar slot empty" $ do
+    it "places cursor item into empty hotbar slot 0" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory stone3 0
+      getHotbarSlot inv' 0 `shouldBe` stone3
+      cursor' `shouldBe` Nothing
+
+    it "places cursor item into empty hotbar slot 4" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory dirt5 4
+      getHotbarSlot inv' 4 `shouldBe` dirt5
+      cursor' `shouldBe` Nothing
+
+    it "places cursor item into empty hotbar slot 8" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory sand10 8
+      getHotbarSlot inv' 8 `shouldBe` sand10
+      cursor' `shouldBe` Nothing
+
+  describe "cursor holds item, hotbar slot occupied (swap)" $ do
+    it "swaps cursor with existing hotbar contents" $ do
+      let inv0 = setSlot emptyInventory 0 stone3
+          (inv', cursor') = hotbarNumberKey inv0 dirt5 0
+      getHotbarSlot inv' 0 `shouldBe` dirt5
+      cursor' `shouldBe` stone3
+
+    it "swap preserves stack counts" $ do
+      let inv0 = setSlot emptyInventory 3 (Just (ItemStack (BlockItem Stone) 32))
+          cursor = Just (ItemStack (BlockItem Dirt) 16)
+          (inv', cursor') = hotbarNumberKey inv0 cursor 3
+      getHotbarSlot inv' 3 `shouldBe` cursor
+      cursor' `shouldBe` Just (ItemStack (BlockItem Stone) 32)
+
+    it "swap with tool item works" $ do
+      let inv0 = setSlot emptyInventory 2 stone3
+          (inv', cursor') = hotbarNumberKey inv0 pickaxe 2
+      getHotbarSlot inv' 2 `shouldBe` pickaxe
+      cursor' `shouldBe` stone3
+
+  describe "cursor empty, hotbar slot occupied (pick up)" $ do
+    it "picks up hotbar contents into cursor" $ do
+      let inv0 = setSlot emptyInventory 0 stone3
+          (inv', cursor') = hotbarNumberKey inv0 Nothing 0
+      getHotbarSlot inv' 0 `shouldBe` Nothing
+      cursor' `shouldBe` stone3
+
+    it "picks up from any hotbar slot" $ do
+      let inv0 = setSlot emptyInventory 7 dirt5
+          (inv', cursor') = hotbarNumberKey inv0 Nothing 7
+      getHotbarSlot inv' 7 `shouldBe` Nothing
+      cursor' `shouldBe` dirt5
+
+    it "picks up tool from hotbar" $ do
+      let inv0 = setSlot emptyInventory 1 pickaxe
+          (inv', cursor') = hotbarNumberKey inv0 Nothing 1
+      getHotbarSlot inv' 1 `shouldBe` Nothing
+      cursor' `shouldBe` pickaxe
+
+  describe "cursor empty, hotbar slot empty (no-op)" $ do
+    it "returns unchanged inventory and Nothing cursor" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory Nothing 0
+      inv' `shouldBe` emptyInventory
+      cursor' `shouldBe` Nothing
+
+    it "no-op for any empty slot" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory Nothing 5
+      inv' `shouldBe` emptyInventory
+      cursor' `shouldBe` Nothing
+
+  describe "out-of-range slot index" $ do
+    it "negative index is no-op" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory stone3 (-1)
+      inv' `shouldBe` emptyInventory
+      cursor' `shouldBe` stone3
+
+    it "index >= hotbarSlots is no-op" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory stone3 9
+      inv' `shouldBe` emptyInventory
+      cursor' `shouldBe` stone3
+
+    it "large index is no-op" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory dirt5 100
+      inv' `shouldBe` emptyInventory
+      cursor' `shouldBe` dirt5
+
+  describe "does not disturb other slots" $ do
+    it "placing into slot 0 does not touch slot 1" $ do
+      let inv0 = setSlot emptyInventory 1 dirt5
+          (inv', _) = hotbarNumberKey inv0 stone3 0
+      getHotbarSlot inv' 0 `shouldBe` stone3
+      getHotbarSlot inv' 1 `shouldBe` dirt5
+
+    it "swapping slot 3 does not affect slot 0 or 8" $ do
+      let inv0 = setSlot (setSlot (setSlot emptyInventory 0 stone3) 3 dirt5) 8 sand10
+          (inv', cursor') = hotbarNumberKey inv0 pickaxe 3
+      getHotbarSlot inv' 0 `shouldBe` stone3
+      getHotbarSlot inv' 3 `shouldBe` pickaxe
+      getHotbarSlot inv' 8 `shouldBe` sand10
+      cursor' `shouldBe` dirt5
+
+    it "picking up from slot 5 preserves non-hotbar inventory" $ do
+      let inv0 = setSlot (setSlot emptyInventory 5 stone3) 15 dirt5
+          (inv', cursor') = hotbarNumberKey inv0 Nothing 5
+      getSlot inv' 15 `shouldBe` dirt5
+      getHotbarSlot inv' 5 `shouldBe` Nothing
+      cursor' `shouldBe` stone3
+
+  describe "invSelected is preserved" $ do
+    it "placing item does not change selected slot" $ do
+      let inv0 = selectHotbar emptyInventory 3
+          (inv', _) = hotbarNumberKey inv0 stone3 0
+      invSelected inv' `shouldBe` 3
+
+    it "picking up does not change selected slot" $ do
+      let inv0 = selectHotbar (setSlot emptyInventory 2 dirt5) 7
+          (inv', _) = hotbarNumberKey inv0 Nothing 2
+      invSelected inv' `shouldBe` 7

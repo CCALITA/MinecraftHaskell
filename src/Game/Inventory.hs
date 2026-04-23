@@ -14,6 +14,7 @@ module Game.Inventory
   , hasItem
   , countItem
   , stackLimit
+  , hotbarNumberKey
   ) where
 
 import Game.Item (Item(..), itemStackLimit)
@@ -143,3 +144,22 @@ countItem inv item = go 0 0
 
 hasItem :: Inventory -> Item -> Int -> Bool
 hasItem inv item count = countItem inv item >= count
+
+-- | Handle number key press (1-9) in an open inventory/crafting/chest screen.
+-- If the cursor holds an item, place it into hotbar slot (swap if occupied).
+-- If the cursor is empty, pick up the hotbar slot contents into the cursor.
+-- Returns (updated inventory, updated cursor).
+hotbarNumberKey :: Inventory -> Maybe ItemStack -> Int -> (Inventory, Maybe ItemStack)
+hotbarNumberKey inv cursor slotIdx
+  | slotIdx < 0 || slotIdx >= hotbarSlots = (inv, cursor)
+  | otherwise = case cursor of
+      Nothing ->
+        -- Pick up hotbar slot contents into cursor
+        let occupant = getHotbarSlot inv slotIdx
+            inv' = setSlot inv slotIdx Nothing
+        in (inv', occupant)
+      Just _ ->
+        -- Place cursor into hotbar slot, pick up previous occupant
+        let occupant = getHotbarSlot inv slotIdx
+            inv' = setSlot inv slotIdx cursor
+        in (inv', occupant)
