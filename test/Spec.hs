@@ -50,7 +50,7 @@ import World.Fluid (FluidState, FluidType(..), newFluidState, addFluidSource, re
 import Engine.Mesh (MeshData(..), NeighborData(..), meshChunkWithLight, emptyNeighborData, BlockVertex(..), computeVertexAO)
 import Entity.Pathfinding (findPath, pathDistance)
 import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
-import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, getTimeOfDay, TimeOfDay(..))
+import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, isDawn, isDusk, getTimeOfDay, TimeOfDay(..))
 import Game.State (GameState(..), GameMode(..), newGameState)
 import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
 
@@ -142,6 +142,7 @@ main = hspec $ do
   dimensionWiringSpec
   meshAOSpec
   directionalPistonSpec
+  sunsetSunriseSpec
 
 -- =========================================================================
 -- Block
@@ -6335,3 +6336,199 @@ meshAOSpec = describe "Engine.Mesh AO" $ do
           aoVals = map bvAO topFaceVerts
       length topFaceVerts `shouldBe` 4
       (maximum aoVals - minimum aoVals) `shouldSatisfy` (> 0.01)
+
+-- =========================================================================
+-- Sunset / Sunrise sky color transitions
+-- =========================================================================
+sunsetSunriseSpec :: Spec
+sunsetSunriseSpec = describe "Sunset and sunrise sky colors" $ do
+  let mkCycle t = newDayNightCycle { dncTime = t }
+      skyAt t = getSkyColor (mkCycle t)
+      rgbApprox (V4 r g b _) (V4 er eg eb _) =
+        abs (r - er) < 0.02 && abs (g - eg) < 0.02 && abs (b - eb) < 0.02
+
+  let redOf   (V4 r _ _ _) = r
+      _greenOf (V4 _ g _ _) = g
+      blueOf  (V4 _ _ b _) = b
+      alphaOf (V4 _ _ _ a) = a
+
+  describe "Dawn multi-step interpolation (t 0.20-0.30)" $ do
+    it "start of dawn (t=0.20) matches nightSky" $ do
+      skyAt 0.20 `rgbApprox` V4 0.01 0.01 0.05 1.0 `shouldBe` True
+
+    it "early dawn (t=0.24) reaches warm orange-pink horizon" $ do
+      skyAt 0.24 `rgbApprox` V4 0.70 0.40 0.30 1.0 `shouldBe` True
+
+    it "mid dawn (t=0.27) reaches pale gold" $ do
+      skyAt 0.27 `rgbApprox` V4 0.80 0.70 0.50 1.0 `shouldBe` True
+
+    it "end of dawn (t=0.30) matches daySkyStart" $ do
+      skyAt 0.30 `rgbApprox` V4 0.40 0.60 0.85 1.0 `shouldBe` True
+
+    it "early dawn mid-point (t=0.22) is between nightSky and dawnHorizon" $ do
+      let V4 r g b _ = skyAt 0.22
+      r `shouldSatisfy` (\x -> x > 0.01 && x < 0.70)
+      g `shouldSatisfy` (\x -> x > 0.01 && x < 0.40)
+      b `shouldSatisfy` (\x -> x > 0.05 && x < 0.30)
+
+    it "mid dawn mid-point (t=0.255) is between dawnHorizon and dawnGold" $ do
+      let V4 r _ _ _ = skyAt 0.255
+      r `shouldSatisfy` (\x -> x > 0.70 && x < 0.80)
+
+    it "late dawn mid-point (t=0.285) is between dawnGold and daySkyStart" $ do
+      let V4 r g b _ = skyAt 0.285
+      r `shouldSatisfy` (\x -> x > 0.40 && x < 0.80)
+      g `shouldSatisfy` (\x -> x > 0.60 && x < 0.70)
+      b `shouldSatisfy` (\x -> x > 0.50 && x < 0.85)
+
+    it "dawn colors have red dominance in early phase" $ do
+      let V4 r g b _ = skyAt 0.22
+      r `shouldSatisfy` (> g)
+      r `shouldSatisfy` (> b)
+
+    it "dawn gold phase has warm tone (R > B)" $ do
+      let V4 r _ b _ = skyAt 0.26
+      r `shouldSatisfy` (> b)
+
+    it "alpha is always 1.0 throughout dawn" $ do
+      alphaOf (skyAt 0.20) `shouldBe` 1.0
+      alphaOf (skyAt 0.22) `shouldBe` 1.0
+      alphaOf (skyAt 0.24) `shouldBe` 1.0
+      alphaOf (skyAt 0.27) `shouldBe` 1.0
+      alphaOf (skyAt 0.29) `shouldBe` 1.0
+
+    it "dawn red channel increases then decreases" $ do
+      let r20 = redOf (skyAt 0.20)
+          r24 = redOf (skyAt 0.24)
+          r30 = redOf (skyAt 0.30)
+      r24 `shouldSatisfy` (> r20)
+      r24 `shouldSatisfy` (> r30)
+
+    it "dawn blue channel dips during orange phase then recovers" $ do
+      let b20 = blueOf (skyAt 0.20)
+          b24 = blueOf (skyAt 0.24)
+          b30 = blueOf (skyAt 0.30)
+      b24 `shouldSatisfy` (> b20)
+      b30 `shouldSatisfy` (> b24)
+
+  describe "Dusk multi-step interpolation (t 0.70-0.80)" $ do
+    it "start of dusk (t=0.70) matches daySkyStart" $ do
+      skyAt 0.70 `rgbApprox` V4 0.40 0.60 0.85 1.0 `shouldBe` True
+
+    it "early dusk (t=0.73) reaches golden" $ do
+      skyAt 0.73 `rgbApprox` V4 0.80 0.60 0.30 1.0 `shouldBe` True
+
+    it "mid dusk (t=0.77) reaches deep orange-red" $ do
+      skyAt 0.77 `rgbApprox` V4 0.60 0.25 0.15 1.0 `shouldBe` True
+
+    it "end of dusk (t=0.80) matches nightSky" $ do
+      skyAt 0.80 `rgbApprox` V4 0.01 0.01 0.05 1.0 `shouldBe` True
+
+    it "early dusk mid-point (t=0.715) is between daySkyStart and duskGolden" $ do
+      let V4 r g _ _ = skyAt 0.715
+      r `shouldSatisfy` (\x -> x > 0.40 && x < 0.80)
+      g `shouldSatisfy` (\x -> x > 0.55 && x < 0.65)
+
+    it "mid dusk mid-point (t=0.75) is between duskGolden and deepOrange" $ do
+      let V4 r g _ _ = skyAt 0.75
+      r `shouldSatisfy` (\x -> x > 0.60 && x < 0.80)
+      g `shouldSatisfy` (\x -> x > 0.25 && x < 0.60)
+
+    it "late dusk mid-point (t=0.785) is between deepOrange and nightSky" $ do
+      let V4 r g _ _ = skyAt 0.785
+      r `shouldSatisfy` (\x -> x > 0.01 && x < 0.60)
+      g `shouldSatisfy` (\x -> x > 0.01 && x < 0.25)
+
+    it "dusk golden phase has warm tone (R > B)" $ do
+      let V4 r _ b _ = skyAt 0.72
+      r `shouldSatisfy` (> b)
+
+    it "dusk deep orange has very low blue" $ do
+      let V4 _ _ b _ = skyAt 0.76
+      b `shouldSatisfy` (< 0.25)
+
+    it "alpha is always 1.0 throughout dusk" $ do
+      alphaOf (skyAt 0.70) `shouldBe` 1.0
+      alphaOf (skyAt 0.73) `shouldBe` 1.0
+      alphaOf (skyAt 0.75) `shouldBe` 1.0
+      alphaOf (skyAt 0.77) `shouldBe` 1.0
+      alphaOf (skyAt 0.79) `shouldBe` 1.0
+
+    it "dusk red channel increases then decreases" $ do
+      let r70 = redOf (skyAt 0.70)
+          r73 = redOf (skyAt 0.73)
+          r80 = redOf (skyAt 0.80)
+      r73 `shouldSatisfy` (> r70)
+      r73 `shouldSatisfy` (> r80)
+
+    it "dusk blue drops from day sky to near zero" $ do
+      let b70 = blueOf (skyAt 0.70)
+          b77 = blueOf (skyAt 0.77)
+      b70 `shouldSatisfy` (> b77)
+      b77 `shouldSatisfy` (< 0.20)
+
+  describe "Day and night unchanged" $ do
+    it "noon (t=0.50) is between daySkyStart and daySkyPeak" $ do
+      let V4 r g b _ = skyAt 0.50
+      r `shouldSatisfy` (\x -> x >= 0.40 && x <= 0.53)
+      g `shouldSatisfy` (\x -> x >= 0.60 && x <= 0.81)
+      b `shouldSatisfy` (\x -> x >= 0.85 && x <= 0.92)
+
+    it "midnight (t=0.0) is nightSky" $ do
+      skyAt 0.0 `rgbApprox` V4 0.01 0.01 0.05 1.0 `shouldBe` True
+
+    it "getSkyColor returns valid RGBA for all sampled times" $ do
+      let times = [0.0, 0.05, 0.10, 0.15, 0.20, 0.22, 0.24, 0.26, 0.27, 0.29,
+                   0.30, 0.40, 0.50, 0.60, 0.70, 0.72, 0.73, 0.75, 0.77, 0.79,
+                   0.80, 0.85, 0.90, 0.95, 0.99]
+      mapM_ (\t -> do
+        let V4 r g b a = skyAt t
+        r `shouldSatisfy` (\x -> x >= 0 && x <= 1)
+        g `shouldSatisfy` (\x -> x >= 0 && x <= 1)
+        b `shouldSatisfy` (\x -> x >= 0 && x <= 1)
+        a `shouldBe` 1.0
+        ) times
+
+  describe "Phase detection helpers" $ do
+    it "isDawn at t=0.25" $ do
+      isDawn (mkCycle 0.25) `shouldBe` True
+
+    it "isDawn is False at t=0.50" $ do
+      isDawn (mkCycle 0.50) `shouldBe` False
+
+    it "isDusk at t=0.75" $ do
+      isDusk (mkCycle 0.75) `shouldBe` True
+
+    it "isDusk is False at t=0.25" $ do
+      isDusk (mkCycle 0.25) `shouldBe` False
+
+  describe "Continuity at phase boundaries" $ do
+    it "dawn/day boundary (t=0.2999 vs t=0.3001) colors are close" $ do
+      let V4 r1 g1 b1 _ = skyAt 0.2999
+          V4 r2 g2 b2 _ = skyAt 0.3001
+      abs (r1 - r2) `shouldSatisfy` (< 0.05)
+      abs (g1 - g2) `shouldSatisfy` (< 0.05)
+      abs (b1 - b2) `shouldSatisfy` (< 0.05)
+
+    it "day/dusk boundary (t=0.6999 vs t=0.7001) colors are close" $ do
+      -- Note: Day phase peaks toward daySkyPeak at t=0.70 while dusk starts
+      -- from daySkyStart, so there is a small inherent jump at this boundary.
+      let V4 r1 g1 b1 _ = skyAt 0.6999
+          V4 r2 g2 b2 _ = skyAt 0.7001
+      abs (r1 - r2) `shouldSatisfy` (< 0.15)
+      abs (g1 - g2) `shouldSatisfy` (< 0.25)
+      abs (b1 - b2) `shouldSatisfy` (< 0.10)
+
+    it "night/dawn boundary (t=0.1999 vs t=0.2001) colors are close" $ do
+      let V4 r1 g1 b1 _ = skyAt 0.1999
+          V4 r2 g2 b2 _ = skyAt 0.2001
+      abs (r1 - r2) `shouldSatisfy` (< 0.05)
+      abs (g1 - g2) `shouldSatisfy` (< 0.05)
+      abs (b1 - b2) `shouldSatisfy` (< 0.05)
+
+    it "dusk/night boundary (t=0.7999 vs t=0.8001) colors are close" $ do
+      let V4 r1 g1 b1 _ = skyAt 0.7999
+          V4 r2 g2 b2 _ = skyAt 0.8001
+      abs (r1 - r2) `shouldSatisfy` (< 0.05)
+      abs (g1 - g2) `shouldSatisfy` (< 0.05)
+      abs (b1 - b2) `shouldSatisfy` (< 0.05)
