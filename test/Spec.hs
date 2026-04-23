@@ -57,6 +57,7 @@ import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLigh
 import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, isDawn, isDusk, getTimeOfDay, TimeOfDay(..))
 import Game.State (GameState(..), GameMode(..), PlayMode(..), newGameState)
 import Game.Creative (creativePalette, creativePaletteSize, creativeClickSlot, creativePickFromPalette, creativeConsumeItem, creativeRefillSlot, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteCols, paletteSlotsPerPage, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
+import Game.ItemDisplay (durabilityFraction, durabilityBarColor)
 import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
 
 import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
@@ -155,6 +156,7 @@ main = hspec $ do
   creativeInventorySpec
   collectAllSpec
   stackSplittingSpec
+  durabilityDisplaySpec
   cursorItemRenderSpec
   shiftClickContainerSpec
 
@@ -7941,6 +7943,80 @@ stackSplittingSpec = describe "Game.Inventory stack splitting" $ do
       getSlot result 0 `shouldBe` Just (ItemStack (MaterialItem Coal) 64)
 
 -- =========================================================================
+-- Durability display
+-- =========================================================================
+durabilityDisplaySpec :: Spec
+durabilityDisplaySpec = describe "Game.ItemDisplay durability display" $ do
+
+  describe "durabilityFraction" $ do
+    it "returns Nothing for BlockItem" $ do
+      durabilityFraction (BlockItem Stone) `shouldBe` Nothing
+
+    it "returns Nothing for FoodItem" $ do
+      durabilityFraction (FoodItem Apple) `shouldBe` Nothing
+
+    it "returns Nothing for MaterialItem" $ do
+      durabilityFraction (MaterialItem Coal) `shouldBe` Nothing
+
+    it "returns Nothing for StickItem" $ do
+      durabilityFraction StickItem `shouldBe` Nothing
+
+    it "returns 1.0 for full durability wooden pickaxe" $ do
+      durabilityFraction (ToolItem Pickaxe Wood 59) `shouldBe` Just 1.0
+
+    it "returns 0.5 for half durability diamond pickaxe" $ do
+      let frac = durabilityFraction (ToolItem Pickaxe Diamond 780)
+      frac `shouldSatisfy` \(Just f) -> abs (f - 0.4997) < 0.01
+
+    it "returns ~0.0 for nearly broken tool" $ do
+      let frac = durabilityFraction (ToolItem Sword Iron 1)
+      frac `shouldSatisfy` \(Just f) -> f > 0 && f < 0.01
+
+    it "works for ShearsItem" $ do
+      let frac = durabilityFraction (ShearsItem 238)
+      frac `shouldBe` Just 1.0
+
+    it "works for half-durability shears" $ do
+      let frac = durabilityFraction (ShearsItem 119)
+      frac `shouldBe` Just 0.5
+
+    it "works for FlintAndSteelItem" $ do
+      let frac = durabilityFraction (FlintAndSteelItem 64)
+      frac `shouldBe` Just 1.0
+
+    it "works for FishingRodItem" $ do
+      let frac = durabilityFraction (FishingRodItem 32)
+      frac `shouldBe` Just 0.5
+
+    it "works for ArmorItem at full durability" $ do
+      let frac = durabilityFraction (ArmorItem Chestplate DiamondArmor 528)
+      frac `shouldBe` Just 1.0
+
+    it "works for ArmorItem at partial durability" $ do
+      let frac = durabilityFraction (ArmorItem Helmet IronArmor 120)
+      frac `shouldBe` Just 0.5
+
+  describe "durabilityBarColor thresholds" $ do
+    it "returns green for fraction > 0.6" $ do
+      durabilityBarColor 0.61 `shouldBe` (0.2, 0.8, 0.2, 1.0)
+
+    it "returns green for fraction = 1.0" $ do
+      durabilityBarColor 1.0 `shouldBe` (0.2, 0.8, 0.2, 1.0)
+
+    it "returns yellow for fraction = 0.6" $ do
+      durabilityBarColor 0.6 `shouldBe` (0.9, 0.8, 0.2, 1.0)
+
+    it "returns yellow for fraction = 0.31" $ do
+      durabilityBarColor 0.31 `shouldBe` (0.9, 0.8, 0.2, 1.0)
+
+    it "returns red for fraction = 0.3" $ do
+      durabilityBarColor 0.3 `shouldBe` (0.8, 0.2, 0.2, 1.0)
+
+    it "returns red for fraction = 0.1" $ do
+      durabilityBarColor 0.1 `shouldBe` (0.8, 0.2, 0.2, 1.0)
+
+    it "returns red for fraction = 0.0" $ do
+      durabilityBarColor 0.0 `shouldBe` (0.8, 0.2, 0.2, 1.0)
 -- Cursor Item Rendering
 -- =========================================================================
 cursorItemRenderSpec :: Spec
