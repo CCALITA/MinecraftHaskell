@@ -127,6 +127,8 @@ data GameState = GameState
   , gsPortalTimer      :: !(IORef Float)
   , gsVillagerProf     :: !(IORef (Maybe VillagerProfession))
   , gsVillagerTrades   :: !(IORef [TradeOffer])
+    -- Hotbar popup (item name, remaining seconds)
+  , gsHotbarPopup      :: !(IORef (Maybe (String, Float)))
   }
 
 -- | Create a fresh GameState with default initial values.
@@ -211,3 +213,4 @@ newGameState spawnPos = do
     <*> newIORef 0.0
     <*> newIORef Nothing
     <*> newIORef []
+    <*> newIORef Nothing  -- gsHotbarPopup

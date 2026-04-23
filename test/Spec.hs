@@ -159,6 +159,7 @@ main = hspec $ do
   durabilityDisplaySpec
   cursorItemRenderSpec
   shiftClickContainerSpec
+  hotbarPopupSpec
 
 -- =========================================================================
 -- Block
@@ -8343,3 +8344,205 @@ shiftClickContainerSpec = describe "Shift-click container transfers" $ do
       let allPixels = concatMap armorSlotSilhouette [Helmet, Chestplate, Leggings, Boots]
           validCoords = all (\(r, c, _) -> r >= 0 && r <= 2 && c >= 0 && c <= 2) allPixels
       validCoords `shouldBe` True
+
+
+-- =========================================================================
+-- Hotbar Popup
+-- =========================================================================
+hotbarPopupSpec :: Spec
+hotbarPopupSpec = describe "Hotbar item name popup" $ do
+  -- GameState field
+  describe "gsHotbarPopup IORef" $ do
+    it "defaults to Nothing in a new GameState" $ do
+      gs <- newGameState (V3 0 80 0)
+      popup <- readIORef (gsHotbarPopup gs)
+      popup `shouldBe` Nothing
+
+    it "can be set to Just (name, timer)" $ do
+      gs <- newGameState (V3 0 80 0)
+      writeIORef (gsHotbarPopup gs) (Just ("Stone", 2.0))
+      popup <- readIORef (gsHotbarPopup gs)
+      popup `shouldBe` Just ("Stone", 2.0)
+
+    it "can be cleared back to Nothing" $ do
+      gs <- newGameState (V3 0 80 0)
+      writeIORef (gsHotbarPopup gs) (Just ("Dirt", 1.5))
+      writeIORef (gsHotbarPopup gs) Nothing
+      popup <- readIORef (gsHotbarPopup gs)
+      popup `shouldBe` Nothing
+
+  -- Timer decay logic
+  describe "popup timer decay" $ do
+    it "timer decrements each tick" $ do
+      ref <- newIORef (Just ("Stone", 2.0) :: Maybe (String, Float))
+      let dt = 0.05 :: Float
+      mVal <- readIORef ref
+      case mVal of
+        Just (name, t) -> writeIORef ref (if t - dt > 0 then Just (name, t - dt) else Nothing)
+        Nothing -> pure ()
+      result <- readIORef ref
+      result `shouldBe` Just ("Stone", 1.95)
+
+    it "timer clears when reaching zero" $ do
+      ref <- newIORef (Just ("Stone", 0.03) :: Maybe (String, Float))
+      let dt = 0.05 :: Float
+      mVal <- readIORef ref
+      case mVal of
+        Just (name, t) -> writeIORef ref (if t - dt > 0 then Just (name, t - dt) else Nothing)
+        Nothing -> pure ()
+      result <- readIORef ref
+      result `shouldBe` Nothing
+
+    it "Nothing stays Nothing after decay" $ do
+      ref <- newIORef (Nothing :: Maybe (String, Float))
+      let dt = 0.05 :: Float
+      mVal <- readIORef ref
+      case mVal of
+        Just (name, t) -> writeIORef ref (if t - dt > 0 then Just (name, t - dt) else Nothing)
+        Nothing -> pure ()
+      result <- readIORef ref
+      result `shouldBe` Nothing
+
+  -- Popup content from inventory
+  describe "popup content from hotbar slot" $ do
+    it "shows block item name for occupied slot" $ do
+      let inv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 5))
+      case getHotbarSlot inv 0 of
+        Just (ItemStack item _) -> itemName item `shouldBe` "Stone"
+        Nothing -> expectationFailure "slot should not be empty"
+
+    it "shows tool item name for tool slot" $ do
+      let inv = setSlot emptyInventory 1 (Just (ItemStack (ToolItem Pickaxe Diamond 1561) 1))
+      case getHotbarSlot inv 1 of
+        Just (ItemStack item _) -> itemName item `shouldBe` "Diamond Pickaxe"
+        Nothing -> expectationFailure "slot should not be empty"
+
+    it "shows food item name" $ do
+      let inv = setSlot emptyInventory 2 (Just (ItemStack (FoodItem Apple) 3))
+      case getHotbarSlot inv 2 of
+        Just (ItemStack item _) -> itemName item `shouldBe` "Apple"
+        Nothing -> expectationFailure "slot should not be empty"
+
+    it "returns Nothing for empty slot" $ do
+      getHotbarSlot emptyInventory 0 `shouldBe` Nothing
+
+    it "shows material item name" $ do
+      let inv = setSlot emptyInventory 3 (Just (ItemStack (MaterialItem DiamondGem) 10))
+      case getHotbarSlot inv 3 of
+        Just (ItemStack item _) -> itemName item `shouldBe` "Diamond"
+        Nothing -> expectationFailure "slot should not be empty"
+
+  -- Slot change triggers popup
+  describe "selectHotbar triggers popup update" $ do
+    it "selecting slot with item yields item name" $ do
+      ref <- newIORef (Nothing :: Maybe (String, Float))
+      let inv = setSlot emptyInventory 3 (Just (ItemStack (BlockItem Dirt) 12))
+      case getHotbarSlot inv 3 of
+        Just (ItemStack item _) -> writeIORef ref (Just (itemName item, 2.0))
+        Nothing                 -> writeIORef ref Nothing
+      popup <- readIORef ref
+      popup `shouldBe` Just ("Dirt", 2.0)
+
+    it "selecting empty slot yields Nothing" $ do
+      ref <- newIORef (Just ("old", 1.0) :: Maybe (String, Float))
+      case getHotbarSlot emptyInventory 5 of
+        Just (ItemStack item _) -> writeIORef ref (Just (itemName item, 2.0))
+        Nothing                 -> writeIORef ref Nothing
+      popup <- readIORef ref
+      popup `shouldBe` Nothing
+
+    it "scroll re-triggers with new slot item" $ do
+      ref <- newIORef (Nothing :: Maybe (String, Float))
+      let inv0 = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 1))
+          inv1 = setSlot inv0 1 (Just (ItemStack (BlockItem Sand) 1))
+      -- Simulate scrolling from slot 0 to slot 1
+      case getHotbarSlot inv1 1 of
+        Just (ItemStack item _) -> writeIORef ref (Just (itemName item, 2.0))
+        Nothing                 -> writeIORef ref Nothing
+      popup <- readIORef ref
+      popup `shouldBe` Just ("Sand", 2.0)
+
+-- =========================================================================
+-- Enchantment Glow Border
+-- =========================================================================
+enchantGlowSpec :: Spec
+enchantGlowSpec = describe "UI.EnchantGlow" $ do
+
+  describe "glowColor" $ do
+    it "has purple shimmer RGBA (0.7, 0.3, 1.0, 0.4)" $
+      glowColor `shouldBe` (0.7, 0.3, 1.0, 0.4)
+
+  describe "glowThickness" $ do
+    it "is a positive value" $
+      glowThickness `shouldSatisfy` (> 0)
+
+    it "is small enough to be a thin border" $
+      glowThickness `shouldSatisfy` (< 0.02)
+
+  describe "isSlotEnchanted" $ do
+    it "returns False for empty map" $ do
+      let m = Map.empty
+      isSlotEnchanted m 0 `shouldBe` False
+
+    it "returns False for slot not in map" $ do
+      let m = Map.singleton 5 [Enchantment Sharpness 1]
+      isSlotEnchanted m 0 `shouldBe` False
+
+    it "returns True for slot with enchantments" $ do
+      let m = Map.singleton 0 [Enchantment Sharpness 1]
+      isSlotEnchanted m 0 `shouldBe` True
+
+    it "returns True for slot with multiple enchantments" $ do
+      let m = Map.singleton 3 [Enchantment Sharpness 2, Enchantment Unbreaking 1]
+      isSlotEnchanted m 3 `shouldBe` True
+
+    it "returns False for slot with empty enchantment list" $ do
+      let m = Map.singleton 0 []
+      isSlotEnchanted m 0 `shouldBe` False
+
+    it "checks correct slot index in multi-slot map" $ do
+      let m = Map.fromList [(0, [Enchantment Sharpness 1]), (5, [Enchantment Protection 2])]
+      isSlotEnchanted m 0 `shouldBe` True
+      isSlotEnchanted m 5 `shouldBe` True
+      isSlotEnchanted m 3 `shouldBe` False
+
+  describe "enchantGlowBorder" $ do
+    it "produces 4 quads (4 * 6 verts * 6 floats = 144 floats)" $ do
+      let verts = enchantGlowBorder 0.0 0.0 0.1 0.1
+      length verts `shouldBe` 144
+
+    it "produces 144 floats even for zero-size slot" $ do
+      let verts = enchantGlowBorder 0.0 0.0 0.0 0.0
+      length verts `shouldBe` 144
+
+    it "all color components match glow color" $ do
+      let verts = enchantGlowBorder 0.0 0.0 0.1 0.1
+          extractColors [] = []
+          extractColors (_x:_y:r:g:b:a:rest) = (r, g, b, a) : extractColors rest
+          extractColors _ = []
+          colors = extractColors verts
+      all (== glowColor) colors `shouldBe` True
+
+    it "border coords stay within slot bounds" $ do
+      let x0 = 0.1; y0 = 0.2; w = 0.5; h = 0.4
+          verts = enchantGlowBorder x0 y0 w h
+          extractXY [] = []
+          extractXY (x:y:_r:_g:_b:_a:rest) = (x, y) : extractXY rest
+          extractXY _ = []
+          coords = extractXY verts
+          xs = fmap fst coords
+          ys = fmap snd coords
+      minimum xs `shouldSatisfy` (>= x0 - 0.001)
+      maximum xs `shouldSatisfy` (<= x0 + w + 0.001)
+      minimum ys `shouldSatisfy` (>= y0 - 0.001)
+      maximum ys `shouldSatisfy` (<= y0 + h + 0.001)
+
+    it "different positions produce different vertex data" $ do
+      let verts1 = enchantGlowBorder 0.0 0.0 0.1 0.1
+          verts2 = enchantGlowBorder 0.5 0.5 0.1 0.1
+      verts1 `shouldNotBe` verts2
+
+    it "different sizes produce different vertex data" $ do
+      let verts1 = enchantGlowBorder 0.0 0.0 0.1 0.1
+          verts2 = enchantGlowBorder 0.0 0.0 0.2 0.2
+      verts1 `shouldNotBe` verts2

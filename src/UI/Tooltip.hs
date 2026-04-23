@@ -2,6 +2,7 @@ module UI.Tooltip
   ( TooltipInfo(..)
   , buildTooltip
   , renderTooltipVertices
+  , itemName
   ) where
 
 import Game.Item

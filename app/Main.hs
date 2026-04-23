@@ -27,6 +27,7 @@ import Game.Item
 import Game.Bucket (BucketAction(..), determineBucketAction)
 import Game.Crafting
 import Game.Enchanting
+import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted)
 import Game.DayNight
 import World.Biome (biomeAt)
 import World.Weather (WeatherState(..), WeatherType(..), newWeatherState, updateWeather, isRaining, weatherSkyMultiplier, weatherAmbientMultiplier)
@@ -48,7 +49,7 @@ import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(
 import Game.ItemDisplay (itemColor, itemMiniIcon, durabilityFraction, durabilityBarColor)
 import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts)
 import Game.ItemDisplay (itemColor, itemMiniIcon)
-import UI.Tooltip (buildTooltip, renderTooltipVertices)
+import UI.Tooltip (buildTooltip, renderTooltipVertices, itemName)
 import Game.ItemDisplay (itemColor, itemMiniIcon, armorSlotSilhouette)
 import Engine.Sound
 import Game.Particle
@@ -258,6 +259,7 @@ main = do
         villagerProfRef     = gsVillagerProf gs
         villagerTradesRef   = gsVillagerTrades gs
         playModeRef         = gsPlayMode gs
+        hotbarPopupRef      = gsHotbarPopup gs
         lastClickRef        = gsLastClick gs
     palettePageRef <- newIORef (0 :: Int)
 
@@ -333,7 +335,17 @@ main = do
 
     -- Helper: cancel eating (resets timer to 0)
     let cancelEating = modifyIORef' playerRef (\p -> p { plEatingTimer = 0.0 })
-        selectSlot n = modifyIORef' inventoryRef (`selectHotbar` n) >> cancelEating
+        -- Helper: show hotbar item name popup for the given slot
+        showHotbarPopup n = do
+          inv <- readIORef inventoryRef
+          let popup = case getHotbarSlot inv n of
+                Just (ItemStack item _) -> Just (itemName item, 2.0)
+                Nothing                 -> Nothing
+          writeIORef hotbarPopupRef popup
+        selectSlot n = do
+          modifyIORef' inventoryRef (`selectHotbar` n)
+          cancelEating
+          showHotbarPopup n
         triggerDamageFlash = do
           writeIORef damageFlashRef 0.3
           playSound soundSystem SndPlayerHurt
@@ -366,6 +378,7 @@ main = do
               | otherwise = cur
         when (newSlot /= cur) cancelEating
         modifyIORef' inventoryRef (`selectHotbar` newSlot)
+        when (newSlot /= cur) $ showHotbarPopup newSlot
 
     -- Mouse button callback
     GLFW.setMouseButtonCallback (whWindow wh) $ Just $ \_win button action _mods -> do
@@ -2813,6 +2826,14 @@ main = do
             case achToast of
               Just (name, t) -> writeIORef achievementToastRef (if t - dt > 0 then Just (name, t - dt) else Nothing)
               Nothing        -> pure ()
+            -- Hotbar popup timer decay
+            hotbarPopup <- readIORef hotbarPopupRef
+            let hotbarPopupText = case hotbarPopup of
+                  Just (name, t) | t > 0 -> Just name
+                  _                      -> Nothing
+            case hotbarPopup of
+              Just (name, t) -> writeIORef hotbarPopupRef (if t - dt > 0 then Just (name, t - dt) else Nothing)
+              Nothing        -> pure ()
             -- Update chat message timers
             modifyIORef' chatStateRef (updateChatMessages dt)
             debugInfo <- if showDebug
@@ -2880,7 +2901,8 @@ main = do
             chatState <- readIORef chatStateRef
             mVillProf <- readIORef villagerProfRef
             villTrades <- readIORef villagerTradesRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player')
+            enchantSnap <- readIORef enchantMapRef
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player') enchantSnap hotbarPopupText
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -3423,12 +3445,13 @@ tryTriggerAchievement achRef toastRef trigger = do
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- sleepMsgText: Just "message" when a bed-related message should be shown
 -- achToastText: Just "name" when an achievement toast should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots = VS.fromList $
+-- hotbarPopupText: Just "item name" when a hotbar item name popup should be shown
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> Maybe String -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots hotbarPopupText = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
-    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ achToastVerts ++ chatMessageVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ achToastVerts ++ chatMessageVerts ++ hotbarPopupVerts
     ChatInput -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ healthVerts ++ hungerVerts ++ chatInputVerts ++ chatMessageVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts ++ invTooltipVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts ++ craftTooltipVerts
@@ -3508,8 +3531,13 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
           sh = slotH - 4 * slotPad
           pixW = sw / 3
           pixH = sh / 3
+          -- Enchantment glow border around the full slot area
+          glowVerts =
+            if isSlotEnchanted enchantSnap i
+            then enchantGlowBorder (hotbarX0 + fromIntegral i * slotW) hotbarY slotW slotH
+            else []
       in case getSlot inv i of
-        Nothing -> []
+        Nothing -> glowVerts
         Just (ItemStack item cnt) ->
           let colors = itemMiniIcon item
               iconVerts = concatMap (\(row, col, c) ->
@@ -3520,7 +3548,7 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
                 then renderText (x0 + sw - 0.025) (y0 + sh - 0.02) 0.6 (1,1,1,1) (show cnt)
                 else []
               durBar = durabilityBarVerts x0 (y0 + sh) sw item
-          in iconVerts ++ countText ++ durBar
+          in iconVerts ++ countText ++ durBar ++ glowVerts
 
     -- Highlight selected slot
     sel = invSelected inv
@@ -3797,6 +3825,13 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
           in achBg ++ achTxt
       Nothing -> []
 
+    -- Hotbar item name popup: white text centered above hotbar
+    hotbarPopupVerts = case hotbarPopupText of
+      Just name ->
+          let popupY = hotbarY - 0.12  -- above xp bar / hearts
+          in renderTextCentered popupY 1.0 (1.0, 1.0, 1.0, 1.0) name
+      Nothing -> []
+
     -- Death screen: red overlay, "YOU DIED" text, score, and respawn button
     deathScreenVerts =
       -- Red tinted overlay
@@ -3872,8 +3907,12 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
               sw = invSlotW - 2 * invSlotPad
               sh = invSlotH - 2 * invSlotPad
               slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
+              glowVerts =
+                if isSlotEnchanted enchantSnap idx
+                then enchantGlowBorder x y sw sh
+                else []
           in case getSlot inv idx of
-            Nothing -> slotBg
+            Nothing -> slotBg ++ glowVerts
             Just (ItemStack item _) ->
               let colors = itemMiniIcon item
                   pixW = sw / 3; pixH = sh / 3
@@ -3881,7 +3920,7 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
                        quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                             (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
                   durBar = durabilityBarVerts x (y + sh) sw item
-              in slotBg ++ iconVerts ++ durBar
+              in slotBg ++ iconVerts ++ durBar ++ glowVerts
 
         -- 2x2 crafting grid positions (above inventory)
         craft2x2X0 = -0.03 :: Float
