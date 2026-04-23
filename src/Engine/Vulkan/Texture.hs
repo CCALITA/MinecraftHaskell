@@ -1064,41 +1064,101 @@ tileFull tileIdx lx ly = case tileIdx of
             | otherwise            = (32, 18, 36)
       in (r, g, b, 255)
 
-    -- Netherrack: dark red with brownish veins
+    -- Netherrack: blood-red rocky base with darker vein patterns
     netherrackPattern x y =
-      let n = pixHash x y 3000 `mod` 100
-          vein = pixHash (x `div` 3) (y `div` 2) 3001 `mod` 10 < 2
-          (r, g, b) = if vein then (100, 40, 35) else if n < 30 then (110, 50, 45) else (120, 55, 50)
-      in (r, g, b, 255)
+      let -- Hash-based connected vein lines: check if nearby cells share a vein seed
+          vx = x `div` 3
+          vy = y `div` 2
+          veinSeed = pixHash vx vy 3001 `mod` 10
+          neighborSeed = pixHash (vx + 1) vy 3001 `mod` 10
+          vertSeed = pixHash vx (vy + 1) 3001 `mod` 10
+          isVein = veinSeed < 2 || (neighborSeed < 2 && x `mod` 3 == 0) || (vertSeed < 2 && y `mod` 2 == 0)
+          -- Per-pixel variation +-20
+          vary = pixHash x y 3002 `mod` 41 - 20
+          clampC lo hi v = max lo (min hi v)
+          (br, bg, bb) = if isVein
+                         then (clampC 0 255 (80 + vary), clampC 0 255 (15 + vary `div` 2), clampC 0 255 (15 + vary `div` 2))
+                         else (clampC 0 255 (120 + vary), clampC 0 255 (30 + vary `div` 2), clampC 0 255 (30 + vary `div` 2))
+      in (fromIntegral br, fromIntegral bg, fromIntegral bb, 255)
 
-    -- Soul sand: dark brown with wailing-face-like dark spots
+    -- Soul sand: dark brown base with ghostly face-like impressions and sandy grain
     soulSandPattern x y =
-      let n = pixHash x y 3100 `mod` 100
-          face = pixHash (x `div` 4) (y `div` 4) 3101 `mod` 10 < 3
-          (r, g, b) = if face then (60, 45, 30) else if n < 40 then (80, 60, 40) else (90, 70, 50)
-      in (r, g, b, 255)
+      let n = pixHash x y 3100 `mod` 40
+          -- Ghostly face features: two eye spots and a mouth line
+          dx1 = x - 5; dy1 = y - 5
+          dx2 = x - 10; dy2 = y - 5
+          isEye1 = dx1 * dx1 + dy1 * dy1 <= 4  -- radius 2 around (5,5)
+          isEye2 = dx2 * dx2 + dy2 * dy2 <= 4  -- radius 2 around (10,5)
+          isMouth = (y == 10 || y == 11) && x >= 5 && x <= 10
+          isFace = isEye1 || isEye2 || isMouth
+          -- Sandy grain texture: subtle brightness variation
+          grain = pixHash (x * 7 + y * 3) (y * 11 + x) 3102 `mod` 15
+          (br, bg, bb)
+            | isFace    = (40 + fromIntegral grain, 28 + fromIntegral (grain `div` 2), 18 + fromIntegral (grain `div` 3))
+            | otherwise = (60 + fromIntegral (n + grain), 45 + fromIntegral ((n + grain) * 3 `div` 4), 30 + fromIntegral ((n + grain) `div` 2))
+      in (br, bg, bb, 255)
 
-    -- Glowstone: bright yellow-gold with luminous cracks
+    -- Glowstone: bright yellow-amber crystal mosaic with irregular cells
     glowstonePattern x y =
-      let n = pixHash x y 3200 `mod` 100
-          bright = pixHash (x `div` 2) (y `div` 2) 3201 `mod` 10 < 3
-          (r, g, b) = if bright then (255, 230, 120) else if n < 30 then (200, 170, 80) else (220, 190, 100)
-      in (r, g, b, 255)
+      let -- Irregular 3-4 px cells: perturb cell boundaries using hash
+          cellBaseX = x `div` 3
+          cellBaseY = y `div` 3
+          shiftX = pixHash cellBaseX cellBaseY 3200 `mod` 2
+          shiftY = pixHash cellBaseX cellBaseY 3201 `mod` 2
+          cx = (x + shiftX) `div` 3
+          cy = (y + shiftY) `div` 3
+          cellSeed = pixHash cx cy 3202
+          -- Detect border: neighbor cells differ
+          neighborX = (x + 1 + shiftX) `div` 3
+          neighborY = (y + 1 + shiftY) `div` 3
+          isBorder = neighborX /= cx || neighborY /= cy
+          -- Per-cell color: bright yellow/orange range (230-255, 180-220, 50-100)
+          rSeed = cellSeed `mod` 26            -- 0-25 -> add to 230
+          gSeed = (cellSeed `div` 26) `mod` 41 -- 0-40 -> add to 180
+          bSeed = (cellSeed `div` 1066) `mod` 51 -- 0-50 -> add to 50
+          r = 230 + rSeed
+          g = 180 + gSeed
+          b = 50 + bSeed
+          -- Within-cell subtle variation
+          pv = pixHash x y 3203 `mod` 10 - 5
+      in if isBorder
+         then (fromIntegral (max 0 (r - 80)), fromIntegral (max 0 (g - 80)), fromIntegral (max 0 (b - 30)), 255)
+         else (fromIntegral (min 255 (max 0 (r + pv))), fromIntegral (min 255 (max 0 (g + pv))), fromIntegral (min 255 (max 0 (b + pv))), 255)
 
-    -- Nether brick: dark red-brown bricks with mortar lines
+    -- Nether brick: dark red-brown brick grid with slightly darker mortar
     netherBrickPattern x y =
       let row = y `div` 4
           offset = if row `mod` 2 == 0 then 0 else 8
           bx = (x + offset) `mod` 16
           isMortar = y `mod` 4 == 0 || bx `mod` 8 == 0
-      in if isMortar then (30, 20, 20, 255) else (70, 30, 30, 255)
+          n = pixHash x y 3300 `mod` 15
+          -- Mortar: slightly darker than bricks
+          (mr, mg, mb) = (55 + n, 18 + n `div` 2, 15 + n `div` 2)
+          -- Bricks: red-brown base (80, 30, 25) with subtle variation
+          (br, bg, bb) = (80 + n, 30 + n `div` 2, 25 + n `div` 2)
+      in if isMortar
+         then (fromIntegral mr, fromIntegral mg, fromIntegral mb, 255)
+         else (fromIntegral br, fromIntegral bg, fromIntegral bb, 255)
 
-    -- Nether portal: swirling purple pattern (semi-transparent)
+    -- Nether portal: swirling purple-blue vortex with sin-based spiral
     netherPortalPattern x y =
-      let n = pixHash x y 3300 `mod` 100
-          swirl = pixHash (x + y `div` 2) (y `div` 3) 3301 `mod` 10 < 4
-          (r, g, b, a) = if swirl then (140, 50, 200, 200) else (80 + fromIntegral (n `mod` 30), 20, 130 + fromIntegral (n `mod` 40), 160)
-      in (r, g, b, a)
+      let -- Distance from center (8,8) in 16x16 tile
+          dx = x - 8
+          dy = y - 8
+          -- Spiral phase: combine squared distance and angle-like term
+          distSq = dx * dx + dy * dy
+          phase = (dx * 3 + dy * 5 + distSq) `mod` 16
+          -- Interpolate between bright purple (120,40,200) and dark (40,10,80)
+          t = phase  -- 0..15
+          r = 40 + (120 - 40) * (16 - t) `div` 16
+          g = 10 + (40 - 10) * (16 - t) `div` 16
+          b = 80 + (200 - 80) * (16 - t) `div` 16
+          -- Per-pixel shimmer
+          shimmer = pixHash x y 3401 `mod` 20 - 10
+      in (fromIntegral (max 0 (min 255 (r + shimmer))),
+          fromIntegral (max 0 (min 255 (g + shimmer `div` 3))),
+          fromIntegral (max 0 (min 255 (b + shimmer))),
+          200)
 
     -- Mossy cobblestone: cobblestone with green moss patches
     mossyCobblePattern x y =
