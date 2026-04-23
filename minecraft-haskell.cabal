@@ -87,6 +87,7 @@ library
     Game.ItemDisplay
     Game.ItemRegistry
     Game.DroppedItem
+    Game.PickupToast
     Game.PotionEffect
     Game.Particle
     Game.XP

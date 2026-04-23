@@ -41,6 +41,7 @@ import Entity.Villager (VillagerProfession(..), TradeOffer(..), generateTrades, 
 import Game.Save
 import Game.SaveV3 (SaveDataV3(..), savev3Version, savePlayerV3, loadPlayerV3)
 import Game.DroppedItem
+import Game.PickupToast (PickupToast(..), mergeToast, tickToasts, formatToast)
 import Game.BlockEntity
 import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), newGameState)
 import Game.Creative (creativeClickSlot, creativePickFromPalette, creativeConsumeItem, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
@@ -260,6 +261,7 @@ main = do
         villagerTradesRef   = gsVillagerTrades gs
         playModeRef         = gsPlayMode gs
         hotbarPopupRef      = gsHotbarPopup gs
+        pickupToastsRef     = gsPickupToasts gs
         lastClickRef        = gsLastClick gs
     palettePageRef <- newIORef (0 :: Int)
 
@@ -2385,6 +2387,10 @@ main = do
                  inv' <- readIORef inventoryRef
                  let inv'' = foldl (\i (item, cnt) -> fst $ addItem i item cnt) inv' collected
                  writeIORef inventoryRef inv''
+                 -- Merge collected items into pickup toasts
+                 toasts <- readIORef pickupToastsRef
+                 let toasts' = foldl (\ts (item, cnt) -> mergeToast (itemName item) cnt ts) toasts collected
+                 writeIORef pickupToastsRef toasts'
 
             -- Entity spawning (every ~2 seconds)
             frameIdx <- readIORef frameRef
@@ -2842,6 +2848,9 @@ main = do
             case hotbarPopup of
               Just (name, t) -> writeIORef hotbarPopupRef (if t - dt > 0 then Just (name, t - dt) else Nothing)
               Nothing        -> pure ()
+            -- Tick pickup toast timers and remove expired
+            modifyIORef' pickupToastsRef (tickToasts dt)
+            pickupToasts <- readIORef pickupToastsRef
             -- Update chat message timers
             modifyIORef' chatStateRef (updateChatMessages dt)
             debugInfo <- if showDebug
@@ -2910,7 +2919,7 @@ main = do
             mVillProf <- readIORef villagerProfRef
             villTrades <- readIORef villagerTradesRef
             enchantSnap <- readIORef enchantMapRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player') enchantSnap hotbarPopupText
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player') enchantSnap hotbarPopupText pickupToasts
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -3455,12 +3464,12 @@ tryTriggerAchievement achRef toastRef trigger = do
 -- sleepMsgText: Just "message" when a bed-related message should be shown
 -- achToastText: Just "name" when an achievement toast should be shown
 -- hotbarPopupText: Just "item name" when a hotbar item name popup should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> Maybe String -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots hotbarPopupText = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> Map.Map Int [Enchantment] -> Maybe String -> [PickupToast] -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots enchantSnap hotbarPopupText pickupToasts = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
-    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ achToastVerts ++ chatMessageVerts ++ hotbarPopupVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ achToastVerts ++ chatMessageVerts ++ hotbarPopupVerts ++ pickupToastVerts
     ChatInput -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ healthVerts ++ hungerVerts ++ chatInputVerts ++ chatMessageVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts ++ invTooltipVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts ++ craftTooltipVerts
@@ -3841,6 +3850,16 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
           in renderTextCentered popupY 1.0 (1.0, 1.0, 1.0, 1.0) name
       Nothing -> []
 
+
+    -- Pickup notification toasts: small text lines on right side of screen
+    pickupToastVerts = concatMap renderOneToast (zip [0..] pickupToasts)
+    renderOneToast (i, toast) =
+      let msg    = formatToast toast
+          alpha  = min 1.0 (ptTimer toast / 0.5)  -- fade out in last 0.5s
+          lineH  = 0.07 :: Float  -- vertical spacing between toasts
+          toastY = (-0.3) + fromIntegral (i :: Int) * lineH  -- stack from top-right area
+          toastX = 0.95 - fromIntegral (length msg) * charSpacing * 0.7  -- right-align at scale 0.7
+      in renderText toastX toastY 0.7 (0.2, 1.0, 0.2, alpha) msg
     -- Death screen: red overlay, "YOU DIED" text, score, and respawn button
     deathScreenVerts =
       -- Red tinted overlay

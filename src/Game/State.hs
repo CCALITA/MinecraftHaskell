@@ -16,6 +16,7 @@ import qualified System.Random
 
 import Game.Player (Player, PlayerInput, defaultPlayer, noInput)
 import Game.Inventory (Inventory, ItemStack, emptyInventory)
+import Game.PickupToast (PickupToast)
 import Game.Crafting (CraftingGrid, emptyCraftingGrid)
 import Game.Furnace (FurnaceState, newFurnaceState)
 import Game.Enchanting (EnchantmentType, EnchantmentMap, newEnchantmentMap)
@@ -129,6 +130,8 @@ data GameState = GameState
   , gsVillagerTrades   :: !(IORef [TradeOffer])
     -- Hotbar popup (item name, remaining seconds)
   , gsHotbarPopup      :: !(IORef (Maybe (String, Float)))
+    -- Pickup notification toasts
+  , gsPickupToasts     :: !(IORef [PickupToast])
   }
 
 -- | Create a fresh GameState with default initial values.
@@ -214,3 +217,4 @@ newGameState spawnPos = do
     <*> newIORef Nothing
     <*> newIORef []
     <*> newIORef Nothing  -- gsHotbarPopup
+    <*> newIORef []       -- gsPickupToasts

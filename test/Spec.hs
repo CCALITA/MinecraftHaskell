@@ -13,6 +13,7 @@ import Game.Item
 import Game.Crafting
 import Game.Player
 import Game.DroppedItem
+import Game.PickupToast (PickupToast(..), mergeToast, tickToasts, formatToast, defaultToastDuration)
 import Game.Save (SaveData(..), inventoryToSlotList, slotListToInventory, savePlayer, playerSavePath)
 import Game.SaveV3 (SaveDataV3(..), ChunkMeta(..), savev3Version, encodeSaveV3, decodeSaveV3, migrateV2toV3, savePlayerV3, loadPlayerV3)
 import Game.BlockEntity
@@ -8730,3 +8731,66 @@ hotbarSwapSpec = describe "Game.Inventory.swapHotbarWithInventory" $ do
     getSlot inv' 0 `shouldBe` dirt5
     getSlot inv' 9 `shouldBe` stone3
     getSlot inv' 5 `shouldBe` pickaxe
+
+  describe "Game.PickupToast" $ do
+    describe "mergeToast" $ do
+      it "appends a new toast when list is empty" $ do
+        let result = mergeToast "Stone" 5 []
+        result `shouldBe` [PickupToast "Stone" 5 3.0]
+
+      it "merges count and resets timer for existing toast with same name" $ do
+        let existing = [PickupToast "Stone" 3 1.5]
+            result   = mergeToast "Stone" 2 existing
+        result `shouldBe` [PickupToast "Stone" 5 3.0]
+
+      it "appends new toast when name does not match existing" $ do
+        let existing = [PickupToast "Stone" 3 2.0]
+            result   = mergeToast "Diamond" 1 existing
+        length result `shouldBe` 2
+        ptName (head result) `shouldBe` "Stone"
+        ptName (last result) `shouldBe` "Diamond"
+        ptCount (last result) `shouldBe` 1
+
+      it "merges into correct toast among multiple entries" $ do
+        let existing = [PickupToast "Stone" 2 2.0, PickupToast "Diamond" 1 1.0]
+            result   = mergeToast "Diamond" 3 existing
+        length result `shouldBe` 2
+        -- Diamond toast should have merged count and reset timer
+        let diamondToast = last result
+        ptName diamondToast `shouldBe` "Diamond"
+        ptCount diamondToast `shouldBe` 4
+        ptTimer diamondToast `shouldBe` 3.0
+
+      it "preserves order of non-matching toasts during merge" $ do
+        let existing = [PickupToast "A" 1 2.0, PickupToast "B" 2 1.5, PickupToast "C" 3 1.0]
+            result   = mergeToast "B" 5 existing
+        map ptName result `shouldBe` ["A", "C", "B"]
+        ptCount (last result) `shouldBe` 7
+
+    describe "tickToasts" $ do
+      it "decrements all timers by dt" $ do
+        let toasts = [PickupToast "Stone" 5 3.0, PickupToast "Diamond" 1 2.0]
+            result = tickToasts 0.5 toasts
+        map ptTimer result `shouldBe` [2.5, 1.5]
+
+      it "removes toasts with timer at or below zero" $ do
+        let toasts = [PickupToast "Stone" 5 0.5, PickupToast "Diamond" 1 0.1]
+            result = tickToasts 0.5 toasts
+        -- Stone: 0.5 - 0.5 = 0.0 -> removed; Diamond: 0.1 - 0.5 = -0.4 -> removed
+        result `shouldBe` []
+
+      it "keeps toasts with remaining time after tick" $ do
+        let toasts = [PickupToast "Stone" 5 3.0, PickupToast "Diamond" 1 0.3]
+            result = tickToasts 0.2 toasts
+        length result `shouldBe` 2
+
+    describe "formatToast" $ do
+      it "formats toast as +count name" $ do
+        formatToast (PickupToast "Stone" 5 3.0) `shouldBe` "+5 Stone"
+
+      it "formats single item toast" $ do
+        formatToast (PickupToast "Diamond" 1 2.0) `shouldBe` "+1 Diamond"
+
+    describe "defaultToastDuration" $ do
+      it "is 3.0 seconds" $ do
+        defaultToastDuration `shouldBe` 3.0
