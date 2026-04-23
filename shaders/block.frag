@@ -80,6 +80,14 @@ void main() {
 
     vec3 litColor = texColor.rgb * light;
 
+    // Torch flame flicker: torch tile is at column 0, row 5 in 16x16 atlas
+    bool isTorch = tc.x >= 0.0 && tc.x < tileSize
+                && tc.y >= 5.0 * tileSize && tc.y < 6.0 * tileSize;
+    if (isTorch) {
+        float flicker = 1.0 + 0.15 * sin(ubo.time * 25.0 + fragWorldPos.x * 3.0);
+        litColor *= flicker;
+    }
+
     // Distance fog: smoothstep blend from lit color to fog color
     float fogFactor = smoothstep(ubo.fogStart, ubo.fogEnd, fragViewDist);
     vec3 finalColor = mix(litColor, ubo.fogColor.rgb, fogFactor);

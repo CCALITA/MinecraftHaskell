@@ -63,6 +63,9 @@ pixHash x y s =
 -- | Clamp an Int to the Word8 range [0, 255]
 clampByte :: Int -> Word8
 clampByte v = fromIntegral (max 0 (min 255 v))
+-- | Clamp an Int to valid Word8 range and convert
+clampByte :: Int -> Word8
+clampByte n = fromIntegral (max 0 (min 255 n))
 
 -- | Generate a pixel for a tile with patterns
 tilePixel :: Int -> Int -> Int -> Int -> Word8
@@ -184,41 +187,85 @@ tileFull tileIdx lx ly = case tileIdx of
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
   where
 
-    -- Grass top: green with darker blade variations
+    -- Grass top: blade-like patterns with directional vertical grain
     grassTop x y =
-      let n = pixHash x y 42 `mod` 100
-          base = if n < 30 then (30, 140, 20) else if n < 60 then (50, 170, 30) else (40, 155, 25)
-          (br, bg, bb) = base
+      let -- Vertical blade shapes: hash based on x to create columns of blades
+          bladeHash = pixHash x 0 42 `mod` 16
+          -- Each blade column has a slightly different phase
+          bladePhase = pixHash x 0 43 `mod` 4
+          -- Vertical grain: alternating light/dark based on blade column
+          isLightBlade = (x + bladePhase) `mod` 3 /= 0
+          -- Per-pixel noise for subtle variation
+          n = pixHash x y 44 `mod` 20
+          -- Blade tip darkness (top rows slightly different)
+          tipDarken = if y <= 1 && bladeHash < 6 then 10 else 0
+          (br, bg, bb) = if isLightBlade
+                         then (50 + fromIntegral n `div` 2 - tipDarken, 180 - fromIntegral n - tipDarken, 30 + fromIntegral (n `div` 3))
+                         else (30 + fromIntegral n `div` 3 - tipDarken, 140 - fromIntegral (n `div` 2) - tipDarken, 20 + fromIntegral (n `div` 4))
       in (br, bg, bb, 255)
 
-    -- Stone: gray with crack-like darker lines
+    -- Stone: multi-tone gray layers with subtle cracks
     stonePattern x y =
-      let n = pixHash x y 100 `mod` 100
-          crack = pixHash (x `div` 3) (y `div` 4) 101 `mod` 10 < 2
-          base = if crack then 95 else if n < 20 then 115 else if n < 50 then 125 else 130
-      in (base, base, base, 255)
+      let -- Large-scale tone variation (÷4) for layered geology
+          largeTone = pixHash (x `div` 4) (y `div` 4) 100 `mod` 40
+          -- Medium-scale variation for patches
+          medTone   = pixHash (x `div` 2) (y `div` 2) 102 `mod` 20
+          -- Small-scale per-pixel grain
+          grain     = pixHash x y 103 `mod` 12
+          -- Thin dark crack lines (÷3 hash < threshold)
+          crackH    = pixHash (x `div` 3) (y `div` 3) 101 `mod` 20
+          isCrack   = crackH < 3
+          -- Horizontal sediment lines every ~5 pixels
+          sediment  = pixHash x (y `div` 5) 104 `mod` 15
+          isSediment = sediment < 2
+          -- Compose base value: 110-150 range with layered noise
+          baseVal   = 110 + largeTone - medTone `div` 2 + grain
+          v         = if isCrack then fromIntegral (max 80 (baseVal - 35))
+                      else if isSediment then fromIntegral (max 90 (baseVal - 15))
+                      else fromIntegral (min 155 baseVal)
+      in (v, v, v, 255)
 
-    -- Dirt: brown with speckled variation
+    -- Dirt: brown base with pebble spots and root-like veins
     dirtPattern x y =
       let n = pixHash x y 200 `mod` 100
-          r = if n < 25 then 120 else if n < 50 then 135 else 140
-          g = r * 60 `div` 140
-          b = r * 35 `div` 140
-      in (fromIntegral r, fromIntegral g, fromIntegral b, 255)
+          -- Base brown color in 100-150 range
+          baseVal = 100 + (n * 50) `div` 100
+          -- Pebble spots: lighter dots at ~5% of pixels
+          isPebble = pixHash x y 201 `mod` 100 < 5
+          -- Root-like darker veins: thin horizontal/diagonal lines via hash
+          veinHash = pixHash (x `div` 2) (y + x `div` 4) 202 `mod` 20
+          isVein = veinHash < 2
+          rv | isPebble  = fromIntegral (baseVal + 20)  -- lighter pebble
+             | isVein    = fromIntegral (80 + pixHash x y 203 `mod` 11)  -- dark vein 80-90
+             | otherwise = fromIntegral baseVal
+          gv = rv * 60 `div` 140
+          bv = rv * 35 `div` 140
+      in (rv, gv, bv, 255)
 
-    -- Grass side: dirt bottom with green strip on top
+    -- Grass side: smoother gradient from green top to dirt bottom with irregular transition
     grassSide x y
-      | y <= 2    = grassTop x y
-      | y == 3    = let n = pixHash x y 300 `mod` 3
-                    in if n == 0 then grassTop x y else dirtPattern x y
-      | otherwise = dirtPattern x y
+      | y <= 2    = grassTop x y       -- green top rows
+      | y >= 5    = dirtPattern x y    -- dirt bottom rows
+      | otherwise =
+          -- Transition zone (y=3-4): irregular edge using noise
+          let edgeNoise = pixHash x y 300 `mod` 10
+              -- At y=3, mostly green; at y=4, mostly dirt
+              greenThreshold = if y == 3 then 7 else 3
+          in if edgeNoise < greenThreshold then grassTop x y else dirtPattern x y
 
-    -- Wood planks: tan with horizontal grain lines
+    -- Oak planks: warm tan, 4 horizontal plank divisions with wood grain
     planksPattern x y =
-      let grain = pixHash x (y `div` 4) 400 `mod` 100
-          base = if y `mod` 4 == 0 then 160 else if grain < 20 then 190 else 200
-          r = base; g = base * 170 `div` 210; b = base * 110 `div` 210
-      in (fromIntegral r, fromIntegral g, fromIntegral b, 255)
+      let plankIdx = y `div` 4
+          plankVar = pixHash 0 plankIdx 400 `mod` 20
+          grainLine = y `mod` 4 == 0
+          grain = pixHash x y 401 `mod` 100
+          noise = pixHash x y 402 `mod` 10
+          baseVal = if grainLine then 155 + plankVar
+                    else 185 + plankVar + (grain `div` 20)
+          r = fromIntegral (min 255 (baseVal + noise)) :: Word8
+          g = fromIntegral (min 255 ((baseVal + noise) * 160 `div` 210)) :: Word8
+          b = fromIntegral (min 255 ((baseVal + noise) * 100 `div` 210)) :: Word8
+      in (r, g, b, 255)
 
     -- Sand: golden-tan with subtle grain dots
     sandPattern x y =
@@ -242,11 +289,15 @@ tileFull tileIdx lx ly = case tileIdx of
           v = if n < 20 then 100 else if n < 50 then 130 else if n < 80 then 145 else 160
       in (v, v, v, 255)
 
-    -- Log bark: brown with vertical lines
+    -- Oak log bark: brown vertical furrows with dark/light stripes
     logBark x y =
-      let stripe = pixHash (x `div` 2) y 600 `mod` 100
-          dark = x `mod` 3 == 0 || stripe < 15
-          (r, g, b) = if dark then (70, 50, 25) else (100, 75, 40)
+      let furrow = x `mod` 3
+          noise = pixHash x y 600 `mod` 15
+          stripe = pixHash (x `div` 2) y 601 `mod` 100
+          isDark = furrow == 0 || stripe < 20
+          (r, g, b) = if isDark
+                      then (60 + fromIntegral noise, 40 + fromIntegral (noise `div` 2), 20 + fromIntegral (noise `div` 3))
+                      else (105 + fromIntegral noise, 78 + fromIntegral (noise `div` 2), 42 + fromIntegral (noise `div` 3))
       in (r, g, b, 255)
 
     -- Leaves: transparent-ish green with holes
@@ -255,18 +306,52 @@ tileFull tileIdx lx ly = case tileIdx of
           hole = n < 15
       in if hole then (20, 60, 15, 180) else (40 + fromIntegral (n `mod` 30), 120 + fromIntegral (n `mod` 40), 30, 255)
 
-    -- Cobblestone: irregular gray blocks
+    -- Cobblestone: irregular rounded stone shapes with mortar gaps
     cobblePattern x y =
-      let blockN = pixHash (x `div` 4) (y `div` 3) 800
-          border = x `mod` 4 == 0 || y `mod` 3 == 0
-          v = if border then 80 else fromIntegral (100 + blockN `mod` 40)
-      in (v, v, v, 255)
+      let -- Block-level regions using ÷5 and ÷4 for irregular stone shapes
+          bx        = x `div` 5
+          by        = y `div` 4
+          blockHash = pixHash bx by 800
+          -- Stone tone varies per block region (90-150 range)
+          stoneTone = 90 + blockHash `mod` 61
+          -- Determine if this pixel is at a block boundary (mortar line)
+          xInBlock  = x `mod` 5
+          yInBlock  = y `mod` 4
+          -- Offset alternate rows for irregular layout
+          rowOffset = if by `mod` 2 == 0 then 0 else 2
+          xShifted  = (x + rowOffset) `mod` 16
+          bxShift   = xShifted `div` 5
+          blockHashShift = pixHash bxShift by 800
+          stoneShift = 90 + blockHashShift `mod` 61
+          -- Mortar at boundaries with slight irregularity
+          mortarJitter = pixHash x y 801 `mod` 3
+          isMortarX = xInBlock == 0 || (xInBlock == 4 && mortarJitter == 0)
+          isMortarY = yInBlock == 0 || (yInBlock == 3 && mortarJitter == 1)
+          isMortar  = isMortarX || isMortarY
+          -- Per-pixel noise for surface texture
+          grain     = pixHash x y 802 `mod` 10
+          -- Mortar color is darker (70-80 range)
+          mortarV   = fromIntegral (70 + pixHash x y 803 `mod` 11)
+          -- Use shifted block hash for final stone color to get irregular shapes
+          rawStone  = if by `mod` 2 == 0 then stoneTone else stoneShift
+          stoneV    = fromIntegral (min 155 (rawStone + grain))
+      in if isMortar then (mortarV, mortarV, mortarV, 255)
+         else (stoneV, stoneV, stoneV, 255)
 
-    -- Bedrock: very dark with slight variation
+    -- Bedrock: very dark gray (25-45) with irregular mineral inclusions
     bedrockPattern x y =
-      let n = pixHash x y 900 `mod` 30
-          v = fromIntegral (30 + n)
-      in (v, v, v, 255)
+      let n = pixHash x y 900 `mod` 100
+          inclusionN = pixHash (x + y * 13) (y + x * 7) 901 `mod` 100
+          -- ~10% mineral inclusions
+          isInclusion = inclusionN < 10
+          -- Type of inclusion: brownish or lighter gray
+          isBrownish = (inclusionN `mod` 2) == 0
+          baseV = fromIntegral (25 + n `mod` 21) :: Word8  -- 25..45 range
+      in if isInclusion
+         then if isBrownish
+              then (60, 50, 40, 255)   -- brownish speck
+              else (75, 75, 80, 255)   -- lighter gray speck
+         else (baseV, baseV, baseV, 255)
 
     -- Ore: stone base with colored spots
     orePattern x y (or', og, ob) =
@@ -274,75 +359,253 @@ tileFull tileIdx lx ly = case tileIdx of
                       in n < 3 && (x + y) `mod` 3 /= 0
       in if isOreSpot then (or', og, ob, 255) else stonePattern x y
 
-    -- Water: blue with subtle wave pattern
+    -- Water: deep blue with caustic-like light patterns and surface ripples
     waterPattern x y =
-      let wave = pixHash x (y + x `div` 3) 1100 `mod` 30
-          b = fromIntegral (160 + wave)
-          g = fromIntegral (80 + wave `div` 2)
-      in (30, g, b, 200)
+      let -- Overlapping sine-based hash patterns for caustic highlights
+          h1 = pixHash (x + 3) (y + 5) 1100 `mod` 256
+          h2 = pixHash (x * 2 + 1) (y * 3 + 2) 1101 `mod` 256
+          h3 = pixHash (x + y) (x - y + 16) 1102 `mod` 256
+          caustic = (h1 + h2 + h3) `div` 3
+          -- Bright caustic spots where multiple patterns overlap
+          isBright = caustic > 180
+          -- Surface ripple lines: horizontal lighter streaks every 4-5 pixels
+          rippleRow = (y `mod` 5 == 0) || (y `mod` 5 == 1 && pixHash x y 1103 `mod` 3 == 0)
+          -- Base deep blue with noise
+          baseNoise = pixHash x y 1104 `mod` 20
+          baseR = 20 + fromIntegral (baseNoise `div` 4)
+          baseG = 60 + fromIntegral (baseNoise `div` 2)
+          baseB = 180 + fromIntegral baseNoise
+          -- Apply caustic brightening
+          causticBoost = fromIntegral (caustic `div` 8)
+          (cr, cg, cb) = if isBright
+                         then ( min 255 (baseR + causticBoost + 30)
+                              , min 255 (baseG + causticBoost + 25)
+                              , min 255 (baseB + causticBoost + 15))
+                         else (baseR + causticBoost `div` 3, baseG + causticBoost `div` 3, baseB + causticBoost `div` 4)
+          -- Apply ripple brightening
+          (rr, rg, rb) = if rippleRow
+                         then (min 255 (cr + 15), min 255 (cg + 20), min 255 (cb + 10))
+                         else (cr, cg, cb)
+      in (rr, rg, rb, 200)
 
-    -- Lava: orange-red with bright spots
+    -- Lava: bright orange-red base with dark crust and bright hotspot veins
     lavaPattern x y =
-      let n = pixHash x y 1200 `mod` 100
-          bright = n < 20
-          (r, g, b) = if bright then (255, 200, 50) else (220, 80 + fromIntegral (n `mod` 30), 10)
+      let -- Per-pixel noise
+          n = pixHash x y 1200 `mod` 100
+          -- Large-scale crust pattern (divide by 5 for bigger blobs)
+          crustHash = pixHash (x `div` 5) (y `div` 5) 1201 `mod` 100
+          isCrust = crustHash < 35
+          -- Bright hotspot veins between crust patches: thin lines, hash < threshold
+          veinHash = pixHash (x + y `div` 2) (y + x `div` 3) 1202 `mod` 100
+          isVein = not isCrust && veinHash < 8
+          -- Base bright orange-red
+          baseR = 230
+          baseG = 100 + fromIntegral (n `mod` 30)
+          baseB = 20 + fromIntegral (n `mod` 15)
+          -- Dark crust patches
+          crustR = 80 + fromIntegral (n `mod` 20)
+          crustG = 30 + fromIntegral (n `mod` 15)
+          crustB = 10 + fromIntegral (n `mod` 10)
+          -- Bright yellow-white hotspot veins
+          veinR = 255 :: Word8
+          veinG = 230 + fromIntegral (n `mod` 25)
+          veinB = 120 + fromIntegral (n `mod` 60)
+          (r, g, b)
+            | isVein  = (veinR, veinG, veinB)
+            | isCrust = (crustR, crustG, crustB)
+            | otherwise = (baseR, baseG, baseB)
       in (r, g, b, 255)
 
-    -- Glass: mostly transparent with faint border
+    -- Glass: thin gray border, mostly transparent interior with diagonal reflection streak
     glassPattern x y =
       let border = x == 0 || y == 0 || x == 15 || y == 15
-      in if border then (200, 220, 240, 120) else (220, 235, 250, 40)
+          -- Diagonal reflection streak: 1-2px bright line from top-left toward center
+          onStreak = let d = abs (x - y) in d <= 1 && x <= 8 && y <= 8
+      in if border then (180, 200, 220, 150)
+         else if onStreak then (240, 245, 255, 80)
+         else (220, 235, 250, 35)
 
-    -- Log cross-section (top/bottom of oak log)
+    -- Oak log cross-section: concentric rings from center (8,8) with bark edge
     logTop x y =
-      let dist = abs (x - 7) + abs (y - 7)  -- taxicab distance from center
+      let dx = x - 8
+          dy = y - 8
+          distSq = dx * dx + dy * dy
+          dist = floor (sqrt (fromIntegral distSq :: Double)) :: Int
           ring = dist `div` 2
-      in if ring <= 1 then (80, 60, 30, 255)    -- dark center
-         else if ring <= 3 then (160, 130, 70, 255) -- light wood
-         else (100, 75, 40, 255)                 -- bark edge
+          ringParity = dist `mod` 2
+          noise = pixHash x y 610 `mod` 8
+      in if dist <= 1 then (55 + fromIntegral noise, 35 + fromIntegral noise, 18, 255)
+         else if dist >= 7 then (100 + fromIntegral noise, 75 + fromIntegral (noise `div` 2), 40, 255)
+         else if ringParity == 0
+              then (170 + fromIntegral noise, 135 + fromIntegral noise, 70 + fromIntegral (noise `div` 2), 255)
+              else (145 + fromIntegral noise, 110 + fromIntegral noise, 55 + fromIntegral (noise `div` 2), 255)
 
-    -- Brick pattern: red bricks with gray mortar
+    -- Brick pattern: proper brick grid with alternating offset and per-brick color variation
     brickPattern x y =
       let row = y `div` 4
           offset = if row `mod` 2 == 0 then 0 else 8
           bx = (x + offset) `mod` 16
+          -- Mortar lines: horizontal every 4 rows, vertical at brick boundaries
           isMortar = y `mod` 4 == 0 || bx `mod` 8 == 0
-      in if isMortar then (160, 160, 160, 255) else (170, 80, 60, 255)
+          -- Mortar color: gray with slight variation
+          mortarN = pixHash x y 1300 `mod` 10
+          mortarV = fromIntegral (155 + mortarN) :: Word8
+          -- Brick identity for per-brick hash variation
+          brickCol = (x + offset) `div` 8
+          brickHash = pixHash brickCol row 1301
+          -- Base red tone with per-brick variation (±15 per channel)
+          baseR = 150 + brickHash `mod` 41           -- 150-190
+          baseG = 50 + (brickHash `div` 41) `mod` 21 -- 50-70
+          baseB = 40 + (brickHash `div` 861) `mod` 11 -- 40-50
+          -- Per-brick variation offset (±15)
+          varSeed = pixHash brickCol row 1302
+          varR = (varSeed `mod` 31) - 15
+          varG = ((varSeed `div` 31) `mod` 31) - 15
+          varB = ((varSeed `div` 961) `mod` 31) - 15
+          -- Subtle per-pixel noise within each brick (±5)
+          pixN = pixHash x y 1303 `mod` 11 - 5
+          r = clampByte (baseR + varR + pixN)
+          g = clampByte (baseG + varG + pixN)
+          b = clampByte (baseB + varB + pixN)
+      in if isMortar
+         then (mortarV, mortarV, mortarV, 255)
+         else (fromIntegral r, fromIntegral g, fromIntegral b, 255)
 
-    -- TNT side: red with white band
+    -- TNT side: red middle band with white bands top/bottom + dark stripes
     tntSide x y =
-      let band = y >= 5 && y <= 10
-      in if band then (220, 220, 220, 255) else (200, 50, 40, 255)
+      let -- Dark border rows at edges of red band
+          isBorderRow = y == 4 || y == 11
+          -- Dark horizontal stripe through middle of red band
+          isDarkStripe = y == 7 || y == 8
+          -- "TNT" letter shapes on the red band (y 5-10, centered)
+          -- T: x 1-5, top bar y=5,6; stem x=2,3 y=7-10
+          isLetterT = (x >= 1 && x <= 5 && (y == 5 || y == 6))
+                   || (x >= 2 && x <= 3 && y >= 7 && y <= 10)
+          -- N: x 6-9; left stem x=6, right stem x=9, diag
+          isLetterN = (x == 6 && y >= 5 && y <= 10)
+                   || (x == 9 && y >= 5 && y <= 10)
+                   || (x == 7 && (y == 6 || y == 7))
+                   || (x == 8 && (y == 8 || y == 9))
+          -- T2: x 10-14, top bar y=5,6; stem x=11,12 y=7-10
+          isLetterT2 = (x >= 10 && x <= 14 && (y == 5 || y == 6))
+                    || (x >= 11 && x <= 12 && y >= 7 && y <= 10)
+          isLetter = isLetterT || isLetterN || isLetterT2
+          -- White bands: top y 0-3, bottom y 12-15
+          isWhiteBand = y <= 3 || y >= 12
+          n = pixHash x y 850 `mod` 10
+      in if isWhiteBand
+         then let v = 220 + fromIntegral n * 3 in (v, v, v, 255)
+         else if isBorderRow
+         then (140, 25, 25, 255)
+         else if isLetter
+         then (50, 15, 15, 255)
+         else if isDarkStripe
+         then (160, 30, 30, 255)
+         else (200, 40, 40, 255)
 
-    tntTop _ _ = (180, 180, 180, 255)
-    tntBottom _ _ = (180, 180, 180, 255)
+    -- TNT top: tan/beige base with dark fuse circle in center
+    tntTop x y =
+      let dx = x - 7
+          dy = y - 7
+          distSq = dx * dx + dy * dy
+          -- Fuse hole: small dark circle radius ~2
+          isFuse = distSq <= 4
+          -- Fuse ring: slightly larger
+          isFuseRing = distSq <= 9 && distSq > 4
+          n = pixHash x y 860 `mod` 15
+          -- Tan base with subtle grain
+          baseR = 200 + fromIntegral n
+          baseG = 180 + fromIntegral n
+          baseB = 130 + fromIntegral (n `div` 2)
+      in if isFuse then (40, 35, 30, 255)
+         else if isFuseRing then (120, 100, 70, 255)
+         else (baseR, baseG, baseB, 255)
 
-    -- Chest: brown wood box
+    -- TNT bottom: flat tan surface
+    tntBottom x y =
+      let n = pixHash x y 870 `mod` 12
+          r = 195 + fromIntegral n
+          g = 175 + fromIntegral n
+          b = 125 + fromIntegral (n `div` 2)
+      in (r, g, b, 255)
+
+    -- Chest: brown wooden body with horizontal plank grain, gold latch, dark border
     chestPattern x y =
       let border = x == 0 || y == 0 || x == 15 || y == 15
-          latch = x >= 6 && x <= 9 && y >= 6 && y <= 8
-      in if latch then (200, 180, 50, 255)  -- gold latch
-         else if border then (100, 65, 30, 255) -- dark border
-         else (140, 95, 45, 255)  -- wood
+          topBorder = y <= 1
+          bottomBorder = y >= 14
+          latch = x >= 6 && x <= 9 && y >= 7 && y <= 8
+          -- Horizontal plank grain
+          n = pixHash x y 1400 `mod` 15
+          grain = pixHash x (y `div` 3) 1401 `mod` 10
+          plankLine = y `mod` 4 == 0
+          baseR = if plankLine then fromIntegral (130 + n) else fromIntegral (145 + n)
+          baseG = if plankLine then fromIntegral (85 + n) else fromIntegral (95 + n)
+          baseB = if plankLine then fromIntegral (35 + grain) else fromIntegral (45 + grain)
+      in if latch then (220, 190, 50, 255)
+         else if topBorder || bottomBorder then (60, 40, 20, 255)
+         else if border then (80, 55, 25, 255)
+         else (baseR, baseG, baseB, 255)
 
-    -- Furnace side: stone with dark opening
+    -- Furnace side: stone-gray casing with dark furnace opening in center
     furnaceSide x y =
       let opening = x >= 4 && x <= 11 && y >= 5 && y <= 12
-      in if opening then (40, 40, 40, 255) else stonePattern x y
+          n = pixHash x y 1300 `mod` 12
+          -- Stone-gray casing base (130,130,130) with noise
+          casingV = fromIntegral (124 + n) :: Word8
+      in if opening then (40, 40, 40, 255)
+         else (casingV, casingV, casingV, 255)
 
-    furnaceTop = stonePattern
+    -- Furnace top: gray stone top with subtle grid pattern
+    furnaceTop x y =
+      let n = pixHash x y 1310 `mod` 10
+          gridLine = x `mod` 4 == 0 || y `mod` 4 == 0
+          baseV = if gridLine then fromIntegral (118 + n) else fromIntegral (128 + n)
+      in (baseV, baseV, baseV, 255)
 
-    -- Stone brick: cut stone blocks with mortar lines
+    -- Stone brick: clean 8x8 grid with mortar lines and chisel mark texture
     stoneBrickPattern x y =
-      let isMortar = y `mod` 8 == 0 || (x + (if (y `div` 8) `mod` 2 == 0 then 0 else 4)) `mod` 8 == 0
-          n = pixHash x y 1500 `mod` 20
-          v = if isMortar then 100 else fromIntegral (130 + n)
-      in (v, v, v, 255)
+      let offset = if (y `div` 8) `mod` 2 == 0 then 0 else 4
+          bx = (x + offset) `mod` 8
+          -- 1px gray mortar lines at boundaries
+          isMortar = y `mod` 8 == 0 || bx == 0
+          mortarN = pixHash x y 1500 `mod` 11
+          mortarV = fromIntegral (100 + mortarN) :: Word8  -- 100-110
+          -- Brick identity for per-brick base tone
+          brickCol = (x + offset) `div` 8
+          brickRow = y `div` 8
+          brickHash = pixHash brickCol brickRow 1501
+          baseV = 130 + brickHash `mod` 21  -- 130-150 smooth gray
+          -- Subtle chisel marks: occasional darker diagonal pixels
+          chiselSeed = pixHash x y 1502
+          isDiag = (x + y) `mod` 5 == 0 || (x - y + 16) `mod` 7 == 0
+          isChisel = isDiag && chiselSeed `mod` 8 < 2
+          chiselDark = -15
+          -- Per-pixel subtle noise (±3)
+          pixN = pixHash x y 1503 `mod` 7 - 3
+          v = clampByte (baseV + pixN + if isChisel then chiselDark else 0)
+      in if isMortar
+         then (mortarV, mortarV, mortarV, 255)
+         else (fromIntegral v, fromIntegral v, fromIntegral v, 255)
 
-    -- Crafting table top: wooden grid pattern
+    -- Crafting table top: brown wooden 4x4 grid with per-cell tone and tool marks
     craftingTop x y =
-      let grid = x `mod` 8 == 0 || y `mod` 8 == 0
-      in if grid then (80, 55, 25, 255) else planksPattern x y
+      let gridLine = x `mod` 4 == 0 || y `mod` 4 == 0
+          cellX = x `div` 4
+          cellY = y `div` 4
+          cellHash = pixHash cellX cellY 1500 `mod` 20
+          -- Per-cell tone variation on tan/brown base
+          baseR = fromIntegral (160 + cellHash) :: Word8
+          baseG = fromIntegral (120 + cellHash) :: Word8
+          baseB = fromIntegral (70 + cellHash `div` 2) :: Word8
+          -- Occasional darker diagonal scratches (tool marks)
+          scratch = pixHash (x + y) (x - y + 16) 1501 `mod` 30 < 2
+          scratchR = fromIntegral (max 0 (fromIntegral baseR - 40 :: Int)) :: Word8
+          scratchG = fromIntegral (max 0 (fromIntegral baseG - 30 :: Int)) :: Word8
+          scratchB = fromIntegral (max 0 (fromIntegral baseB - 20 :: Int)) :: Word8
+      in if gridLine then (80, 55, 25, 255)
+         else if scratch then (scratchR, scratchG, scratchB, 255)
+         else (baseR, baseG, baseB, 255)
 
     -- Snow: clean white with very subtle blue-gray crystal flecks
     snowPattern x y =
@@ -362,19 +625,40 @@ tileFull tileIdx lx ly = case tileIdx of
           b = clampByte (165 + offset + striation)
       in (r, g, b, 255)
 
-    -- Torch: mostly transparent with orange flame center
+    -- Torch: brown stick with shaped flame using distance falloff
     torchPattern x y =
-      let isStick = x >= 7 && x <= 8 && y >= 5 && y <= 15
-          isFlame = x >= 6 && x <= 9 && y >= 2 && y <= 6
-      in if isFlame then (255, 200, 50, 255)
-         else if isStick then (120, 90, 40, 255)
+      let isStick = x >= 7 && x <= 8 && y >= 6 && y <= 15
+          -- Flame region at top (y 0-5), shaped by distance from center
+          cx = 7.5 :: Double
+          cy = 2.5 :: Double
+          dx = fromIntegral x - cx
+          dy = fromIntegral y - cy
+          dist = sqrt (dx * dx + dy * dy) :: Double
+          isFlame = y <= 5 && dist < 4.0
+          -- Interpolate bright yellow center to orange at edges
+          t = min 1.0 (dist / 4.0) :: Double
+          flameR = round (255.0 - t * 0.0) :: Word8      -- stays 255
+          flameG = round (220.0 - t * 70.0) :: Word8     -- 220 -> 150
+          flameB = round (50.0 - t * 20.0) :: Word8      -- 50 -> 30
+      in if isFlame then (flameR, flameG, flameB, 255)
+         else if isStick then (100, 70, 35, 255)
          else (0, 0, 0, 0)  -- transparent
 
-    -- Obsidian: very dark purple/black with faint purple streaks
+    -- Obsidian: deep purple-black base with glassy reflection spots and purple streaks
     obsidianPattern x y =
       let n = pixHash x y 2000 `mod` 100
-          streak = pixHash (x `div` 3) (y `div` 2) 2001 `mod` 10 < 2
-          (r, g, b) = if streak then (30, 10, 40) else if n < 30 then (15, 10, 20) else (20, 15, 25)
+          -- Glassy reflection spots: ~8% of pixels slightly brighter
+          isReflection = n < 8
+          -- Purple highlight streak: diagonal bands
+          streakN = pixHash (x + y `div` 2) (y `div` 3) 2001 `mod` 20
+          isStreak = streakN < 2
+          -- Subtle variation in base color
+          vari = pixHash (x * 3 + 1) (y * 7 + 2) 2002 `mod` 8
+          (r, g, b)
+            | isReflection = (40, 20, 50)
+            | isStreak     = (45, 15, 60)
+            | n < 40       = (20 + fromIntegral vari, 10 + fromIntegral (vari `div` 2), 30 + fromIntegral vari)
+            | otherwise    = (20, 10, 30)
       in (r, g, b, 255)
 
     -- Oak door closed: brown planks with border and doorknob
@@ -433,15 +717,17 @@ tileFull tileIdx lx ly = case tileIdx of
       in if isStalk then (if tip then gold else green)
          else (0, 0, 0, 0)
 
-    -- Oak sapling: small green cross on brown stem
+    -- Oak sapling: thin brown trunk with small green canopy on transparent bg
     oakSaplingPattern x y =
-      let isStem = x >= 7 && x <= 8 && y >= 10 && y <= 15
-          isLeaf = (x >= 5 && x <= 10 && y >= 4 && y <= 10)
-                   && not (x == 5 && y == 4) && not (x == 10 && y == 4)
-                   && not (x == 5 && y == 10) && not (x == 10 && y == 10)
+      let -- Thin trunk: x=7-8, y=10-15
+          isTrunk = (x == 7 || x == 8) && y >= 10 && y <= 15
+          -- Small green canopy: 3x3 block at y=6-8, x=6-8 plus 1px border
+          isCanopy = x >= 6 && x <= 9 && y >= 6 && y <= 9
+                     && not (x == 6 && y == 6) && not (x == 9 && y == 6)
+                     && not (x == 6 && y == 9) && not (x == 9 && y == 9)
           n = pixHash x y 2300 `mod` 30
-      in if isLeaf then (30 + fromIntegral n, 120 + fromIntegral n, 20, 255)
-         else if isStem then (100, 70, 30, 255)
+      in if isCanopy then (30 + fromIntegral n, 120 + fromIntegral n, 20, 255)
+         else if isTrunk then (100, 70, 30, 255)
          else (0, 0, 0, 0)
 
     -- Wool: white with subtle fiber pattern (light gray lines on white)
@@ -620,48 +906,64 @@ tileFull tileIdx lx ly = case tileIdx of
       in if isRail then (140 + fromIntegral n, 140 + fromIntegral n, 145 + fromIntegral n, 255)
          else if isTie then (90 + fromIntegral (n `div` 2), 60 + fromIntegral (n `div` 3), 30, 255)
          else (0, 0, 0, 0)
-    -- Dispenser front: stone-like body with dark opening hole in the center
+    -- Dispenser front: stone gray base with dark centered face/mouth opening
     dispenserFrontPattern x y =
-      let isOpening = x >= 5 && x <= 10 && y >= 5 && y <= 10
+      let -- Distinctive mouth shape at y=8-12
+          isMouth = x >= 4 && x <= 11 && y >= 8 && y <= 12
+          -- Upper face opening (eyes area)
+          isEye = (x >= 4 && x <= 6 && y >= 5 && y <= 7)
+               || (x >= 9 && x <= 11 && y >= 5 && y <= 7)
           border = x == 0 || x == 15 || y == 0 || y == 15
           n = pixHash x y 2700 `mod` 20
           baseV = fromIntegral (120 + n) :: Word8
-      in if isOpening then (30, 30, 35, 255)
+      in if isMouth then (25, 25, 30, 255)
+         else if isEye then (35, 35, 40, 255)
          else if border then (90, 90, 95, 255)
          else (baseV, baseV, fromIntegral (baseV + 3), 255)
 
-    -- Enchanting table top: dark obsidian base with diamond-studded pattern and runes
+    -- Enchanting table top: dark purple-black surface with glowing blue-cyan rune symbols
     enchantingTableTop x y =
       let n = pixHash x y 2700 `mod` 100
-          -- Diamond studs at corners and center
-          isDiamond = (x == 2 && y == 2) || (x == 13 && y == 2)
-                   || (x == 2 && y == 13) || (x == 13 && y == 13)
-                   || (x >= 7 && x <= 8 && y >= 7 && y <= 8)
-          -- Rune symbols (glowing purple lines)
-          isRune = (x == 5 && y >= 4 && y <= 11)
-                || (x == 10 && y >= 4 && y <= 11)
-                || (y == 4 && x >= 5 && x <= 10)
-                || (y == 11 && x >= 5 && x <= 10)
-          -- Border
+          -- Glowing rune-like symbols: simple geometric shapes in blue-cyan
+          isRuneCircle = let dx = x - 7; dy = y - 7
+                             dist = dx * dx + dy * dy
+                         in dist >= 9 && dist <= 16
+          isRuneCross = ((x == 7 || x == 8) && y >= 3 && y <= 12)
+                     || ((y == 7 || y == 8) && x >= 3 && x <= 12)
+          isRuneCorner = (x == 3 && y == 3) || (x == 12 && y == 3)
+                      || (x == 3 && y == 12) || (x == 12 && y == 12)
+          isRuneDiamond = (x == 7 && y == 2) || (x == 8 && y == 2)
+                       || (x == 7 && y == 13) || (x == 8 && y == 13)
+                       || (x == 2 && y == 7) || (x == 2 && y == 8)
+                       || (x == 13 && y == 7) || (x == 13 && y == 8)
+          isRune = isRuneCircle || isRuneCorner || isRuneDiamond
+          isRuneFaint = isRuneCross && not isRuneCircle
           border = x == 0 || x == 15 || y == 0 || y == 15
-      in if isDiamond then (100, 220, 255, 255)  -- bright cyan diamond
-         else if isRune then (120, 50, 180, 255)  -- glowing purple rune
-         else if border then (15, 8, 20, 255)     -- dark border
-         else if n < 20 then (25, 12, 35, 255)    -- dark obsidian variant
-         else (20, 10, 30, 255)                    -- obsidian base
+          -- Base surface noise
+          baseR = fromIntegral (28 + n `mod` 6) :: Word8
+          baseG = fromIntegral (13 + n `mod` 5) :: Word8
+          baseB = fromIntegral (38 + n `mod` 6) :: Word8
+      in if isRune then (80, 200, 240, 255)       -- bright blue-cyan rune glow
+         else if isRuneFaint then (40, 100, 130, 255) -- subtle inner rune lines
+         else if border then (20, 8, 28, 255)
+         else (baseR, baseG, baseB, 255)
 
-    -- Enchanting table side: dark obsidian with subtle purple glow
+    -- Enchanting table side: dark wood/obsidian base with subtle purple trim at top edge
     enchantingTableSide x y =
       let n = pixHash x y 2800 `mod` 100
-          -- Purple accents along the middle band
-          accentBand = y >= 6 && y <= 9
+          -- Purple trim at top edge (rows 0-2)
+          purpleTrim = y <= 2
           border = x == 0 || x == 15 || y == 0 || y == 15
+          -- Dark wood/obsidian body with subtle variation
           streak = pixHash (x `div` 3) (y `div` 2) 2801 `mod` 10 < 2
-      in if border then (15, 8, 20, 255)
-         else if accentBand && streak then (80, 30, 120, 255)  -- purple accent
-         else if streak then (30, 15, 40, 255)                 -- subtle purple streak
-         else if n < 30 then (20, 10, 28, 255)
-         else (25, 12, 32, 255)
+          (r, g, b)
+            | purpleTrim && border = (50, 20, 70)
+            | purpleTrim           = (60 + fromIntegral (n `mod` 15), 25 + fromIntegral (n `mod` 8), 80 + fromIntegral (n `mod` 15))
+            | border               = (15, 8, 20)
+            | streak               = (30, 15, 40)
+            | n < 30               = (25, 14, 30)
+            | otherwise            = (32, 18, 36)
+      in (r, g, b, 255)
 
     -- Netherrack: dark red with brownish veins
     netherrackPattern x y =
@@ -714,21 +1016,31 @@ tileFull tileIdx lx ly = case tileIdx of
          else if isMortar then (100, fromIntegral (100 + n), 100, 255)
          else let v = fromIntegral (130 + n) in (v, v, v, 255)
 
-    -- Birch bark: white-gray with dark horizontal bands
+    -- Birch bark: white/cream with dark horizontal marks
     birchBark x y =
-      let band = y `mod` 5 == 0 || y `mod` 5 == 1
-          n = pixHash x y 4000 `mod` 20
-          (r, g, b) = if band then (50 + fromIntegral n, 45 + fromIntegral n, 40 + fromIntegral n)
-                      else (200 + fromIntegral (n `div` 2), 195 + fromIntegral (n `div` 2), 185 + fromIntegral (n `div` 2))
+      let noise = pixHash x y 4000 `mod` 12
+          -- Dark horizontal marks characteristic of birch
+          hasMark = (pixHash 0 (y `div` 2) 4001 `mod` 5 < 2) && (pixHash x y 4002 `mod` 3 < 2)
+          isVFurrow = x `mod` 4 == 0 && pixHash x y 4003 `mod` 3 == 0
+          (r, g, b)
+            | hasMark   = (45 + fromIntegral noise, 40 + fromIntegral noise, 35 + fromIntegral noise)
+            | isVFurrow = (185 + fromIntegral noise, 180 + fromIntegral noise, 170 + fromIntegral noise)
+            | otherwise = (215 + fromIntegral noise, 210 + fromIntegral noise, 200 + fromIntegral noise)
       in (r, g, b, 255)
 
-    -- Birch log cross-section
+    -- Birch log cross-section: concentric rings, light cream wood, bark-colored edge
     birchLogTop x y =
-      let dist = abs (x - 7) + abs (y - 7)
-          ring = dist `div` 2
-      in if ring <= 1 then (180, 160, 120, 255)
-         else if ring <= 3 then (210, 200, 160, 255)
-         else (200, 195, 185, 255)
+      let dx = x - 8
+          dy = y - 8
+          distSq = dx * dx + dy * dy
+          dist = floor (sqrt (fromIntegral distSq :: Double)) :: Int
+          ringParity = dist `mod` 2
+          noise = pixHash x y 4110 `mod` 8
+      in if dist <= 1 then (160 + fromIntegral noise, 140 + fromIntegral noise, 100 + fromIntegral noise, 255)
+         else if dist >= 7 then (210 + fromIntegral noise, 205 + fromIntegral noise, 195 + fromIntegral noise, 255)
+         else if ringParity == 0
+              then (220 + fromIntegral noise, 210 + fromIntegral noise, 170 + fromIntegral (noise `div` 2), 255)
+              else (200 + fromIntegral noise, 190 + fromIntegral noise, 150 + fromIntegral (noise `div` 2), 255)
 
     -- Birch leaves: lighter green with yellowish tint
     birchLeavesPattern x y =
@@ -737,27 +1049,44 @@ tileFull tileIdx lx ly = case tileIdx of
       in if hole then (30, 70, 20, 180)
          else (60 + fromIntegral (n `mod` 30), 140 + fromIntegral (n `mod` 30), 40 + fromIntegral (n `mod` 20), 255)
 
-    -- Birch planks: lighter than oak, pale yellowish
+    -- Birch planks: light cream, 4 horizontal plank divisions with grain
     birchPlanksPattern x y =
-      let grain = pixHash x (y `div` 4) 4200 `mod` 100
-          base = if y `mod` 4 == 0 then 190 else if grain < 20 then 210 else 220
-          r = base; g = base * 200 `div` 230; b = base * 160 `div` 230
-      in (fromIntegral r, fromIntegral g, fromIntegral b, 255)
-
-    -- Spruce bark: dark brown, almost black
-    spruceBark x y =
-      let stripe = pixHash (x `div` 2) y 4300 `mod` 100
-          dark = x `mod` 3 == 0 || stripe < 15
-          (r, g, b) = if dark then (35, 25, 15) else (55, 40, 25)
+      let plankIdx = y `div` 4
+          plankVar = pixHash 0 plankIdx 4200 `mod` 15
+          grainLine = y `mod` 4 == 0
+          grain = pixHash x y 4201 `mod` 100
+          noise = pixHash x y 4202 `mod` 8
+          baseVal = if grainLine then 190 + plankVar
+                    else 215 + plankVar + (grain `div` 25)
+          r = fromIntegral (min 255 (baseVal + noise)) :: Word8
+          g = fromIntegral (min 255 ((baseVal + noise) * 200 `div` 230)) :: Word8
+          b = fromIntegral (min 255 ((baseVal + noise) * 165 `div` 230)) :: Word8
       in (r, g, b, 255)
 
-    -- Spruce log cross-section
+    -- Spruce bark: very dark brown, vertical furrows
+    spruceBark x y =
+      let furrow = x `mod` 3
+          noise = pixHash x y 4300 `mod` 10
+          stripe = pixHash (x `div` 2) y 4301 `mod` 100
+          isDark = furrow == 0 || stripe < 20
+          (r, g, b) = if isDark
+                      then (30 + fromIntegral noise, 20 + fromIntegral (noise `div` 2), 10 + fromIntegral (noise `div` 3))
+                      else (55 + fromIntegral noise, 40 + fromIntegral (noise `div` 2), 22 + fromIntegral (noise `div` 3))
+      in (r, g, b, 255)
+
+    -- Spruce log cross-section: concentric rings, dark wood, bark-colored edge
     spruceLogTop x y =
-      let dist = abs (x - 7) + abs (y - 7)
-          ring = dist `div` 2
-      in if ring <= 1 then (50, 35, 20, 255)
-         else if ring <= 3 then (120, 90, 50, 255)
-         else (55, 40, 25, 255)
+      let dx = x - 8
+          dy = y - 8
+          distSq = dx * dx + dy * dy
+          dist = floor (sqrt (fromIntegral distSq :: Double)) :: Int
+          ringParity = dist `mod` 2
+          noise = pixHash x y 4310 `mod` 8
+      in if dist <= 1 then (40 + fromIntegral noise, 28 + fromIntegral noise, 15, 255)
+         else if dist >= 7 then (55 + fromIntegral noise, 40 + fromIntegral (noise `div` 2), 22, 255)
+         else if ringParity == 0
+              then (130 + fromIntegral noise, 95 + fromIntegral noise, 50 + fromIntegral (noise `div` 2), 255)
+              else (105 + fromIntegral noise, 75 + fromIntegral noise, 38 + fromIntegral (noise `div` 2), 255)
 
     -- Spruce leaves: dark blue-green
     spruceLeavesPattern x y =
@@ -766,27 +1095,47 @@ tileFull tileIdx lx ly = case tileIdx of
       in if hole then (10, 30, 15, 180)
          else (20 + fromIntegral (n `mod` 20), 60 + fromIntegral (n `mod` 30), 25 + fromIntegral (n `mod` 15), 255)
 
-    -- Spruce planks: darker than oak
+    -- Spruce planks: dark brown, 4 horizontal plank divisions with grain
     sprucePlanksPattern x y =
-      let grain = pixHash x (y `div` 4) 4500 `mod` 100
-          base = if y `mod` 4 == 0 then 110 else if grain < 20 then 130 else 140
-          r = base; g = base * 85 `div` 140; b = base * 55 `div` 140
-      in (fromIntegral r, fromIntegral g, fromIntegral b, 255)
-
-    -- Jungle bark: pale with green-brown tint and vertical lines
-    jungleBark x y =
-      let stripe = pixHash (x `div` 2) y 4600 `mod` 100
-          dark = x `mod` 4 == 0 || stripe < 12
-          (r, g, b) = if dark then (80, 65, 35) else (120, 100, 55)
+      let plankIdx = y `div` 4
+          plankVar = pixHash 0 plankIdx 4500 `mod` 15
+          grainLine = y `mod` 4 == 0
+          grain = pixHash x y 4501 `mod` 100
+          noise = pixHash x y 4502 `mod` 8
+          baseVal = if grainLine then 100 + plankVar
+                    else 125 + plankVar + (grain `div` 25)
+          r = fromIntegral (min 255 (baseVal + noise)) :: Word8
+          g = fromIntegral (min 255 ((baseVal + noise) * 80 `div` 140)) :: Word8
+          b = fromIntegral (min 255 ((baseVal + noise) * 50 `div` 140)) :: Word8
       in (r, g, b, 255)
 
-    -- Jungle log cross-section
+    -- Jungle bark: tan with vertical furrows and vine marks
+    jungleBark x y =
+      let furrow = x `mod` 4
+          noise = pixHash x y 4600 `mod` 12
+          stripe = pixHash (x `div` 2) y 4601 `mod` 100
+          isDark = furrow == 0 || stripe < 15
+          -- Vine marks: scattered green-tinted spots
+          isVine = pixHash x y 4602 `mod` 11 == 0
+          (r, g, b)
+            | isVine    = (60 + fromIntegral noise, 85 + fromIntegral noise, 35 + fromIntegral (noise `div` 2))
+            | isDark    = (75 + fromIntegral noise, 58 + fromIntegral (noise `div` 2), 30 + fromIntegral (noise `div` 3))
+            | otherwise = (130 + fromIntegral noise, 105 + fromIntegral (noise `div` 2), 55 + fromIntegral (noise `div` 3))
+      in (r, g, b, 255)
+
+    -- Jungle log cross-section: concentric rings, tan-orange wood, bark-colored edge
     jungleLogTop x y =
-      let dist = abs (x - 7) + abs (y - 7)
-          ring = dist `div` 2
-      in if ring <= 1 then (90, 70, 35, 255)
-         else if ring <= 3 then (150, 130, 70, 255)
-         else (120, 100, 55, 255)
+      let dx = x - 8
+          dy = y - 8
+          distSq = dx * dx + dy * dy
+          dist = floor (sqrt (fromIntegral distSq :: Double)) :: Int
+          ringParity = dist `mod` 2
+          noise = pixHash x y 4610 `mod` 8
+      in if dist <= 1 then (75 + fromIntegral noise, 55 + fromIntegral noise, 28, 255)
+         else if dist >= 7 then (130 + fromIntegral noise, 105 + fromIntegral (noise `div` 2), 55, 255)
+         else if ringParity == 0
+              then (165 + fromIntegral noise, 135 + fromIntegral noise, 70 + fromIntegral (noise `div` 2), 255)
+              else (140 + fromIntegral noise, 112 + fromIntegral noise, 55 + fromIntegral (noise `div` 2), 255)
 
     -- Jungle leaves: vibrant green
     jungleLeavesPattern x y =
@@ -795,55 +1144,92 @@ tileFull tileIdx lx ly = case tileIdx of
       in if hole then (15, 50, 10, 180)
          else (30 + fromIntegral (n `mod` 25), 100 + fromIntegral (n `mod` 40), 20 + fromIntegral (n `mod` 15), 255)
 
-    -- Jungle planks: warm reddish-brown
+    -- Jungle planks: tan-orange, 4 horizontal plank divisions with grain
     junglePlanksPattern x y =
-      let grain = pixHash x (y `div` 4) 4800 `mod` 100
-          base = if y `mod` 4 == 0 then 150 else if grain < 20 then 170 else 180
-          r = base; g = base * 110 `div` 180; b = base * 75 `div` 180
-      in (fromIntegral r, fromIntegral g, fromIntegral b, 255)
+      let plankIdx = y `div` 4
+          plankVar = pixHash 0 plankIdx 4800 `mod` 18
+          grainLine = y `mod` 4 == 0
+          grain = pixHash x y 4801 `mod` 100
+          noise = pixHash x y 4802 `mod` 8
+          baseVal = if grainLine then 145 + plankVar
+                    else 170 + plankVar + (grain `div` 25)
+          r = fromIntegral (min 255 (baseVal + noise)) :: Word8
+          g = fromIntegral (min 255 ((baseVal + noise) * 120 `div` 190)) :: Word8
+          b = fromIntegral (min 255 ((baseVal + noise) * 70 `div` 190)) :: Word8
+      in (r, g, b, 255)
 
-    -- Tall grass: green blades on transparent background
+    -- Tall grass: 2-3 distinct green blade shapes rising from bottom on transparent bg
     tallGrassPattern x y =
-      let isBlade = (x `mod` 3 == 1 || x `mod` 5 == 2) && y >= 3
-          n = pixHash x y 4900 `mod` 50
-      in if isBlade then (40 + fromIntegral n, 130 + fromIntegral (n `div` 2), 25, 255)
+      let -- Blade 1 at x=3, 2px wide, height 12 (y=4..15), darker green
+          blade1 = (x == 3 || x == 4) && y >= 4 && y <= 15
+          -- Blade 2 at x=7, 1px wide, height 14 (y=2..15), medium green
+          blade2 = x == 7 && y >= 2 && y <= 15
+          -- Blade 3 at x=12, 2px wide, height 8 (y=8..15), lighter green
+          blade3 = (x == 12 || x == 13) && y >= 8 && y <= 15
+          n = pixHash x y 4900 `mod` 20
+      in if blade1 then (35 + fromIntegral n, 120 + fromIntegral n, 20, 255)
+         else if blade2 then (50 + fromIntegral n, 150 + fromIntegral n, 30, 255)
+         else if blade3 then (60 + fromIntegral n, 170 + fromIntegral n, 40, 255)
          else (0, 0, 0, 0)
 
-    -- Dandelion: yellow flower on green stem
+    -- Dandelion: green stem with bright yellow flower head on transparent bg
     dandelionPattern x y =
-      let isFlower = x >= 5 && x <= 10 && y >= 2 && y <= 6
-          isStem = x >= 7 && x <= 8 && y >= 7 && y <= 14
-      in if isFlower then (255, 220, 50, 255)
-         else if isStem then (50, 120, 30, 255)
+      let -- Green stem: x=7-8, y=6-15
+          isStem = (x == 7 || x == 8) && y >= 6 && y <= 15
+          -- Yellow flower head: circle radius 3 centered at (7.5, 3)
+          dx = fromIntegral x - (7.5 :: Double)
+          dy = fromIntegral y - (3.0 :: Double)
+          dist2 = dx * dx + dy * dy
+          isFlower = dist2 <= 3.0 * 3.0
+          n = pixHash x y 4950 `mod` 15
+      in if isFlower then (255, 220 + fromIntegral (n `div` 3), 50, 255)
+         else if isStem then (50, 130 + fromIntegral n, 30, 255)
          else (0, 0, 0, 0)
 
-    -- Rose: red flower on green stem
+    -- Rose: green stem with red petals at top and small leaves on transparent bg
     rosePattern x y =
-      let isFlower = x >= 5 && x <= 10 && y >= 2 && y <= 7
-                     && not (x == 5 && y == 2) && not (x == 10 && y == 2)
-          isStem = x >= 7 && x <= 8 && y >= 8 && y <= 14
-      in if isFlower then (200, 30, 30, 255)
-         else if isStem then (50, 120, 30, 255)
+      let -- Green stem: x=7-8, y=8-15
+          isStem = (x == 7 || x == 8) && y >= 8 && y <= 15
+          -- Red petals: circle radius 3 centered at (7.5, 4)
+          dx = fromIntegral x - (7.5 :: Double)
+          dy = fromIntegral y - (4.0 :: Double)
+          dist2 = dx * dx + dy * dy
+          isPetal = dist2 <= 3.0 * 3.0
+          -- Small green leaves at y=9-10, flanking the stem
+          isLeaf = (y == 9 || y == 10) && ((x >= 5 && x <= 6) || (x >= 9 && x <= 10))
+          n = pixHash x y 5050 `mod` 15
+      in if isPetal then (220 + fromIntegral (n `div` 3), 30, 30, 255)
+         else if isLeaf then (40, 120 + fromIntegral n, 25, 255)
+         else if isStem then (50, 130 + fromIntegral n, 30, 255)
          else (0, 0, 0, 0)
 
-    -- Brown mushroom: brown cap on thin stem
+    -- Brown mushroom: white-tan stem with brown semicircle cap on transparent bg
     brownMushroomPattern x y =
-      let isCap = x >= 4 && x <= 11 && y >= 3 && y <= 8
-                  && not (x == 4 && y == 3) && not (x == 11 && y == 3)
-          isStem = x >= 7 && x <= 8 && y >= 9 && y <= 14
+      let -- Stem: x=7-8, y=10-15, white-tan
+          isStem = (x == 7 || x == 8) && y >= 10 && y <= 15
+          -- Cap: semicircle at y=4-9, radius 5, centered at (7.5, 9)
+          dx = fromIntegral x - (7.5 :: Double)
+          dy = fromIntegral y - (9.0 :: Double)
+          dist2 = dx * dx + dy * dy
+          isCap = dist2 <= 5.0 * 5.0 && y >= 4 && y <= 9
           n = pixHash x y 5000 `mod` 20
       in if isCap then (140 + fromIntegral n, 100 + fromIntegral (n `div` 2), 60, 255)
          else if isStem then (200, 190, 170, 255)
          else (0, 0, 0, 0)
 
-    -- Red mushroom: red cap with white spots on thin stem
+    -- Red mushroom: same stem, red cap with white spots on transparent bg
     redMushroomPattern x y =
-      let isCap = x >= 4 && x <= 11 && y >= 3 && y <= 8
-                  && not (x == 4 && y == 3) && not (x == 11 && y == 3)
-          isSpot = isCap && ((x == 6 && y == 5) || (x == 9 && y == 4) || (x == 7 && y == 7))
-          isStem = x >= 7 && x <= 8 && y >= 9 && y <= 14
+      let -- Stem: x=7-8, y=10-15, white-tan
+          isStem = (x == 7 || x == 8) && y >= 10 && y <= 15
+          -- Cap: semicircle at y=4-9, radius 5, centered at (7.5, 9)
+          dx = fromIntegral x - (7.5 :: Double)
+          dy = fromIntegral y - (9.0 :: Double)
+          dist2 = dx * dx + dy * dy
+          isCap = dist2 <= 5.0 * 5.0 && y >= 4 && y <= 9
+          -- White spots on cap surface
+          isSpot = isCap && ((x == 6 && y == 6) || (x == 9 && y == 5) || (x == 7 && y == 7) || (x == 10 && y == 7))
       in if isSpot then (240, 240, 240, 255)
-         else if isCap then (200, 30, 30, 255)
+         else if isCap then (200, 40, 30, 255)
          else if isStem then (200, 190, 170, 255)
          else (0, 0, 0, 0)
 
@@ -886,14 +1272,24 @@ tileFull tileIdx lx ly = case tileIdx of
          else if isBase then (80, 80, 90, 255)
          else (0, 0, 0, 0)
 
-    -- Ice: light blue semi-transparent with white cracks
+    -- Ice: pale blue-white base with crack lines and frosted patches
     icePattern x y =
-      let n = pixHash x y 5400 `mod` 100
-          crack = pixHash (x `div` 4) (y `div` 3) 5401 `mod` 10 < 2
-          (r, g, b, a) = if crack then (220, 230, 255, 200)
-                         else if n < 30 then (140, 180, 220, 180)
-                         else (160, 200, 240, 190)
-      in (r, g, b, a)
+      let -- Crack line 1: jagged horizontal path near y=5
+          crack1 = let cy = 5 + (pixHash x 0 5410 `mod` 3) - 1
+                   in y == cy && x >= 1 && x <= 14
+          -- Crack line 2: jagged diagonal from top-right to bottom-left
+          crack2 = let cy = x + 3 + (pixHash x 1 5411 `mod` 3) - 1
+                   in y == cy && cy >= 0 && cy <= 15
+          -- Crack line 3: jagged vertical path near x=10
+          crack3 = let cx = 10 + (pixHash 0 y 5412 `mod` 3) - 1
+                   in x == cx && y >= 2 && y <= 13
+          isCrack = crack1 || crack2 || crack3
+          -- Frosted patches: ~20% of pixels are lighter
+          frosted = pixHash x y 5420 `mod` 100 < 20
+          (r, g, b) = if isCrack then (160, 190, 220)
+                      else if frosted then (230, 240, 250)
+                      else (200, 220, 240)
+      in (r, g, b, 220)
 
     -- Packed ice: solid opaque blue-white with dense cracks
     packedIcePattern x y =
