@@ -149,6 +149,7 @@ main = hspec $ do
   hotbarNumberKeySpec
   inventoryComprehensiveSpec
   creativeInventorySpec
+  stackSplittingSpec
 
 -- =========================================================================
 -- Block
@@ -7524,6 +7525,91 @@ creativeInventorySpec = describe "Game.Creative" $ do
       pm <- readIORef (gsPlayMode gs)
       pm `shouldBe` Survival
 
+-- =========================================================================
+-- Stack Splitting (splitStack / placeSingle)
+-- =========================================================================
+stackSplittingSpec :: Spec
+stackSplittingSpec = describe "Game.Inventory stack splitting" $ do
+  describe "splitStack" $ do
+    it "returns (Nothing, Nothing) for empty slot" $
+      splitStack Nothing `shouldBe` (Nothing, Nothing)
+
+    it "picks up entire single item" $
+      splitStack (Just (ItemStack (BlockItem Stone) 1))
+        `shouldBe` (Nothing, Just (ItemStack (BlockItem Stone) 1))
+
+    it "splits even stack in half" $
+      splitStack (Just (ItemStack (BlockItem Stone) 10))
+        `shouldBe` (Just (ItemStack (BlockItem Stone) 5), Just (ItemStack (BlockItem Stone) 5))
+
+    it "splits odd stack: cursor gets ceil, slot gets floor" $
+      splitStack (Just (ItemStack (BlockItem Dirt) 7))
+        `shouldBe` (Just (ItemStack (BlockItem Dirt) 3), Just (ItemStack (BlockItem Dirt) 4))
+
+    it "splits stack of 2" $
+      splitStack (Just (ItemStack (BlockItem Sand) 2))
+        `shouldBe` (Just (ItemStack (BlockItem Sand) 1), Just (ItemStack (BlockItem Sand) 1))
+
+    it "splits stack of 3: cursor gets 2, slot keeps 1" $
+      splitStack (Just (ItemStack (BlockItem Sand) 3))
+        `shouldBe` (Just (ItemStack (BlockItem Sand) 1), Just (ItemStack (BlockItem Sand) 2))
+
+    it "splits full 64 stack evenly" $
+      splitStack (Just (ItemStack (BlockItem Stone) 64))
+        `shouldBe` (Just (ItemStack (BlockItem Stone) 32), Just (ItemStack (BlockItem Stone) 32))
+
+    it "splits stack of 63: cursor gets 32, slot keeps 31" $
+      splitStack (Just (ItemStack (BlockItem Stone) 63))
+        `shouldBe` (Just (ItemStack (BlockItem Stone) 31), Just (ItemStack (BlockItem Stone) 32))
+
+  describe "placeSingle" $ do
+    it "empty cursor on empty slot: no-op" $
+      placeSingle Nothing Nothing `shouldBe` (Nothing, Nothing)
+
+    it "empty cursor on occupied slot: returns slot unchanged" $
+      placeSingle Nothing (Just (ItemStack (BlockItem Stone) 5))
+        `shouldBe` (Just (ItemStack (BlockItem Stone) 5), Nothing)
+
+    it "cursor with 1 item on empty slot: places item, cursor empty" $
+      placeSingle (Just (ItemStack (BlockItem Stone) 1)) Nothing
+        `shouldBe` (Just (ItemStack (BlockItem Stone) 1), Nothing)
+
+    it "cursor with multiple items on empty slot: places 1, cursor decremented" $
+      placeSingle (Just (ItemStack (BlockItem Stone) 10)) Nothing
+        `shouldBe` (Just (ItemStack (BlockItem Stone) 1), Just (ItemStack (BlockItem Stone) 9))
+
+    it "cursor on slot with same item: merges 1" $
+      placeSingle (Just (ItemStack (BlockItem Dirt) 5)) (Just (ItemStack (BlockItem Dirt) 3))
+        `shouldBe` (Just (ItemStack (BlockItem Dirt) 4), Just (ItemStack (BlockItem Dirt) 4))
+
+    it "cursor with 1 on slot with same item: merges, cursor empty" $
+      placeSingle (Just (ItemStack (BlockItem Dirt) 1)) (Just (ItemStack (BlockItem Dirt) 3))
+        `shouldBe` (Just (ItemStack (BlockItem Dirt) 4), Nothing)
+
+    it "cursor on slot with different item: no-op" $
+      placeSingle (Just (ItemStack (BlockItem Stone) 5)) (Just (ItemStack (BlockItem Dirt) 3))
+        `shouldBe` (Just (ItemStack (BlockItem Dirt) 3), Just (ItemStack (BlockItem Stone) 5))
+
+    it "cursor on slot at stack limit: no-op" $
+      placeSingle (Just (ItemStack (BlockItem Stone) 5)) (Just (ItemStack (BlockItem Stone) 64))
+        `shouldBe` (Just (ItemStack (BlockItem Stone) 64), Just (ItemStack (BlockItem Stone) 5))
+
+    it "cursor on slot at stack limit minus 1: merges to limit" $
+      placeSingle (Just (ItemStack (BlockItem Stone) 5)) (Just (ItemStack (BlockItem Stone) 63))
+        `shouldBe` (Just (ItemStack (BlockItem Stone) 64), Just (ItemStack (BlockItem Stone) 4))
+
+  describe "splitStack + placeSingle round-trip" $ do
+    it "splitting then placing all back restores original count" $ do
+      let original = Just (ItemStack (BlockItem Stone) 10)
+          (slotAfterSplit, cursorAfterSplit) = splitStack original
+          -- Place items back one at a time until cursor empty
+          placeBack cur slot = case cur of
+            Nothing -> slot
+            Just (ItemStack _ n) ->
+              let (newSlot, newCur) = placeSingle cur slot
+              in if n <= 0 then slot else placeBack newCur newSlot
+          restored = placeBack cursorAfterSplit slotAfterSplit
+      restored `shouldBe` original
   -- Creative infinite items: creativeConsumeItem
   describe "creativeConsumeItem (infinite items)" $ do
     it "consuming from a slot with items returns inventory unchanged" $ do
