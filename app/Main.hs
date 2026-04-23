@@ -42,7 +42,7 @@ import Game.Save
 import Game.SaveV3 (SaveDataV3(..), savev3Version, savePlayerV3, loadPlayerV3)
 import Game.DroppedItem
 import Game.BlockEntity
-import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), newGameState)
+import Game.State (GameState(..), GameMode(..), PlayMode(..), CameraMode(..), cycleCameraMode, Projectile(..), newGameState)
 import Game.Creative (creativeClickSlot, creativePickFromPalette, creativeConsumeItem, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Game.Achievement (AchievementState, checkAchievement, unlockAchievement, achievementName, AchievementTrigger(..))
 import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), ChatMessage(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
@@ -260,6 +260,7 @@ main = do
         villagerTradesRef   = gsVillagerTrades gs
         playModeRef         = gsPlayMode gs
         hotbarPopupRef      = gsHotbarPopup gs
+        cameraModeRef       = gsCameraMode gs
         lastClickRef        = gsLastClick gs
     palettePageRef <- newIORef (0 :: Int)
 
@@ -1734,6 +1735,8 @@ main = do
               savePlayerV3 sd (buildSaveDataV3 player inv dayNight weather xp spawnPt)
               saveWorld sd world
               putStrLn "Quick-saved!"
+            GLFW.Key'F7 ->
+              modifyIORef' cameraModeRef cycleCameraMode
             GLFW.Key'F9 -> do
               sd <- readIORef saveDirRef
               mData <- loadPlayerV3 sd
@@ -2754,6 +2757,7 @@ main = do
             dayNightVal <- readIORef dayNightRef
             weatherVal <- readIORef weatherRef
             curDimVal <- readIORef (gsDimension gs)
+            camMode <- readIORef cameraModeRef
             let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
             let cam = cameraFromPlayer player
                 aspect = fromIntegral extW / fromIntegral extH
@@ -2763,9 +2767,14 @@ main = do
                 V4 r g b a = getSkyColor dayNightVal
                 V4 dr dg db _da = dimensionSkyColor curDimVal
                 V4 skyR skyG skyB skyA = V4 (r * skyMul * dr) (g * skyMul * dg) (b * skyMul * db) a
+                -- View matrix depends on camera mode (first- or third-person)
+                viewMat = case camMode of
+                  FirstPerson      -> cameraViewMatrix cam
+                  ThirdPersonBack  -> thirdPersonViewMatrix True  4 cam
+                  ThirdPersonFront -> thirdPersonViewMatrix False 4 cam
                 ubo = UniformBufferObject
                   { uboModel        = transpose identity
-                  , uboView         = transpose $ cameraViewMatrix cam
+                  , uboView         = transpose viewMat
                   , uboProjection   = transpose $ cameraProjectionMatrix aspect 0.1 1000 cam
                   , uboSunDirection = V4 sx sy sz 0
                   , uboAmbientLight = getAmbientLight dayNightVal * weatherAmbientMultiplier weatherVal
@@ -2787,7 +2796,7 @@ main = do
 
             meshCache <- readIORef meshCacheRef
             -- Frustum culling: only draw chunks visible to the camera
-            let vp = cameraProjectionMatrix aspect 0.1 1000 cam !*! cameraViewMatrix cam
+            let vp = cameraProjectionMatrix aspect 0.1 1000 cam !*! viewMat
                 frustum = extractFrustum vp
                 chunkDraws = [ draw
                              | (V2 cx cz, draw) <- HM.toList meshCache
