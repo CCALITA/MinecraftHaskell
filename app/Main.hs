@@ -544,10 +544,8 @@ main = do
                       writeIORef inventoryRef (setSlot inv slotIdx existing)
                       modifyIORef' playerRef (\p -> p { plArmorSlots = newArmorSlots })
                     _ -> do
-                      -- Not an armor item: normal swap with cursor
-                      cursor <- readIORef cursorItemRef
-                      writeIORef inventoryRef (setSlot inv slotIdx cursor)
-                      writeIORef cursorItemRef slotContent
+                      -- Not an armor item: shift-click quick-move between sections
+                      writeIORef inventoryRef (moveToSection inv slotIdx)
                   else do
                     cursor <- readIORef cursorItemRef
                     writeIORef inventoryRef (setSlot inv slotIdx cursor)

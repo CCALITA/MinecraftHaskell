@@ -14,6 +14,7 @@ module Game.Inventory
   , hasItem
   , countItem
   , stackLimit
+  , moveToSection
   ) where
 
 import Game.Item (Item(..), itemStackLimit)
@@ -143,3 +144,34 @@ countItem inv item = go 0 0
 
 hasItem :: Inventory -> Item -> Int -> Bool
 hasItem inv item count = countItem inv item >= count
+
+-- | Shift-click quick-move: if slot is in hotbar (0-8), move its contents
+-- to the first empty main inventory slot (9-35). If slot is in main (9-35),
+-- move to the first empty hotbar slot (0-8). If no empty target slot exists,
+-- no-op. If the source slot is empty, no-op.
+moveToSection :: Inventory -> Int -> Inventory
+moveToSection inv idx
+  | idx < 0 || idx >= inventorySlots = inv
+  | otherwise = case getSlot inv idx of
+      Nothing -> inv
+      Just stack
+        | idx < hotbarSlots ->
+            -- Source is hotbar (0-8), find first empty main slot (9-35)
+            case findEmpty hotbarSlots (inventorySlots - 1) inv of
+              Nothing  -> inv
+              Just dst -> setSlot (setSlot inv idx Nothing) dst (Just stack)
+        | otherwise ->
+            -- Source is main (9-35), find first empty hotbar slot (0-8)
+            case findEmpty 0 (hotbarSlots - 1) inv of
+              Nothing  -> inv
+              Just dst -> setSlot (setSlot inv idx Nothing) dst (Just stack)
+
+-- | Find first empty slot in range [lo..hi] inclusive.
+findEmpty :: Int -> Int -> Inventory -> Maybe Int
+findEmpty lo hi inv = go lo
+  where
+    go i
+      | i > hi    = Nothing
+      | otherwise = case getSlot inv i of
+          Nothing -> Just i
+          _       -> go (i + 1)
