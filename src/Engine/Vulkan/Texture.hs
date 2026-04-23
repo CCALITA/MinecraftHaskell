@@ -60,6 +60,9 @@ pixHash x y s =
     xor = Data.Bits.xor
     shiftR = Data.Bits.shiftR
 
+-- | Clamp an Int to the Word8 range [0, 255]
+clampByte :: Int -> Word8
+clampByte v = fromIntegral (max 0 (min 255 v))
 -- | Clamp an Int to valid Word8 range and convert
 clampByte :: Int -> Word8
 clampByte n = fromIntegral (max 0 (min 255 n))
@@ -78,7 +81,7 @@ tileFull tileIdx lx ly = case tileIdx of
   1  -> stonePattern lx ly     -- stone (V2 1 0)
   2  -> dirtPattern lx ly      -- dirt (V2 2 0)
   3  -> grassSide lx ly        -- grass side (V2 3 0)
-  4  -> planksPattern lx ly    -- oak planks / sand (V2 4 0)
+  4  -> sandPattern lx ly      -- sand (V2 4 0)
   5  -> gravelPattern lx ly    -- gravel (V2 5 0)
   7  -> brickPattern lx ly     -- brick (V2 7 0)
   8  -> tntSide lx ly          -- TNT side (V2 8 0)
@@ -263,6 +266,22 @@ tileFull tileIdx lx ly = case tileIdx of
           g = fromIntegral (min 255 ((baseVal + noise) * 160 `div` 210)) :: Word8
           b = fromIntegral (min 255 ((baseVal + noise) * 100 `div` 210)) :: Word8
       in (r, g, b, 255)
+
+    -- Sand: golden-tan with subtle grain dots
+    sandPattern x y =
+      let n = pixHash x y 450 `mod` 100
+          -- Base color (210, 190, 130) with ±15 grain variation
+          grain = pixHash x y 451 `mod` 31 - 15  -- -15..+15
+          r = clampByte (210 + grain)
+          g = clampByte (190 + grain)
+          b = clampByte (130 + grain)
+          -- Occasional lighter/darker dots for grain texture
+          dot = n < 12
+          dotShift = if n < 6 then 15 else (-15)
+      in if dot then (clampByte (fromIntegral r + dotShift),
+                      clampByte (fromIntegral g + dotShift),
+                      clampByte (fromIntegral b + dotShift), 255)
+         else (r, g, b, 255)
 
     -- Gravel: mix of gray pebble shapes
     gravelPattern x y =
@@ -588,17 +607,23 @@ tileFull tileIdx lx ly = case tileIdx of
          else if scratch then (scratchR, scratchG, scratchB, 255)
          else (baseR, baseG, baseB, 255)
 
-    -- Snow: white with subtle variation
+    -- Snow: clean white with very subtle blue-gray crystal flecks
     snowPattern x y =
-      let n = pixHash x y 1600 `mod` 15
-          v = fromIntegral (240 + n)
-      in (v, v, v, 255)
+      let n = pixHash x y 1600 `mod` 100
+          baseV = fromIntegral (240 + n `mod` 11) :: Word8  -- 240-250
+          isFleck = n < 5  -- 5% of pixels get blue tint
+      in if isFleck then (230, 235, 245, 255)
+         else (baseV, baseV, baseV, 255)
 
-    -- Clay: light gray-brown
+    -- Clay: blue-gray with smooth surface variation and lighter horizontal striations
     clayPattern x y =
-      let n = pixHash x y 1700 `mod` 20
-          v = fromIntegral (160 + n)
-      in (v, fromIntegral (155 + n), fromIntegral (145 + n), 255)
+      let n = pixHash x y 1700 `mod` 21  -- 0..20 range for ±10
+          offset = n - 10                 -- -10..+10
+          striation = if y `mod` 4 == 0 then 8 else 0  -- lighter horizontal lines
+          r = clampByte (155 + offset + striation)
+          g = clampByte (155 + offset + striation)
+          b = clampByte (165 + offset + striation)
+      in (r, g, b, 255)
 
     -- Torch: brown stick with shaped flame using distance falloff
     torchPattern x y =
