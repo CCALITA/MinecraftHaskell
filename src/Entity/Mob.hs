@@ -8,6 +8,7 @@ module Entity.Mob
   , damageEntity
   , isHostile
   , isPassive
+  , readMobType
   ) where
 
 import Entity.ECS
@@ -229,3 +230,19 @@ randomIdleTime rngRef = do
 v3x, v3z :: V3 Float -> Float
 v3x (V3 x _ _) = x
 v3z (V3 _ _ z) = z
+
+-- | Parse mob type from entity tag string
+readMobType :: String -> MobType
+readMobType "Zombie"   = Zombie
+readMobType "Skeleton" = Skeleton
+readMobType "Creeper"  = Creeper
+readMobType "Spider"   = Spider
+readMobType "Pig"      = Pig
+readMobType "Cow"      = Cow
+readMobType "Sheep"    = Sheep
+readMobType "Chicken"  = Chicken
+readMobType "Wolf"     = Wolf
+readMobType "TamedWolf" = Wolf
+readMobType "TamedWolfSitting" = Wolf
+readMobType "Villager" = Villager
+readMobType _          = Pig

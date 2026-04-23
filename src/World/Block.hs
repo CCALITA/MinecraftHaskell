@@ -16,6 +16,7 @@ module World.Block
   , pistonDirection
   , isPistonHeadBlock
   , pistonHeadForPiston
+  , isFlammable
   ) where
 
 import Data.Word (Word8)
@@ -518,3 +519,11 @@ pistonHeadForPiston PistonEast  = PistonHeadEast
 pistonHeadForPiston PistonWest  = PistonHeadWest
 pistonHeadForPiston PistonDown  = PistonHeadDown
 pistonHeadForPiston _           = PistonHead
+
+-- | Whether a block is flammable (can catch fire from adjacent fire blocks)
+isFlammable :: BlockType -> Bool
+isFlammable OakLog    = True
+isFlammable OakPlanks = True
+isFlammable OakLeaves = True
+isFlammable Wool      = True
+isFlammable _         = False

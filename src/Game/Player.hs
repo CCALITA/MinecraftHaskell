@@ -24,6 +24,7 @@ module Game.Player
   , sneakEyeOffset
   , eyeHeight
   , applySprintToggle
+  , playerLoop
   ) where
 
 import Game.Physics
@@ -33,6 +34,7 @@ import World.Block (BlockType(..), isSolid)
 
 import Linear (V3(..), normalize, cross, (^*), norm)
 import Data.Maybe (listToMaybe)
+import Data.IORef
 
 -- | Player state
 data Player = Player
@@ -454,3 +456,16 @@ raycastBlock isSolidBlock origin direction maxDist = do
 
   -- Skip the block the player is standing in
   step startX startY startZ tMaxX0 tMaxY0 tMaxZ0 (V3 0 0 0)
+
+-- | Run physics ticks consuming accumulated time
+playerLoop :: Float -> PlayerInput -> BlockHeightQuery -> BlockQuery -> BlockQuery -> IORef Float -> Float -> IORef Player -> IO ()
+playerLoop tickRate input blockQuery waterQuery ladderQuery accumRef accum playerRef
+  | accum < tickRate = writeIORef accumRef accum
+  | otherwise = do
+      player <- readIORef playerRef
+      player' <- updatePlayer tickRate input blockQuery waterQuery ladderQuery player
+      -- Void damage: kill player below Y=0
+      let V3 _ py _ = plPos player'
+          player'' = if py < 0 then damagePlayer 4 player' else player'
+      writeIORef playerRef player''
+      playerLoop tickRate (input { piToggleFly = False }) blockQuery waterQuery ladderQuery accumRef (accum - tickRate) playerRef

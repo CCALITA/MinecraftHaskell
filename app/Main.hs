@@ -17,7 +17,7 @@ import Engine.Vulkan.Command
 import Engine.Vulkan.Memory
 import Engine.Vulkan.Descriptor
 import Engine.Vulkan.Texture
-import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid, isGravityAffected, isLeafBlock, isWheatCropBlock, blockCollisionHeight, isPistonBlock, pistonDirection, isPistonHeadBlock, pistonHeadForPiston)
+import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid, isGravityAffected, isLeafBlock, isWheatCropBlock, blockCollisionHeight, isPistonBlock, pistonDirection, isPistonHeadBlock, pistonHeadForPiston, isFlammable)
 import World.Chunk
 import World.Generation
 import World.World
@@ -36,7 +36,7 @@ import Game.Furnace
 import World.Fluid
 import World.Light
 import Entity.ECS
-import Entity.Mob (MobType(..), MobInfo(..), updateMobAI, AIState(..), mobInfo, damageEntity, isHostile)
+import Entity.Mob (MobType(..), MobInfo(..), updateMobAI, AIState(..), mobInfo, damageEntity, isHostile, readMobType)
 import Entity.Spawn
 import Entity.Villager (VillagerProfession(..), TradeOffer(..), generateTrades, professionName, allProfessions, executeTrade)
 import Game.Save
@@ -1982,7 +1982,7 @@ main = do
               let input' = if speedBuff > 0
                             then input { piSprint = True }
                             else input
-              playerLoop input' blockQuery waterQuery ladderQuery accumRef accum' playerRef
+              playerLoop tickRate input' blockQuery waterQuery ladderQuery accumRef accum' playerRef
             healthAfter <- plHealth <$> readIORef playerRef
 
             -- Boat riding: move boat and snap player to boat position
@@ -3034,42 +3034,6 @@ main = do
       destroyVulkanContext vc
       putStrLn "Goodbye!"
 
--- | Run physics ticks consuming accumulated time
-playerLoop :: PlayerInput -> BlockHeightQuery -> BlockQuery -> BlockQuery -> IORef Float -> Float -> IORef Player -> IO ()
-playerLoop input blockQuery waterQuery ladderQuery accumRef accum playerRef
-  | accum < tickRate = writeIORef accumRef accum
-  | otherwise = do
-      player <- readIORef playerRef
-      player' <- updatePlayer tickRate input blockQuery waterQuery ladderQuery player
-      -- Void damage: kill player below Y=0
-      let V3 _ py _ = plPos player'
-          player'' = if py < 0 then damagePlayer 4 player' else player'
-      writeIORef playerRef player''
-      playerLoop (input { piToggleFly = False }) blockQuery waterQuery ladderQuery accumRef (accum - tickRate) playerRef
-
--- | Convert player state to Camera
-cameraFromPlayer :: Player -> Camera
-cameraFromPlayer player =
-  let yawR   = plYaw player * pi / 180
-      pitchR = plPitch player * pi / 180
-      front  = V3 (sin yawR * cos pitchR) (sin pitchR) (cos yawR * cos pitchR)
-      fov    = if plSprinting player then 55 else 45
-      eye    = if plSneaking player then eyeHeight - sneakEyeOffset else eyeHeight
-  in defaultCamera
-    { camPosition = plPos player + V3 0 eye 0
-    , camFront    = front
-    , camYaw      = plYaw player
-    , camPitch    = plPitch player
-    , camFov      = fov
-    }
-
--- | Get look direction from player
-dirFromPlayer :: Player -> V3 Float
-dirFromPlayer player =
-  let yawR   = plYaw player * pi / 180
-      pitchR = plPitch player * pi / 180
-  in normalize $ V3 (sin yawR * cos pitchR) (sin pitchR) (cos yawR * cos pitchR)
-
 -- | Find the entity closest to a given position (partial: requires non-empty list)
 closestTo :: V3 Float -> [Entity] -> Entity
 closestTo pos = foldr1 (\a b -> if distance (entPosition a) pos < distance (entPosition b) pos then a else b)
@@ -3110,12 +3074,6 @@ showItemShort (PotionItem pt) = potionName pt
 showItemShort BoatItem = "Boat"
 showItemShort MinecartItem = "Minecart"
 showItemShort (BucketItem bt) = show bt
-
--- | Check if a GLFW key is pressed
-isKeyDown :: GLFW.Window -> GLFW.Key -> IO Bool
-isKeyDown win key = do
-  state <- GLFW.getKey win key
-  pure $ state == GLFW.KeyState'Pressed
 
 -- | Build GPU meshes for all loaded chunks (initial load)
 rebuildAllChunkMeshes
@@ -3402,45 +3360,6 @@ hitFurnaceSlot nx ny
   | nx >= 0.1 && nx <= 0.23 && ny >= -0.24 && ny <= -0.11 = Just FurnaceOutputSlot
   -- Inventory slots below
   | otherwise = fmap FurnaceInvSlot (hitInventorySlot nx (ny - 0.6))
-
--- | Parse mob type from entity tag string
-readMobType :: String -> MobType
-readMobType "Zombie"   = Zombie
-readMobType "Skeleton" = Skeleton
-readMobType "Creeper"  = Creeper
-readMobType "Spider"   = Spider
-readMobType "Pig"      = Pig
-readMobType "Cow"      = Cow
-readMobType "Sheep"    = Sheep
-readMobType "Chicken"  = Chicken
-readMobType "Wolf"     = Wolf
-readMobType "TamedWolf" = Wolf
-readMobType "TamedWolfSitting" = Wolf
-readMobType "Villager" = Villager
-readMobType _          = Pig
-
--- | Whether a block is flammable (can catch fire from adjacent fire blocks)
-isFlammable :: BlockType -> Bool
-isFlammable OakLog    = True
-isFlammable OakPlanks = True
-isFlammable OakLeaves = True
-isFlammable Wool      = True
-isFlammable _         = False
-
--- | Check if an OakLog exists within a given Manhattan distance of a world position
-checkLogNearby :: World -> V3 Int -> Int -> IO Bool
-checkLogNearby world (V3 wx wy wz) radius = go offsets
-  where
-    offsets = [ V3 dx dy dz
-              | dx <- [-radius..radius]
-              , dy <- [-radius..radius]
-              , dz <- [-radius..radius]
-              , abs dx + abs dy + abs dz <= radius
-              ]
-    go [] = pure False
-    go (d : rest) = do
-      bt <- worldGetBlock world (V3 wx wy wz + d)
-      if bt == OakLog then pure True else go rest
 
 -- | Try to unlock an achievement from a trigger event.
 -- If the trigger matches a new (locked) achievement, unlock it and
