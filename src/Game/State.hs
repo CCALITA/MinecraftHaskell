@@ -141,6 +141,8 @@ data GameState = GameState
   , gsVillagerTrades   :: !(IORef [TradeOffer])
     -- Hotbar popup (item name, remaining seconds)
   , gsHotbarPopup      :: !(IORef (Maybe (String, Float)))
+    -- View bobbing
+  , gsBobTime          :: !(IORef Float)
     -- Camera perspective mode
   , gsCameraMode       :: !(IORef CameraMode)
   }
@@ -228,4 +230,5 @@ newGameState spawnPos = do
     <*> newIORef Nothing
     <*> newIORef []
     <*> newIORef Nothing  -- gsHotbarPopup
+    <*> newIORef 0.0     -- gsBobTime
     <*> newIORef FirstPerson  -- gsCameraMode

@@ -68,6 +68,7 @@ import Data.IORef (newIORef, readIORef, writeIORef, modifyIORef')
 import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.List (nub, isPrefixOf, isInfixOf)
 import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted, glowColor, glowThickness)
+import Game.ViewBob (bobOffset, bobSpeed, bobAmplitude, bobDecayRate, bobMovementThreshold)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -8783,3 +8784,37 @@ hotbarSwapSpec = describe "Game.Inventory.swapHotbarWithInventory" $ do
       let backView  = thirdPersonViewMatrix True  4 cam
           frontView = thirdPersonViewMatrix False 4 cam
       backView `shouldNotBe` frontView
+
+  describe "ViewBob" $ do
+    it "bobOffset at 0 is 0" $ do
+      bobOffset 0.0 `shouldBe` 0.0
+
+    it "bobOffset at pi/2 equals bobAmplitude" $ do
+      let result = bobOffset (pi / 2)
+      abs (result - bobAmplitude) `shouldSatisfy` (< 1e-6)
+
+    it "bobOffset at pi is approximately 0" $ do
+      abs (bobOffset pi) `shouldSatisfy` (< 1e-6)
+
+    it "bobOffset at 3*pi/2 equals negative bobAmplitude" $ do
+      let result = bobOffset (3 * pi / 2)
+      abs (result - (- bobAmplitude)) `shouldSatisfy` (< 1e-6)
+
+    it "bobOffset is bounded by bobAmplitude" $ property $
+      \t -> let val = bobOffset t in abs val <= bobAmplitude + 1e-6
+
+    it "bobOffset is periodic with period 2*pi" $ property $
+      \t -> abs (bobOffset t - bobOffset (t + 2 * pi)) < 1e-4
+
+    it "bobSpeed is positive" $ do
+      bobSpeed `shouldSatisfy` (> 0)
+
+    it "bobAmplitude is positive and small" $ do
+      bobAmplitude `shouldSatisfy` (> 0)
+      bobAmplitude `shouldSatisfy` (< 0.5)
+
+    it "bobDecayRate is positive" $ do
+      bobDecayRate `shouldSatisfy` (> 0)
+
+    it "bobMovementThreshold is positive" $ do
+      bobMovementThreshold `shouldSatisfy` (> 0)

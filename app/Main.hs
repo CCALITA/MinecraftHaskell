@@ -54,6 +54,7 @@ import Game.ItemDisplay (itemColor, itemMiniIcon, armorSlotSilhouette)
 import Engine.Sound
 import Game.Particle
 import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpProgress)
+import Game.ViewBob (bobOffset, bobSpeed, bobDecayRate, bobMovementThreshold)
 
 import World.Dimension (DimensionType(..), dimensionSkyColor, detectPortalFrame, netherCoords, overworldCoords, portalTransitTime)
 
@@ -2759,7 +2760,20 @@ main = do
             curDimVal <- readIORef (gsDimension gs)
             camMode <- readIORef cameraModeRef
             let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
-            let cam = cameraFromPlayer player
+            -- View bobbing: advance bobTime when walking on ground, decay otherwise
+            do let V3 vx _vy vz = plVelocity player
+                   horizSpeed = sqrt (vx * vx + vz * vz)
+                   isMoving = horizSpeed > bobMovementThreshold && plOnGround player
+               oldBobTime <- readIORef (gsBobTime gs)
+               let newBobTime
+                     | isMoving  = oldBobTime + dt * bobSpeed
+                     | abs oldBobTime < 0.01 = 0.0
+                     | oldBobTime > 0 = max 0 (oldBobTime - dt * bobDecayRate)
+                     | otherwise = min 0 (oldBobTime + dt * bobDecayRate)
+               writeIORef (gsBobTime gs) newBobTime
+            bobTime <- readIORef (gsBobTime gs)
+            let cam0 = cameraFromPlayer player
+                cam = cam0 { camPosition = camPosition cam0 + V3 0 (bobOffset bobTime) 0 }
                 aspect = fromIntegral extW / fromIntegral extH
                 V3 sx sy sz = getSunDirection dayNightVal
                 -- Compute sky color from day/night cycle, adjusted for weather and dimension
