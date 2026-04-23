@@ -407,15 +407,17 @@ tileFull tileIdx lx ly = case tileIdx of
       in if isStalk then (if tip then gold else green)
          else (0, 0, 0, 0)
 
-    -- Oak sapling: small green cross on brown stem
+    -- Oak sapling: thin brown trunk with small green canopy on transparent bg
     oakSaplingPattern x y =
-      let isStem = x >= 7 && x <= 8 && y >= 10 && y <= 15
-          isLeaf = (x >= 5 && x <= 10 && y >= 4 && y <= 10)
-                   && not (x == 5 && y == 4) && not (x == 10 && y == 4)
-                   && not (x == 5 && y == 10) && not (x == 10 && y == 10)
+      let -- Thin trunk: x=7-8, y=10-15
+          isTrunk = (x == 7 || x == 8) && y >= 10 && y <= 15
+          -- Small green canopy: 3x3 block at y=6-8, x=6-8 plus 1px border
+          isCanopy = x >= 6 && x <= 9 && y >= 6 && y <= 9
+                     && not (x == 6 && y == 6) && not (x == 9 && y == 6)
+                     && not (x == 6 && y == 9) && not (x == 9 && y == 9)
           n = pixHash x y 2300 `mod` 30
-      in if isLeaf then (30 + fromIntegral n, 120 + fromIntegral n, 20, 255)
-         else if isStem then (100, 70, 30, 255)
+      in if isCanopy then (30 + fromIntegral n, 120 + fromIntegral n, 20, 255)
+         else if isTrunk then (100, 70, 30, 255)
          else (0, 0, 0, 0)
 
     -- Wool: white with subtle fiber pattern (light gray lines on white)
@@ -776,48 +778,78 @@ tileFull tileIdx lx ly = case tileIdx of
           r = base; g = base * 110 `div` 180; b = base * 75 `div` 180
       in (fromIntegral r, fromIntegral g, fromIntegral b, 255)
 
-    -- Tall grass: green blades on transparent background
+    -- Tall grass: 2-3 distinct green blade shapes rising from bottom on transparent bg
     tallGrassPattern x y =
-      let isBlade = (x `mod` 3 == 1 || x `mod` 5 == 2) && y >= 3
-          n = pixHash x y 4900 `mod` 50
-      in if isBlade then (40 + fromIntegral n, 130 + fromIntegral (n `div` 2), 25, 255)
+      let -- Blade 1 at x=3, 2px wide, height 12 (y=4..15), darker green
+          blade1 = (x == 3 || x == 4) && y >= 4 && y <= 15
+          -- Blade 2 at x=7, 1px wide, height 14 (y=2..15), medium green
+          blade2 = x == 7 && y >= 2 && y <= 15
+          -- Blade 3 at x=12, 2px wide, height 8 (y=8..15), lighter green
+          blade3 = (x == 12 || x == 13) && y >= 8 && y <= 15
+          n = pixHash x y 4900 `mod` 20
+      in if blade1 then (35 + fromIntegral n, 120 + fromIntegral n, 20, 255)
+         else if blade2 then (50 + fromIntegral n, 150 + fromIntegral n, 30, 255)
+         else if blade3 then (60 + fromIntegral n, 170 + fromIntegral n, 40, 255)
          else (0, 0, 0, 0)
 
-    -- Dandelion: yellow flower on green stem
+    -- Dandelion: green stem with bright yellow flower head on transparent bg
     dandelionPattern x y =
-      let isFlower = x >= 5 && x <= 10 && y >= 2 && y <= 6
-          isStem = x >= 7 && x <= 8 && y >= 7 && y <= 14
-      in if isFlower then (255, 220, 50, 255)
-         else if isStem then (50, 120, 30, 255)
+      let -- Green stem: x=7-8, y=6-15
+          isStem = (x == 7 || x == 8) && y >= 6 && y <= 15
+          -- Yellow flower head: circle radius 3 centered at (7.5, 3)
+          dx = fromIntegral x - (7.5 :: Double)
+          dy = fromIntegral y - (3.0 :: Double)
+          dist2 = dx * dx + dy * dy
+          isFlower = dist2 <= 3.0 * 3.0
+          n = pixHash x y 4950 `mod` 15
+      in if isFlower then (255, 220 + fromIntegral (n `div` 3), 50, 255)
+         else if isStem then (50, 130 + fromIntegral n, 30, 255)
          else (0, 0, 0, 0)
 
-    -- Rose: red flower on green stem
+    -- Rose: green stem with red petals at top and small leaves on transparent bg
     rosePattern x y =
-      let isFlower = x >= 5 && x <= 10 && y >= 2 && y <= 7
-                     && not (x == 5 && y == 2) && not (x == 10 && y == 2)
-          isStem = x >= 7 && x <= 8 && y >= 8 && y <= 14
-      in if isFlower then (200, 30, 30, 255)
-         else if isStem then (50, 120, 30, 255)
+      let -- Green stem: x=7-8, y=8-15
+          isStem = (x == 7 || x == 8) && y >= 8 && y <= 15
+          -- Red petals: circle radius 3 centered at (7.5, 4)
+          dx = fromIntegral x - (7.5 :: Double)
+          dy = fromIntegral y - (4.0 :: Double)
+          dist2 = dx * dx + dy * dy
+          isPetal = dist2 <= 3.0 * 3.0
+          -- Small green leaves at y=9-10, flanking the stem
+          isLeaf = (y == 9 || y == 10) && ((x >= 5 && x <= 6) || (x >= 9 && x <= 10))
+          n = pixHash x y 5050 `mod` 15
+      in if isPetal then (220 + fromIntegral (n `div` 3), 30, 30, 255)
+         else if isLeaf then (40, 120 + fromIntegral n, 25, 255)
+         else if isStem then (50, 130 + fromIntegral n, 30, 255)
          else (0, 0, 0, 0)
 
-    -- Brown mushroom: brown cap on thin stem
+    -- Brown mushroom: white-tan stem with brown semicircle cap on transparent bg
     brownMushroomPattern x y =
-      let isCap = x >= 4 && x <= 11 && y >= 3 && y <= 8
-                  && not (x == 4 && y == 3) && not (x == 11 && y == 3)
-          isStem = x >= 7 && x <= 8 && y >= 9 && y <= 14
+      let -- Stem: x=7-8, y=10-15, white-tan
+          isStem = (x == 7 || x == 8) && y >= 10 && y <= 15
+          -- Cap: semicircle at y=4-9, radius 5, centered at (7.5, 9)
+          dx = fromIntegral x - (7.5 :: Double)
+          dy = fromIntegral y - (9.0 :: Double)
+          dist2 = dx * dx + dy * dy
+          isCap = dist2 <= 5.0 * 5.0 && y >= 4 && y <= 9
           n = pixHash x y 5000 `mod` 20
       in if isCap then (140 + fromIntegral n, 100 + fromIntegral (n `div` 2), 60, 255)
          else if isStem then (200, 190, 170, 255)
          else (0, 0, 0, 0)
 
-    -- Red mushroom: red cap with white spots on thin stem
+    -- Red mushroom: same stem, red cap with white spots on transparent bg
     redMushroomPattern x y =
-      let isCap = x >= 4 && x <= 11 && y >= 3 && y <= 8
-                  && not (x == 4 && y == 3) && not (x == 11 && y == 3)
-          isSpot = isCap && ((x == 6 && y == 5) || (x == 9 && y == 4) || (x == 7 && y == 7))
-          isStem = x >= 7 && x <= 8 && y >= 9 && y <= 14
+      let -- Stem: x=7-8, y=10-15, white-tan
+          isStem = (x == 7 || x == 8) && y >= 10 && y <= 15
+          -- Cap: semicircle at y=4-9, radius 5, centered at (7.5, 9)
+          dx = fromIntegral x - (7.5 :: Double)
+          dy = fromIntegral y - (9.0 :: Double)
+          dist2 = dx * dx + dy * dy
+          isCap = dist2 <= 5.0 * 5.0 && y >= 4 && y <= 9
+          -- White spots on cap surface
+          isSpot = isCap && ((x == 6 && y == 6) || (x == 9 && y == 5) || (x == 7 && y == 7) || (x == 10 && y == 7))
       in if isSpot then (240, 240, 240, 255)
-         else if isCap then (200, 30, 30, 255)
+         else if isCap then (200, 40, 30, 255)
          else if isStem then (200, 190, 170, 255)
          else (0, 0, 0, 0)
 
