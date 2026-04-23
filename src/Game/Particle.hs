@@ -3,6 +3,7 @@ module Game.Particle
   , ParticleSystem
   , newParticleSystem
   , spawnBlockBreakParticles
+  , spawnBlockBreakParticlesIO
   , tickParticles
   , renderParticles
   , WeatherParticle(..)
@@ -25,6 +26,9 @@ import Data.IORef
 import Control.Monad (replicateM)
 import System.Random (randomRIO)
 import World.Biome (BiomeType(..))
+import World.Block (BlockType(..))
+import Game.Item (Item(..))
+import Game.ItemDisplay (itemColor)
 
 data Particle = Particle
   { partPos      :: !(V3 Float)
@@ -36,17 +40,52 @@ data Particle = Particle
 type ParticleSystem = IORef [Particle]
 newParticleSystem :: IO ParticleSystem
 newParticleSystem = newIORef []
-spawnBlockBreakParticles :: ParticleSystem -> V3 Float -> (Float, Float, Float, Float) -> IO ()
-spawnBlockBreakParticles psRef (V3 cx cy cz) (cr, cg, cb, ca) = do
-  count <- randomRIO (8 :: Int, 12)
-  newParticles <- replicateM count makeParticle
+-- | Pure function producing 12 block-break particles with the block's actual color.
+--   Each tuple: (position, velocity, size, r, g, b)
+--   Velocities spread in a hemisphere above the break point.
+--   Particle sizes vary between 0.03 and 0.08.
+spawnBlockBreakParticles :: BlockType -> V3 Float -> [(V3 Float, V3 Float, Float, Float, Float, Float)]
+spawnBlockBreakParticles bt center =
+  let (cr, cg, cb, _ca) = itemColor (BlockItem bt)
+      -- 12 directions spread over the upper hemisphere using spherical coordinates
+      -- 4 rings of 3 particles at varying elevation angles
+      angles = [ (phi, theta)
+               | phi   <- [0.3, 0.7, 1.1, 1.4]   -- elevation from vertical (radians, <pi/2 = upward)
+               , theta <- [0, 2*pi/3, 4*pi/3]     -- azimuth angles
+               ]
+      mkParticle (i, (phi, theta)) =
+        let speed  = 3.0 + 0.5 * sin (fromIntegral i * 1.7)
+            vx     = speed * sin phi * cos theta
+            vy     = speed * cos phi              -- always positive (hemisphere above)
+            vz     = speed * sin phi * sin theta
+            -- Offsets from block center
+            ox     = 0.15 * cos (theta + fromIntegral i)
+            oy     = 0.15 * sin (fromIntegral i * 0.8)
+            oz     = 0.15 * sin (theta + fromIntegral i)
+            pos    = center + V3 (0.5 + ox) (0.5 + oy) (0.5 + oz)
+            vel    = V3 vx vy vz
+            -- Size varies 0.03 to 0.08
+            size   = 0.03 + 0.05 * abs (sin (fromIntegral i * 2.3))
+        in (pos, vel, size, cr, cg, cb)
+  in map mkParticle (zip [0 :: Int ..] angles)
+
+-- | IO version: spawns block-break particles into the particle system using the
+--   pure spawnBlockBreakParticles result plus random jitter for lifetime.
+spawnBlockBreakParticlesIO :: ParticleSystem -> BlockType -> V3 Float -> IO ()
+spawnBlockBreakParticlesIO psRef bt center = do
+  let pureParticles = spawnBlockBreakParticles bt center
+  newParticles <- mapM toParticle pureParticles
   modifyIORef' psRef (newParticles ++)
   where
-    makeParticle = do
-      vx <- randomRIO (-3.0, 3.0); vy <- randomRIO (2.0, 6.0); vz <- randomRIO (-3.0, 3.0)
-      ox <- randomRIO (-0.3, 0.3); oy <- randomRIO (-0.3, 0.3); oz <- randomRIO (-0.3, 0.3)
+    toParticle (pos, vel, _sz, cr, cg, cb) = do
       life <- randomRIO (0.4, 0.8)
-      pure Particle { partPos = V3 (cx+0.5+ox) (cy+0.5+oy) (cz+0.5+oz), partVelocity = V3 vx vy vz, partColor = V4 cr cg cb ca, partLife = life, partMaxLife = life }
+      pure Particle
+        { partPos      = pos
+        , partVelocity = vel
+        , partColor    = V4 cr cg cb 1.0
+        , partLife     = life
+        , partMaxLife  = life
+        }
 tickParticles :: Float -> ParticleSystem -> IO ()
 tickParticles dt psRef = modifyIORef' psRef (map step . filter alive)
   where
