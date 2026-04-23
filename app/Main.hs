@@ -1687,6 +1687,8 @@ main = do
               modifyIORef' inputRef $ \inp -> inp { piToggleFly = True }
             GLFW.Key'LeftControl ->
               modifyIORef' playerRef $ \p -> p { plSprintToggled = not (plSprintToggled p) }
+            GLFW.Key'F -> do
+              modifyIORef' inventoryRef $ \inv -> swapHotbarWithInventory inv 9
             GLFW.Key'F3 ->
               modifyIORef' debugOverlayRef not
             GLFW.Key'E -> do
