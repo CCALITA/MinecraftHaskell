@@ -1,6 +1,7 @@
 module Game.ItemDisplay
   ( itemColor
   , itemMiniIcon
+  , armorSlotSilhouette
   ) where
 
 import Game.Item
@@ -299,3 +300,19 @@ itemMiniIcon (BlockItem bt) = blockMiniIcon bt
     blockMiniIcon _ = fill (itemColor (BlockItem bt))
 itemMiniIcon item = fillSolid (itemColor item)
   where fillSolid c = [(r,col,c) | r <- [0..2], col <- [0..2]]
+
+-- | Gray silhouette for an empty armor slot (3x3 grid, same format as itemMiniIcon).
+--   Shows the shape of the expected armor piece in a muted gray color.
+armorSlotSilhouette :: ArmorSlot -> [(Int, Int, (Float, Float, Float, Float))]
+armorSlotSilhouette Helmet =
+  [(0,0,g),(0,1,g),(0,2,g), (1,0,g),(1,2,g)]
+  where g = (0.35, 0.35, 0.35, 0.5)
+armorSlotSilhouette Chestplate =
+  [(0,0,g),(0,1,g),(0,2,g), (1,0,g),(1,1,g),(1,2,g), (2,0,g),(2,2,g)]
+  where g = (0.35, 0.35, 0.35, 0.5)
+armorSlotSilhouette Leggings =
+  [(0,0,g),(0,1,g),(0,2,g), (1,0,g),(1,2,g), (2,0,g),(2,2,g)]
+  where g = (0.35, 0.35, 0.35, 0.5)
+armorSlotSilhouette Boots =
+  [(1,0,g),(1,2,g), (2,0,g),(2,2,g)]
+  where g = (0.35, 0.35, 0.35, 0.5)
