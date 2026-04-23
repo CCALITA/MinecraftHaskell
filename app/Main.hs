@@ -45,7 +45,7 @@ import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), ne
 import Game.Creative (creativeClickSlot, creativePickFromPalette, creativeConsumeItem, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Game.Achievement (AchievementState, checkAchievement, unlockAchievement, achievementName, AchievementTrigger(..))
 import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), ChatMessage(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
-import Game.ItemDisplay (itemColor, itemMiniIcon)
+import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts)
 import Engine.Sound
 import Game.Particle
 import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpProgress)
@@ -4220,17 +4220,8 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
 
-    -- Cursor item (follows mouse position — simplified to center for now)
-    cursorVerts = case cursorItem of
-      Nothing -> []
-      Just (ItemStack item _) ->
-        let colors = itemMiniIcon item
-            sw = 0.08; sh = 0.08
-            x = mouseX - sw / 2; y = mouseY - sh / 2
-            pixW = sw/3; pixH = sh/3
-        in concatMap (\(r, c, clr) ->
-             quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
-                  (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+    -- Cursor item (follows mouse position with mini-icon and count)
+    cursorVerts = buildCursorItemVerts cursorItem mouseX mouseY
 
     -- Main menu screen
     menuVerts =

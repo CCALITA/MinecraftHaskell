@@ -1,11 +1,15 @@
 module Game.ItemDisplay
   ( itemColor
   , itemMiniIcon
+  , buildCursorItemVerts
+  , cursorIconSize
   ) where
 
 import Game.Item
+import Game.Inventory (ItemStack(..))
 import Game.Enchanting (Enchantment(..), EnchantmentType(..), enchantmentName)
 import World.Block (BlockType(..))
+import Engine.BitmapFont (renderText)
 
 itemColor :: Item -> (Float, Float, Float, Float)
 itemColor (BlockItem bt) = case bt of
@@ -299,3 +303,33 @@ itemMiniIcon (BlockItem bt) = blockMiniIcon bt
     blockMiniIcon _ = fill (itemColor (BlockItem bt))
 itemMiniIcon item = fillSolid (itemColor item)
   where fillSolid c = [(r,col,c) | r <- [0..2], col <- [0..2]]
+
+-- | Size of the cursor icon in NDC units
+cursorIconSize :: Float
+cursorIconSize = 0.08
+
+-- | Build HUD vertex data for the cursor-held item at the given mouse
+--   position (NDC).  Returns an empty list when no item is held.
+--   Each vertex is 6 floats: x y r g b a.
+--   The mini-icon is rendered first, then the stack count (if > 1).
+buildCursorItemVerts :: Maybe ItemStack -> Float -> Float -> [Float]
+buildCursorItemVerts Nothing _ _ = []
+buildCursorItemVerts (Just (ItemStack item cnt)) mx my =
+  let sw = cursorIconSize
+      sh = cursorIconSize
+      x  = mx - sw / 2
+      y  = my - sh / 2
+      pixW = sw / 3
+      pixH = sh / 3
+      iconQuad x0 y0 x1 y1 (r, g, b, a) =
+        [x0, y0, r, g, b, a,  x1, y0, r, g, b, a,  x1, y1, r, g, b, a
+        ,x0, y0, r, g, b, a,  x1, y1, r, g, b, a,  x0, y1, r, g, b, a]
+      colors = itemMiniIcon item
+      iconVerts = concatMap (\(row, col, clr) ->
+           iconQuad (x + fromIntegral col * pixW) (y + fromIntegral row * pixH)
+                    (x + fromIntegral (col + 1) * pixW) (y + fromIntegral (row + 1) * pixH) clr
+           ) colors
+      countText = if cnt > 1
+        then renderText (x + sw - 0.025) (y + sh - 0.02) 0.6 (1,1,1,1) (show cnt)
+        else []
+  in iconVerts ++ countText
