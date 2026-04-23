@@ -143,6 +143,7 @@ main = hspec $ do
   meshAOSpec
   directionalPistonSpec
   sunsetSunriseSpec
+  inventoryComprehensiveSpec
 
 -- =========================================================================
 -- Block
@@ -6532,3 +6533,212 @@ sunsetSunriseSpec = describe "Sunset and sunrise sky colors" $ do
       abs (r1 - r2) `shouldSatisfy` (< 0.05)
       abs (g1 - g2) `shouldSatisfy` (< 0.05)
       abs (b1 - b2) `shouldSatisfy` (< 0.05)
+
+-- =========================================================================
+-- Inventory Comprehensive Tests
+-- =========================================================================
+inventoryComprehensiveSpec :: Spec
+inventoryComprehensiveSpec = describe "Game.Inventory comprehensive" $ do
+  -- Helper items
+  let stone = BlockItem Stone
+      dirt  = BlockItem Dirt
+      tool  = ToolItem Pickaxe Diamond 1561
+      food  = FoodItem Apple
+
+  describe "addItem basics" $ do
+    it "addItem to empty inventory places 1 stack in slot 0" $ do
+      let (inv, left) = addItem emptyInventory stone 10
+      left `shouldBe` 0
+      getSlot inv 0 `shouldBe` Just (ItemStack stone 10)
+
+    it "addItem merging into partial stack fills existing slot first" $ do
+      let (inv1, _) = addItem emptyInventory stone 40
+          (inv2, left) = addItem inv1 stone 20
+      left `shouldBe` 0
+      getSlot inv2 0 `shouldBe` Just (ItemStack stone 60)
+      getSlot inv2 1 `shouldBe` Nothing
+
+    it "addItem overflow when stack is full spills to next slot" $ do
+      let (inv1, _) = addItem emptyInventory stone 60
+          (inv2, left) = addItem inv1 stone 10
+      left `shouldBe` 0
+      getSlot inv2 0 `shouldBe` Just (ItemStack stone 64)
+      getSlot inv2 1 `shouldBe` Just (ItemStack stone 6)
+
+    it "addItem fills multiple slots when count exceeds one stack" $ do
+      let (inv, left) = addItem emptyInventory stone 150
+      left `shouldBe` 0
+      getSlot inv 0 `shouldBe` Just (ItemStack stone 64)
+      getSlot inv 1 `shouldBe` Just (ItemStack stone 64)
+      getSlot inv 2 `shouldBe` Just (ItemStack stone 22)
+
+    it "addItem returns correct leftover when inventory is completely full" $ do
+      let fillSlots inv 0 = inv
+          fillSlots inv n = let (inv', _) = addItem inv stone 64
+                            in fillSlots inv' (n - 1)
+          full = fillSlots emptyInventory inventorySlots
+          (_, leftover) = addItem full stone 42
+      leftover `shouldBe` 42
+
+  describe "removeItem basics" $ do
+    it "removeItem from single stack reduces count" $ do
+      let (inv1, _) = addItem emptyInventory stone 30
+          (inv2, removed) = removeItem inv1 stone 10
+      removed `shouldBe` 10
+      getSlot inv2 0 `shouldBe` Just (ItemStack stone 20)
+
+    it "removeItem from multiple stacks drains last-first" $ do
+      let (inv1, _) = addItem emptyInventory stone 100
+          -- stone is in slots 0(64) and 1(36)
+          (inv2, removed) = removeItem inv1 stone 50
+      removed `shouldBe` 50
+      -- Slot 1 drained first (had 36), then slot 0 loses 14
+      getSlot inv2 0 `shouldBe` Just (ItemStack stone 50)
+      getSlot inv2 1 `shouldBe` Nothing
+
+    it "removeItem returns actual removed count when insufficient" $ do
+      let (inv1, _) = addItem emptyInventory stone 15
+          (inv2, removed) = removeItem inv1 stone 100
+      removed `shouldBe` 15
+      getSlot inv2 0 `shouldBe` Nothing
+
+  describe "countItem and hasItem" $ do
+    it "countItem accuracy across multiple stacks" $ do
+      let (inv1, _) = addItem emptyInventory stone 100
+      countItem inv1 stone `shouldBe` 100
+
+    it "hasItem true when enough" $ do
+      let (inv1, _) = addItem emptyInventory stone 50
+      hasItem inv1 stone 50 `shouldBe` True
+
+    it "hasItem false when insufficient" $ do
+      let (inv1, _) = addItem emptyInventory stone 49
+      hasItem inv1 stone 50 `shouldBe` False
+
+  describe "setSlot and getSlot bounds" $ do
+    it "setSlot with negative index is no-op" $ do
+      let inv = setSlot emptyInventory (-1) (Just (ItemStack stone 10))
+      inv `shouldBe` emptyInventory
+
+    it "setSlot with index beyond max is no-op" $ do
+      let inv = setSlot emptyInventory 100 (Just (ItemStack stone 10))
+      inv `shouldBe` emptyInventory
+
+    it "getSlot with negative index returns Nothing" $ do
+      getSlot emptyInventory (-1) `shouldBe` Nothing
+
+    it "getSlot with index beyond max returns Nothing" $ do
+      getSlot emptyInventory 100 `shouldBe` Nothing
+
+  describe "selectHotbar bounds" $ do
+    it "selectHotbar with negative index is no-op" $ do
+      let inv = selectHotbar emptyInventory (-1)
+      invSelected inv `shouldBe` 0
+
+    it "selectHotbar with index > 8 is no-op" $ do
+      let inv = selectHotbar emptyInventory 9
+      invSelected inv `shouldBe` 0
+
+  describe "selectedItem" $ do
+    it "selectedItem returns correct slot after selectHotbar" $ do
+      let inv1 = setSlot emptyInventory 3 (Just (ItemStack dirt 20))
+          inv2 = selectHotbar inv1 3
+      selectedItem inv2 `shouldBe` Just (ItemStack dirt 20)
+
+  describe "emptyInventory" $ do
+    it "emptyInventory has 36 Nothing slots" $ do
+      let slots = invSlots emptyInventory
+      V.length slots `shouldBe` 36
+      V.all (== Nothing) slots `shouldBe` True
+
+    it "emptyInventory invSelected = 0" $ do
+      invSelected emptyInventory `shouldBe` 0
+
+  describe "itemStackLimit" $ do
+    it "tools stack to 1" $ do
+      itemStackLimit tool `shouldBe` 1
+
+    it "blocks stack to 64" $ do
+      itemStackLimit stone `shouldBe` 64
+
+  describe "addItem slot selection" $ do
+    it "addItem to slot with different item type stays separate" $ do
+      let (inv1, _) = addItem emptyInventory stone 10
+          (inv2, _) = addItem inv1 dirt 10
+      getSlot inv2 0 `shouldBe` Just (ItemStack stone 10)
+      getSlot inv2 1 `shouldBe` Just (ItemStack dirt 10)
+
+    it "mergeIntoExisting prefers earlier slots" $ do
+      let inv1 = setSlot emptyInventory 2 (Just (ItemStack stone 30))
+          inv2 = setSlot inv1 5 (Just (ItemStack stone 30))
+          (inv3, _) = addItem inv2 stone 10
+      -- Slot 2 should get the merge first
+      getSlot inv3 2 `shouldBe` Just (ItemStack stone 40)
+      getSlot inv3 5 `shouldBe` Just (ItemStack stone 30)
+
+    it "placeInEmpty prefers earlier empty slots" $ do
+      let inv1 = setSlot emptyInventory 0 (Just (ItemStack dirt 10))
+          inv2 = setSlot inv1 1 (Just (ItemStack dirt 10))
+          (inv3, _) = addItem inv2 stone 10
+      -- Slot 2 is the first empty
+      getSlot inv3 2 `shouldBe` Just (ItemStack stone 10)
+
+  describe "edge cases" $ do
+    it "addItem 0 count is no-op" $ do
+      let (inv, left) = addItem emptyInventory stone 0
+      left `shouldBe` 0
+      inv `shouldBe` emptyInventory
+
+    it "removeItem 0 count is no-op" $ do
+      let (inv1, _) = addItem emptyInventory stone 10
+          (inv2, removed) = removeItem inv1 stone 0
+      removed `shouldBe` 0
+      inv2 `shouldBe` inv1
+
+    it "removeItem more than exists returns actual count" $ do
+      let (inv1, _) = addItem emptyInventory stone 7
+          (_, removed) = removeItem inv1 stone 999
+      removed `shouldBe` 7
+
+    it "countItem returns 0 for item not in inventory" $ do
+      countItem emptyInventory stone `shouldBe` 0
+
+    it "hasItem returns True for threshold 0 even on empty inventory" $ do
+      hasItem emptyInventory stone 0 `shouldBe` True
+
+  describe "QuickCheck properties" $ do
+    it "total count preserved: add then count equals amount added" $
+      property $ \n ->
+        let count = abs n `mod` 2305  -- up to 36 * 64 = 2304
+            (inv, leftover) = addItem emptyInventory stone count
+        in countItem inv stone + leftover == count
+
+    it "add then remove round-trips: total count correct" $
+      property $ \n m ->
+        let addAmt = abs n `mod` 2305
+            remAmt = abs m `mod` (addAmt + 1)
+            (inv1, leftover) = addItem emptyInventory stone addAmt
+            added = addAmt - leftover
+            (inv2, removed) = removeItem inv1 stone remAmt
+        in countItem inv2 stone == added - removed
+
+    it "removing more than exists never removes more than available" $
+      property $ \n m ->
+        let addAmt = abs n `mod` 500
+            remAmt = abs m `mod` 1000
+            (inv1, leftover) = addItem emptyInventory stone addAmt
+            added = addAmt - leftover
+            (_, removed) = removeItem inv1 stone remAmt
+        in removed <= added
+
+    it "addItem never produces negative leftover" $
+      property $ \n ->
+        let count = abs n `mod` 5000
+            (_, leftover) = addItem emptyInventory stone count
+        in leftover >= 0
+
+    it "leftover + inventory count equals original add amount" $
+      property $ \n ->
+        let count = abs n `mod` 5000
+            (inv, leftover) = addItem emptyInventory stone count
+        in countItem inv stone + leftover == count
