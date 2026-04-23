@@ -42,7 +42,13 @@ import Game.Save
 import Game.SaveV3 (SaveDataV3(..), savev3Version, savePlayerV3, loadPlayerV3)
 import Game.DroppedItem
 import Game.BlockEntity
+<<<<<<< HEAD
 import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), newGameState, stepAttackCooldown, applyAttackCooldown)
+||||||| 6bffd7a
+import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), newGameState)
+=======
+import Game.State (GameState(..), GameMode(..), PlayMode(..), CameraMode(..), cycleCameraMode, Projectile(..), newGameState)
+>>>>>>> origin/main
 import Game.Creative (creativeClickSlot, creativePickFromPalette, creativeConsumeItem, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Game.Achievement (AchievementState, checkAchievement, unlockAchievement, achievementName, AchievementTrigger(..))
 import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), ChatMessage(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
@@ -54,6 +60,7 @@ import Game.ItemDisplay (itemColor, itemMiniIcon, armorSlotSilhouette)
 import Engine.Sound
 import Game.Particle
 import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpProgress)
+import Game.ViewBob (bobOffset, bobSpeed, bobDecayRate, bobMovementThreshold)
 
 import World.Dimension (DimensionType(..), dimensionSkyColor, detectPortalFrame, netherCoords, overworldCoords, portalTransitTime)
 
@@ -260,7 +267,12 @@ main = do
         villagerTradesRef   = gsVillagerTrades gs
         playModeRef         = gsPlayMode gs
         hotbarPopupRef      = gsHotbarPopup gs
+<<<<<<< HEAD
         attackCooldownRef   = gsAttackCooldown gs
+||||||| 6bffd7a
+=======
+        cameraModeRef       = gsCameraMode gs
+>>>>>>> origin/main
         lastClickRef        = gsLastClick gs
     palettePageRef <- newIORef (0 :: Int)
 
@@ -1738,6 +1750,8 @@ main = do
               savePlayerV3 sd (buildSaveDataV3 player inv dayNight weather xp spawnPt)
               saveWorld sd world
               putStrLn "Quick-saved!"
+            GLFW.Key'F7 ->
+              modifyIORef' cameraModeRef cycleCameraMode
             GLFW.Key'F9 -> do
               sd <- readIORef saveDirRef
               mData <- loadPlayerV3 sd
@@ -2758,8 +2772,22 @@ main = do
             dayNightVal <- readIORef dayNightRef
             weatherVal <- readIORef weatherRef
             curDimVal <- readIORef (gsDimension gs)
+            camMode <- readIORef cameraModeRef
             let Vk.Extent2D{width = extW, height = extH} = scExtent sc'
-            let cam = cameraFromPlayer player
+            -- View bobbing: advance bobTime when walking on ground, decay otherwise
+            do let V3 vx _vy vz = plVelocity player
+                   horizSpeed = sqrt (vx * vx + vz * vz)
+                   isMoving = horizSpeed > bobMovementThreshold && plOnGround player
+               oldBobTime <- readIORef (gsBobTime gs)
+               let newBobTime
+                     | isMoving  = oldBobTime + dt * bobSpeed
+                     | abs oldBobTime < 0.01 = 0.0
+                     | oldBobTime > 0 = max 0 (oldBobTime - dt * bobDecayRate)
+                     | otherwise = min 0 (oldBobTime + dt * bobDecayRate)
+               writeIORef (gsBobTime gs) newBobTime
+            bobTime <- readIORef (gsBobTime gs)
+            let cam0 = cameraFromPlayer player
+                cam = cam0 { camPosition = camPosition cam0 + V3 0 (bobOffset bobTime) 0 }
                 aspect = fromIntegral extW / fromIntegral extH
                 V3 sx sy sz = getSunDirection dayNightVal
                 -- Compute sky color from day/night cycle, adjusted for weather and dimension
@@ -2767,9 +2795,14 @@ main = do
                 V4 r g b a = getSkyColor dayNightVal
                 V4 dr dg db _da = dimensionSkyColor curDimVal
                 V4 skyR skyG skyB skyA = V4 (r * skyMul * dr) (g * skyMul * dg) (b * skyMul * db) a
+                -- View matrix depends on camera mode (first- or third-person)
+                viewMat = case camMode of
+                  FirstPerson      -> cameraViewMatrix cam
+                  ThirdPersonBack  -> thirdPersonViewMatrix True  4 cam
+                  ThirdPersonFront -> thirdPersonViewMatrix False 4 cam
                 ubo = UniformBufferObject
                   { uboModel        = transpose identity
-                  , uboView         = transpose $ cameraViewMatrix cam
+                  , uboView         = transpose viewMat
                   , uboProjection   = transpose $ cameraProjectionMatrix aspect 0.1 1000 cam
                   , uboSunDirection = V4 sx sy sz 0
                   , uboAmbientLight = getAmbientLight dayNightVal * weatherAmbientMultiplier weatherVal
@@ -2791,7 +2824,7 @@ main = do
 
             meshCache <- readIORef meshCacheRef
             -- Frustum culling: only draw chunks visible to the camera
-            let vp = cameraProjectionMatrix aspect 0.1 1000 cam !*! cameraViewMatrix cam
+            let vp = cameraProjectionMatrix aspect 0.1 1000 cam !*! viewMat
                 frustum = extractFrustum vp
                 chunkDraws = [ draw
                              | (V2 cx cz, draw) <- HM.toList meshCache

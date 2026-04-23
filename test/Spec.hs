@@ -44,6 +44,7 @@ import UI.Screen
 
 import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts, cursorIconSize)
 import Engine.BitmapFont (renderText, charSpacing)
+import Engine.Camera (Camera(..), defaultCamera, cameraViewMatrix, thirdPersonOffset, thirdPersonViewMatrix)
 
 import Game.PotionEffect
 import Game.Particle (WeatherParticle(..), WeatherParticleType(..), spawnWeatherParticles, tickWeatherParticles, renderWeatherParticles, weatherParticleRadius, weatherParticleHeight, weatherParticleCount, rainFallSpeed, snowFallSpeed, isSnowBiome, clampParticleXZ, clampParticleY, spawnBlockBreakParticles)
@@ -55,7 +56,13 @@ import Engine.Mesh (MeshData(..), NeighborData(..), meshChunkWithLight, emptyNei
 import Entity.Pathfinding (findPath, pathDistance)
 import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
 import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, isDawn, isDusk, getTimeOfDay, TimeOfDay(..))
+<<<<<<< HEAD
 import Game.State (GameState(..), GameMode(..), PlayMode(..), newGameState, attackCooldownPeriod, stepAttackCooldown, applyAttackCooldown, attackCooldownFraction)
+||||||| 6bffd7a
+import Game.State (GameState(..), GameMode(..), PlayMode(..), newGameState)
+=======
+import Game.State (GameState(..), GameMode(..), PlayMode(..), CameraMode(..), cycleCameraMode, newGameState)
+>>>>>>> origin/main
 import Game.Creative (creativePalette, creativePaletteSize, creativeClickSlot, creativePickFromPalette, creativeConsumeItem, creativeRefillSlot, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteCols, paletteSlotsPerPage, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Game.ItemDisplay (durabilityFraction, durabilityBarColor)
 import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
@@ -67,9 +74,10 @@ import Data.IORef (newIORef, readIORef, writeIORef, modifyIORef')
 import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.List (nub, isPrefixOf, isInfixOf)
 import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted, glowColor, glowThickness)
+import Game.ViewBob (bobOffset, bobSpeed, bobAmplitude, bobDecayRate, bobMovementThreshold)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
-import Linear (V2(..), V3(..), V4(..), identity)
+import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Unboxed as UV
@@ -8732,6 +8740,7 @@ hotbarSwapSpec = describe "Game.Inventory.swapHotbarWithInventory" $ do
     getSlot inv' 9 `shouldBe` stone3
     getSlot inv' 5 `shouldBe` pickaxe
 
+<<<<<<< HEAD
 -- =========================================================================
 -- Attack Cooldown
 -- =========================================================================
@@ -8790,3 +8799,91 @@ attackCooldownSpec = describe "Game.State attack cooldown" $ do
     gs <- newGameState (V3 0 70 0)
     cd <- readIORef (gsAttackCooldown gs)
     cd `shouldBe` 1.0
+||||||| 6bffd7a
+=======
+  -- Third-Person Camera --
+
+  describe "CameraMode cycling" $ do
+    it "cycles FirstPerson -> ThirdPersonBack -> ThirdPersonFront -> FirstPerson" $ do
+      cycleCameraMode FirstPerson      `shouldBe` ThirdPersonBack
+      cycleCameraMode ThirdPersonBack  `shouldBe` ThirdPersonFront
+      cycleCameraMode ThirdPersonFront `shouldBe` FirstPerson
+
+  describe "thirdPersonOffset" $ do
+    let cam = defaultCamera { camPosition = V3 0 10 0, camFront = V3 0 0 (-1) }
+
+    it "ThirdPersonBack places camera behind player (positive Z direction)" $ do
+      let (pos, _target) = thirdPersonOffset True 4 cam
+      let V3 _ _ pz = pos
+      pz `shouldSatisfy` (> 0)
+
+    it "ThirdPersonFront places camera in front of player (negative Z direction)" $ do
+      let (pos, _target) = thirdPersonOffset False 4 cam
+      let V3 _ _ pz = pos
+      pz `shouldSatisfy` (< 0)
+
+    it "ThirdPersonBack target is the player eye position" $ do
+      let (_pos, target) = thirdPersonOffset True 4 cam
+      target `shouldBe` camPosition cam
+
+    it "ThirdPersonFront target is the player eye position" $ do
+      let (_pos, target) = thirdPersonOffset False 4 cam
+      target `shouldBe` camPosition cam
+
+    it "camera offset distance matches requested distance" $ do
+      let (pos, _target) = thirdPersonOffset True 4 cam
+          diff = pos ^-^ camPosition cam
+      abs (norm diff - 4.0) `shouldSatisfy` (< 0.001)
+
+    it "front camera offset distance matches requested distance" $ do
+      let (pos, _target) = thirdPersonOffset False 4 cam
+          diff = pos ^-^ camPosition cam
+      abs (norm diff - 4.0) `shouldSatisfy` (< 0.001)
+
+  describe "thirdPersonViewMatrix" $ do
+    let cam = defaultCamera { camPosition = V3 5 20 5, camFront = normalize (V3 1 0 0) }
+
+    it "back view matrix differs from first-person view matrix" $ do
+      let fpView = cameraViewMatrix cam
+          tpView = thirdPersonViewMatrix True 4 cam
+      fpView `shouldNotBe` tpView
+
+    it "front view matrix differs from back view matrix" $ do
+      let backView  = thirdPersonViewMatrix True  4 cam
+          frontView = thirdPersonViewMatrix False 4 cam
+      backView `shouldNotBe` frontView
+>>>>>>> origin/main
+
+  describe "ViewBob" $ do
+    it "bobOffset at 0 is 0" $ do
+      bobOffset 0.0 `shouldBe` 0.0
+
+    it "bobOffset at pi/2 equals bobAmplitude" $ do
+      let result = bobOffset (pi / 2)
+      abs (result - bobAmplitude) `shouldSatisfy` (< 1e-6)
+
+    it "bobOffset at pi is approximately 0" $ do
+      abs (bobOffset pi) `shouldSatisfy` (< 1e-6)
+
+    it "bobOffset at 3*pi/2 equals negative bobAmplitude" $ do
+      let result = bobOffset (3 * pi / 2)
+      abs (result - (- bobAmplitude)) `shouldSatisfy` (< 1e-6)
+
+    it "bobOffset is bounded by bobAmplitude" $ property $
+      \t -> let val = bobOffset t in abs val <= bobAmplitude + 1e-6
+
+    it "bobOffset is periodic with period 2*pi" $ property $
+      \t -> abs (bobOffset t - bobOffset (t + 2 * pi)) < 1e-4
+
+    it "bobSpeed is positive" $ do
+      bobSpeed `shouldSatisfy` (> 0)
+
+    it "bobAmplitude is positive and small" $ do
+      bobAmplitude `shouldSatisfy` (> 0)
+      bobAmplitude `shouldSatisfy` (< 0.5)
+
+    it "bobDecayRate is positive" $ do
+      bobDecayRate `shouldSatisfy` (> 0)
+
+    it "bobMovementThreshold is positive" $ do
+      bobMovementThreshold `shouldSatisfy` (> 0)

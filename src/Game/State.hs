@@ -2,6 +2,8 @@ module Game.State
   ( GameState(..)
   , GameMode(..)
   , PlayMode(..)
+  , CameraMode(..)
+  , cycleCameraMode
   , Projectile(..)
   , newGameState
   , attackCooldownPeriod
@@ -45,6 +47,16 @@ data GameMode = MainMenu | Playing | Paused | InventoryOpen | CraftingOpen | Che
 -- | Play mode: survival (default) or creative (infinite items, no damage)
 data PlayMode = Survival | Creative
   deriving stock (Show, Eq, Ord, Enum, Bounded)
+
+-- | Camera perspective mode
+data CameraMode = FirstPerson | ThirdPersonBack | ThirdPersonFront
+  deriving stock (Show, Eq, Ord, Enum, Bounded)
+
+-- | Cycle to the next camera mode, wrapping around
+cycleCameraMode :: CameraMode -> CameraMode
+cycleCameraMode FirstPerson       = ThirdPersonBack
+cycleCameraMode ThirdPersonBack   = ThirdPersonFront
+cycleCameraMode ThirdPersonFront  = FirstPerson
 
 -- | Arrow projectile fired by Skeletons
 data Projectile = Projectile
@@ -133,8 +145,16 @@ data GameState = GameState
   , gsVillagerTrades   :: !(IORef [TradeOffer])
     -- Hotbar popup (item name, remaining seconds)
   , gsHotbarPopup      :: !(IORef (Maybe (String, Float)))
+    -- View bobbing
+  , gsBobTime          :: !(IORef Float)
+<<<<<<< HEAD
     -- Attack cooldown (0.0 = just attacked, 1.0 = fully recharged)
   , gsAttackCooldown   :: !(IORef Float)
+||||||| 6bffd7a
+=======
+    -- Camera perspective mode
+  , gsCameraMode       :: !(IORef CameraMode)
+>>>>>>> origin/main
   }
 
 -- | Create a fresh GameState with default initial values.
@@ -220,6 +240,8 @@ newGameState spawnPos = do
     <*> newIORef Nothing
     <*> newIORef []
     <*> newIORef Nothing  -- gsHotbarPopup
+    <*> newIORef 0.0     -- gsBobTime
+<<<<<<< HEAD
     <*> newIORef 1.0     -- gsAttackCooldown (fully recharged)
 
 -- | The cooldown recharge period in seconds (0.5s = Minecraft default).
@@ -239,3 +261,7 @@ applyAttackCooldown cooldown rawDmg = rawDmg * cooldown
 -- | Convenience: clamp a cooldown value to the valid [0, 1] range.
 attackCooldownFraction :: Float -> Float
 attackCooldownFraction = max 0.0 . min 1.0
+||||||| 6bffd7a
+=======
+    <*> newIORef FirstPerson  -- gsCameraMode
+>>>>>>> origin/main
