@@ -345,6 +345,96 @@ inventorySpec = describe "Game.Inventory" $ do
     getSlot inv2 0 `shouldBe` Just (ItemStack tool 1)
     getSlot inv2 1 `shouldBe` Just (ItemStack tool 1)
 
+  -- moveToSection tests
+  it "moveToSection moves hotbar item to first empty main slot" $ do
+    let inv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 10))
+        inv' = moveToSection inv 0
+    getSlot inv' 0 `shouldBe` Nothing
+    getSlot inv' 9 `shouldBe` Just (ItemStack (BlockItem Stone) 10)
+
+  it "moveToSection moves main item to first empty hotbar slot" $ do
+    let inv = setSlot emptyInventory 15 (Just (ItemStack (BlockItem Dirt) 5))
+        inv' = moveToSection inv 15
+    getSlot inv' 15 `shouldBe` Nothing
+    getSlot inv' 0 `shouldBe` Just (ItemStack (BlockItem Dirt) 5)
+
+  it "moveToSection is no-op on empty slot" $ do
+    let inv' = moveToSection emptyInventory 3
+    inv' `shouldBe` emptyInventory
+
+  it "moveToSection is no-op when target section is full" $ do
+    -- Fill all main slots (9-35)
+    let fillMain inv idx
+          | idx > 35 = inv
+          | otherwise = fillMain (setSlot inv idx (Just (ItemStack (BlockItem Dirt) 1))) (idx + 1)
+        inv = setSlot (fillMain emptyInventory 9) 0 (Just (ItemStack (BlockItem Stone) 10))
+        inv' = moveToSection inv 0
+    -- Should be unchanged — no empty main slot
+    getSlot inv' 0 `shouldBe` Just (ItemStack (BlockItem Stone) 10)
+
+  it "moveToSection is no-op when hotbar is full and moving from main" $ do
+    -- Fill all hotbar slots (0-8)
+    let fillHotbar inv idx
+          | idx >= 9 = inv
+          | otherwise = fillHotbar (setSlot inv idx (Just (ItemStack (BlockItem Dirt) 1))) (idx + 1)
+        inv = setSlot (fillHotbar emptyInventory 0) 20 (Just (ItemStack (BlockItem Stone) 5))
+        inv' = moveToSection inv 20
+    -- Should be unchanged — no empty hotbar slot
+    getSlot inv' 20 `shouldBe` Just (ItemStack (BlockItem Stone) 5)
+
+  it "moveToSection skips occupied slots to find first empty" $ do
+    -- Occupy slots 9 and 10, leave 11 empty
+    let inv = setSlot (setSlot (setSlot emptyInventory 9 (Just (ItemStack (BlockItem Dirt) 1)))
+                                        10 (Just (ItemStack (BlockItem Dirt) 1)))
+                       0 (Just (ItemStack (BlockItem Stone) 3))
+        inv' = moveToSection inv 0
+    getSlot inv' 0 `shouldBe` Nothing
+    getSlot inv' 9 `shouldBe` Just (ItemStack (BlockItem Dirt) 1)
+    getSlot inv' 10 `shouldBe` Just (ItemStack (BlockItem Dirt) 1)
+    getSlot inv' 11 `shouldBe` Just (ItemStack (BlockItem Stone) 3)
+
+  it "moveToSection moves tool item from hotbar to main" $ do
+    let tool = ToolItem Pickaxe Iron 250
+        inv = setSlot emptyInventory 2 (Just (ItemStack tool 1))
+        inv' = moveToSection inv 2
+    getSlot inv' 2 `shouldBe` Nothing
+    getSlot inv' 9 `shouldBe` Just (ItemStack tool 1)
+
+  it "moveToSection moves tool item from main to hotbar" $ do
+    let tool = ToolItem Sword Diamond 1561
+        inv = setSlot emptyInventory 30 (Just (ItemStack tool 1))
+        inv' = moveToSection inv 30
+    getSlot inv' 30 `shouldBe` Nothing
+    getSlot inv' 0 `shouldBe` Just (ItemStack tool 1)
+
+  it "moveToSection is no-op for out-of-range slot index" $ do
+    moveToSection emptyInventory (-1) `shouldBe` emptyInventory
+    moveToSection emptyInventory 36 `shouldBe` emptyInventory
+
+  it "moveToSection preserves stack count" $ do
+    let inv = setSlot emptyInventory 5 (Just (ItemStack (BlockItem Stone) 64))
+        inv' = moveToSection inv 5
+    getSlot inv' 5 `shouldBe` Nothing
+    getSlot inv' 9 `shouldBe` Just (ItemStack (BlockItem Stone) 64)
+
+  it "moveToSection from hotbar slot 8 works" $ do
+    let inv = setSlot emptyInventory 8 (Just (ItemStack (BlockItem Sand) 32))
+        inv' = moveToSection inv 8
+    getSlot inv' 8 `shouldBe` Nothing
+    getSlot inv' 9 `shouldBe` Just (ItemStack (BlockItem Sand) 32)
+
+  it "moveToSection from main slot 9 moves to hotbar" $ do
+    let inv = setSlot emptyInventory 9 (Just (ItemStack (BlockItem Sand) 16))
+        inv' = moveToSection inv 9
+    getSlot inv' 9 `shouldBe` Nothing
+    getSlot inv' 0 `shouldBe` Just (ItemStack (BlockItem Sand) 16)
+
+  it "moveToSection from main slot 35 moves to hotbar" $ do
+    let inv = setSlot emptyInventory 35 (Just (ItemStack (FoodItem Apple) 10))
+        inv' = moveToSection inv 35
+    getSlot inv' 35 `shouldBe` Nothing
+    getSlot inv' 0 `shouldBe` Just (ItemStack (FoodItem Apple) 10)
+
 -- =========================================================================
 -- Crafting
 -- =========================================================================
