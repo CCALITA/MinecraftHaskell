@@ -3949,17 +3949,21 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
 
-    -- Cursor item (follows mouse position — simplified to center for now)
+    -- Cursor item (follows mouse position in inventory screens)
     cursorVerts = case cursorItem of
       Nothing -> []
-      Just (ItemStack item _) ->
+      Just (ItemStack item cnt) ->
         let colors = itemMiniIcon item
-            sw = 0.08; sh = 0.08
-            x = mouseX - sw / 2; y = mouseY - sh / 2
-            pixW = sw/3; pixH = sh/3
-        in concatMap (\(r, c, clr) ->
-             quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
-                  (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+            sw = 0.05; sh = 0.05
+            x = mouseX; y = mouseY
+            pixW = sw / 3; pixH = sh / 3
+            iconVerts = concatMap (\(r, c, clr) ->
+                 quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                      (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+            countText = if cnt > 1
+              then renderText (x + sw - 0.02) (y + sh - 0.015) 0.5 (1, 1, 1, 1) (show cnt)
+              else []
+        in iconVerts ++ countText
 
     -- Main menu screen
     menuVerts =

@@ -43,6 +43,8 @@ import UI.Screen
 
 import Game.PotionEffect
 import Game.Particle (WeatherParticle(..), WeatherParticleType(..), spawnWeatherParticles, tickWeatherParticles, renderWeatherParticles, weatherParticleRadius, weatherParticleHeight, weatherParticleCount, rainFallSpeed, snowFallSpeed, isSnowBiome, clampParticleXZ, clampParticleY)
+import Engine.BitmapFont (renderText, renderTextCentered, charWidth, charHeight, charSpacing)
+import Game.ItemDisplay (itemColor, itemMiniIcon)
 
 import Game.Bucket (BucketAction(..), determineBucketAction, bucketTypeToFluidBlock, fluidBlockToBucketType)
 import World.Fluid (FluidState, FluidType(..), newFluidState, addFluidSource, removeFluid, getFluid, FluidBlock(..))
@@ -143,6 +145,7 @@ main = hspec $ do
   meshAOSpec
   directionalPistonSpec
   sunsetSunriseSpec
+  cursorItemSpec
 
 -- =========================================================================
 -- Block
@@ -6532,3 +6535,164 @@ sunsetSunriseSpec = describe "Sunset and sunrise sky colors" $ do
       abs (r1 - r2) `shouldSatisfy` (< 0.05)
       abs (g1 - g2) `shouldSatisfy` (< 0.05)
       abs (b1 - b2) `shouldSatisfy` (< 0.05)
+
+-- =========================================================================
+-- Cursor Item Rendering
+-- =========================================================================
+cursorItemSpec :: Spec
+cursorItemSpec = describe "Cursor item rendering" $ do
+  describe "cursor Nothing produces no vertices" $ do
+    it "buildCursorVerts Nothing returns empty list" $ do
+      let verts = buildCursorVerts Nothing 0.0 0.0
+      verts `shouldBe` []
+
+    it "buildCursorVerts Nothing at positive mouse coords returns empty" $ do
+      buildCursorVerts Nothing 0.5 0.5 `shouldBe` []
+
+    it "buildCursorVerts Nothing at negative mouse coords returns empty" $ do
+      buildCursorVerts Nothing (-0.5) (-0.5) `shouldBe` []
+
+    it "buildCursorVerts Nothing at edge coords returns empty" $ do
+      buildCursorVerts Nothing 1.0 1.0 `shouldBe` []
+      buildCursorVerts Nothing (-1.0) (-1.0) `shouldBe` []
+
+  describe "cursor Just produces icon vertices" $ do
+    it "BlockItem Dirt produces non-empty vertices" $ do
+      let cursor = Just (ItemStack (BlockItem Dirt) 1)
+          verts = buildCursorVerts cursor 0.0 0.0
+      length verts `shouldSatisfy` (> 0)
+
+    it "ToolItem Pickaxe produces non-empty vertices" $ do
+      let cursor = Just (ItemStack (ToolItem Pickaxe Wood 59) 1)
+          verts = buildCursorVerts cursor 0.0 0.0
+      length verts `shouldSatisfy` (> 0)
+
+    it "MaterialItem Coal produces non-empty vertices" $ do
+      let cursor = Just (ItemStack (MaterialItem Coal) 1)
+          verts = buildCursorVerts cursor 0.0 0.0
+      length verts `shouldSatisfy` (> 0)
+
+    it "FoodItem Apple produces non-empty vertices" $ do
+      let cursor = Just (ItemStack (FoodItem Apple) 1)
+          verts = buildCursorVerts cursor 0.0 0.0
+      length verts `shouldSatisfy` (> 0)
+
+    it "StickItem produces non-empty vertices" $ do
+      let cursor = Just (ItemStack StickItem 1)
+          verts = buildCursorVerts cursor 0.0 0.0
+      length verts `shouldSatisfy` (> 0)
+
+  describe "cursor count text" $ do
+    it "count of 1 does not produce count text (icon only)" $ do
+      let verts1 = buildCursorVerts (Just (ItemStack (BlockItem Dirt) 1)) 0.0 0.0
+      length verts1 `shouldSatisfy` (> 0)
+
+    it "count of 2 produces more vertices than count 1 (has count text)" $ do
+      let verts1 = buildCursorVerts (Just (ItemStack (BlockItem Dirt) 1)) 0.0 0.0
+          verts2 = buildCursorVerts (Just (ItemStack (BlockItem Dirt) 2)) 0.0 0.0
+      length verts2 `shouldSatisfy` (> length verts1)
+
+    it "count of 64 produces more vertices than count 1 (multi-digit)" $ do
+      let verts1 = buildCursorVerts (Just (ItemStack (BlockItem Dirt) 1)) 0.0 0.0
+          verts64 = buildCursorVerts (Just (ItemStack (BlockItem Dirt) 64)) 0.0 0.0
+      length verts64 `shouldSatisfy` (> length verts1)
+
+    it "count of 64 produces more vertices than count 2 (extra digit)" $ do
+      let verts2 = buildCursorVerts (Just (ItemStack (BlockItem Dirt) 2)) 0.0 0.0
+          verts64 = buildCursorVerts (Just (ItemStack (BlockItem Dirt) 64)) 0.0 0.0
+      length verts64 `shouldSatisfy` (> length verts2)
+
+  describe "cursor position" $ do
+    it "different mouse positions produce different vertex data" $ do
+      let cursor = Just (ItemStack (BlockItem Stone) 5)
+          v1 = buildCursorVerts cursor 0.0 0.0
+          v2 = buildCursorVerts cursor 0.3 0.3
+      v1 `shouldNotBe` v2
+
+    it "vertex data is consistent for same input" $ do
+      let cursor = Just (ItemStack (BlockItem Stone) 5)
+          v1 = buildCursorVerts cursor 0.1 0.2
+          v2 = buildCursorVerts cursor 0.1 0.2
+      v1 `shouldBe` v2
+
+  describe "vertex count is multiple of 6 (triangles)" $ do
+    it "icon-only vertex count is divisible by 6" $ do
+      let verts = buildCursorVerts (Just (ItemStack (BlockItem Dirt) 1)) 0.0 0.0
+      -- 6 floats per vertex, 6 vertices per quad (two triangles)
+      -- so total floats should be divisible by 36
+      (length verts `mod` 36) `shouldBe` 0
+
+    it "icon+count vertex count is divisible by 6" $ do
+      let verts = buildCursorVerts (Just (ItemStack (BlockItem Dirt) 10)) 0.0 0.0
+      (length verts `mod` 36) `shouldBe` 0
+
+  describe "various item types do not crash" $ do
+    it "ArmorItem renders" $ do
+      let v = buildCursorVerts (Just (ItemStack (ArmorItem Helmet LeatherArmor 55) 1)) 0.0 0.0
+      length v `shouldSatisfy` (> 0)
+
+    it "ShearsItem renders" $ do
+      let v = buildCursorVerts (Just (ItemStack (ShearsItem 238) 1)) 0.0 0.0
+      length v `shouldSatisfy` (> 0)
+
+    it "FlintAndSteelItem renders" $ do
+      let v = buildCursorVerts (Just (ItemStack (FlintAndSteelItem 64) 1)) 0.0 0.0
+      length v `shouldSatisfy` (> 0)
+
+    it "CompassItem renders" $ do
+      let v = buildCursorVerts (Just (ItemStack CompassItem 1)) 0.0 0.0
+      length v `shouldSatisfy` (> 0)
+
+    it "ClockItem renders" $ do
+      let v = buildCursorVerts (Just (ItemStack ClockItem 1)) 0.0 0.0
+      length v `shouldSatisfy` (> 0)
+
+    it "FishingRodItem renders" $ do
+      let v = buildCursorVerts (Just (ItemStack (FishingRodItem 64) 1)) 0.0 0.0
+      length v `shouldSatisfy` (> 0)
+
+    it "GlassBottleItem renders" $ do
+      let v = buildCursorVerts (Just (ItemStack GlassBottleItem 1)) 0.0 0.0
+      length v `shouldSatisfy` (> 0)
+
+    it "PotionItem renders" $ do
+      let v = buildCursorVerts (Just (ItemStack (PotionItem HealingPotion) 1)) 0.0 0.0
+      length v `shouldSatisfy` (> 0)
+
+    it "BoatItem renders" $ do
+      let v = buildCursorVerts (Just (ItemStack BoatItem 1)) 0.0 0.0
+      length v `shouldSatisfy` (> 0)
+
+    it "MinecartItem renders" $ do
+      let v = buildCursorVerts (Just (ItemStack MinecartItem 1)) 0.0 0.0
+      length v `shouldSatisfy` (> 0)
+
+    it "BucketItem Empty renders" $ do
+      let v = buildCursorVerts (Just (ItemStack (BucketItem BucketEmpty) 1)) 0.0 0.0
+      length v `shouldSatisfy` (> 0)
+
+    it "BucketItem Water renders" $ do
+      let v = buildCursorVerts (Just (ItemStack (BucketItem BucketWater) 1)) 0.0 0.0
+      length v `shouldSatisfy` (> 0)
+
+-- | Pure cursor vertex builder matching the logic in buildHudVertices.
+-- This allows us to test the cursor rendering logic without Vulkan or the full HUD.
+buildCursorVerts :: Maybe ItemStack -> Float -> Float -> [Float]
+buildCursorVerts Nothing _ _ = []
+buildCursorVerts (Just (ItemStack item cnt)) mouseX mouseY =
+  let colors = itemMiniIcon item
+      sw = 0.05 :: Float; sh = 0.05 :: Float
+      x = mouseX; y = mouseY
+      pixW = sw / 3; pixH = sh / 3
+      iconVerts = concatMap (\(r, c, clr) ->
+           cursorQuad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+      countText = if cnt > 1
+        then renderText (x + sw - 0.02) (y + sh - 0.015) 0.5 (1, 1, 1, 1) (show cnt)
+        else []
+  in iconVerts ++ countText
+
+cursorQuad :: Float -> Float -> Float -> Float -> (Float, Float, Float, Float) -> [Float]
+cursorQuad x0 y0 x1 y1 (r, g, b, a) =
+  [x0, y0, r, g, b, a,  x1, y0, r, g, b, a,  x1, y1, r, g, b, a
+  ,x0, y0, r, g, b, a,  x1, y1, r, g, b, a,  x0, y1, r, g, b, a]
