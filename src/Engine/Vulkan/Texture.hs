@@ -254,18 +254,61 @@ tileFull tileIdx lx ly = case tileIdx of
                       in n < 3 && (x + y) `mod` 3 /= 0
       in if isOreSpot then (or', og, ob, 255) else stonePattern x y
 
-    -- Water: blue with subtle wave pattern
+    -- Water: deep blue with caustic-like light patterns and surface ripples
     waterPattern x y =
-      let wave = pixHash x (y + x `div` 3) 1100 `mod` 30
-          b = fromIntegral (160 + wave)
-          g = fromIntegral (80 + wave `div` 2)
-      in (30, g, b, 200)
+      let -- Overlapping sine-based hash patterns for caustic highlights
+          h1 = pixHash (x + 3) (y + 5) 1100 `mod` 256
+          h2 = pixHash (x * 2 + 1) (y * 3 + 2) 1101 `mod` 256
+          h3 = pixHash (x + y) (x - y + 16) 1102 `mod` 256
+          caustic = (h1 + h2 + h3) `div` 3
+          -- Bright caustic spots where multiple patterns overlap
+          isBright = caustic > 180
+          -- Surface ripple lines: horizontal lighter streaks every 4-5 pixels
+          rippleRow = (y `mod` 5 == 0) || (y `mod` 5 == 1 && pixHash x y 1103 `mod` 3 == 0)
+          -- Base deep blue with noise
+          baseNoise = pixHash x y 1104 `mod` 20
+          baseR = 20 + fromIntegral (baseNoise `div` 4)
+          baseG = 60 + fromIntegral (baseNoise `div` 2)
+          baseB = 180 + fromIntegral baseNoise
+          -- Apply caustic brightening
+          causticBoost = fromIntegral (caustic `div` 8)
+          (cr, cg, cb) = if isBright
+                         then ( min 255 (baseR + causticBoost + 30)
+                              , min 255 (baseG + causticBoost + 25)
+                              , min 255 (baseB + causticBoost + 15))
+                         else (baseR + causticBoost `div` 3, baseG + causticBoost `div` 3, baseB + causticBoost `div` 4)
+          -- Apply ripple brightening
+          (rr, rg, rb) = if rippleRow
+                         then (min 255 (cr + 15), min 255 (cg + 20), min 255 (cb + 10))
+                         else (cr, cg, cb)
+      in (rr, rg, rb, 200)
 
-    -- Lava: orange-red with bright spots
+    -- Lava: bright orange-red base with dark crust and bright hotspot veins
     lavaPattern x y =
-      let n = pixHash x y 1200 `mod` 100
-          bright = n < 20
-          (r, g, b) = if bright then (255, 200, 50) else (220, 80 + fromIntegral (n `mod` 30), 10)
+      let -- Per-pixel noise
+          n = pixHash x y 1200 `mod` 100
+          -- Large-scale crust pattern (divide by 5 for bigger blobs)
+          crustHash = pixHash (x `div` 5) (y `div` 5) 1201 `mod` 100
+          isCrust = crustHash < 35
+          -- Bright hotspot veins between crust patches: thin lines, hash < threshold
+          veinHash = pixHash (x + y `div` 2) (y + x `div` 3) 1202 `mod` 100
+          isVein = not isCrust && veinHash < 8
+          -- Base bright orange-red
+          baseR = 230
+          baseG = 100 + fromIntegral (n `mod` 30)
+          baseB = 20 + fromIntegral (n `mod` 15)
+          -- Dark crust patches
+          crustR = 80 + fromIntegral (n `mod` 20)
+          crustG = 30 + fromIntegral (n `mod` 15)
+          crustB = 10 + fromIntegral (n `mod` 10)
+          -- Bright yellow-white hotspot veins
+          veinR = 255 :: Word8
+          veinG = 230 + fromIntegral (n `mod` 25)
+          veinB = 120 + fromIntegral (n `mod` 60)
+          (r, g, b)
+            | isVein  = (veinR, veinG, veinB)
+            | isCrust = (crustR, crustG, crustB)
+            | otherwise = (baseR, baseG, baseB)
       in (r, g, b, 255)
 
     -- Glass: mostly transparent with faint border
