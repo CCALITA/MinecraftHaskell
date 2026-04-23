@@ -147,14 +147,10 @@ data GameState = GameState
   , gsHotbarPopup      :: !(IORef (Maybe (String, Float)))
     -- View bobbing
   , gsBobTime          :: !(IORef Float)
-<<<<<<< HEAD
     -- Attack cooldown (0.0 = just attacked, 1.0 = fully recharged)
   , gsAttackCooldown   :: !(IORef Float)
-||||||| 6bffd7a
-=======
     -- Camera perspective mode
   , gsCameraMode       :: !(IORef CameraMode)
->>>>>>> origin/main
   }
 
 -- | Create a fresh GameState with default initial values.
@@ -241,7 +237,6 @@ newGameState spawnPos = do
     <*> newIORef []
     <*> newIORef Nothing  -- gsHotbarPopup
     <*> newIORef 0.0     -- gsBobTime
-<<<<<<< HEAD
     <*> newIORef 1.0     -- gsAttackCooldown (fully recharged)
 
 -- | The cooldown recharge period in seconds (0.5s = Minecraft default).
@@ -261,7 +256,4 @@ applyAttackCooldown cooldown rawDmg = rawDmg * cooldown
 -- | Convenience: clamp a cooldown value to the valid [0, 1] range.
 attackCooldownFraction :: Float -> Float
 attackCooldownFraction = max 0.0 . min 1.0
-||||||| 6bffd7a
-=======
     <*> newIORef FirstPerson  -- gsCameraMode
->>>>>>> origin/main

@@ -56,13 +56,8 @@ import Engine.Mesh (MeshData(..), NeighborData(..), meshChunkWithLight, emptyNei
 import Entity.Pathfinding (findPath, pathDistance)
 import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
 import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, isDawn, isDusk, getTimeOfDay, TimeOfDay(..))
-<<<<<<< HEAD
 import Game.State (GameState(..), GameMode(..), PlayMode(..), newGameState, attackCooldownPeriod, stepAttackCooldown, applyAttackCooldown, attackCooldownFraction)
-||||||| 6bffd7a
-import Game.State (GameState(..), GameMode(..), PlayMode(..), newGameState)
-=======
 import Game.State (GameState(..), GameMode(..), PlayMode(..), CameraMode(..), cycleCameraMode, newGameState)
->>>>>>> origin/main
 import Game.Creative (creativePalette, creativePaletteSize, creativeClickSlot, creativePickFromPalette, creativeConsumeItem, creativeRefillSlot, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteCols, paletteSlotsPerPage, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Game.ItemDisplay (durabilityFraction, durabilityBarColor)
 import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
@@ -8740,7 +8735,6 @@ hotbarSwapSpec = describe "Game.Inventory.swapHotbarWithInventory" $ do
     getSlot inv' 9 `shouldBe` stone3
     getSlot inv' 5 `shouldBe` pickaxe
 
-<<<<<<< HEAD
 -- =========================================================================
 -- Attack Cooldown
 -- =========================================================================
@@ -8799,8 +8793,6 @@ attackCooldownSpec = describe "Game.State attack cooldown" $ do
     gs <- newGameState (V3 0 70 0)
     cd <- readIORef (gsAttackCooldown gs)
     cd `shouldBe` 1.0
-||||||| 6bffd7a
-=======
   -- Third-Person Camera --
 
   describe "CameraMode cycling" $ do
@@ -8852,7 +8844,6 @@ attackCooldownSpec = describe "Game.State attack cooldown" $ do
       let backView  = thirdPersonViewMatrix True  4 cam
           frontView = thirdPersonViewMatrix False 4 cam
       backView `shouldNotBe` frontView
->>>>>>> origin/main
 
   describe "ViewBob" $ do
     it "bobOffset at 0 is 0" $ do

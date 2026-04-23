@@ -42,13 +42,8 @@ import Game.Save
 import Game.SaveV3 (SaveDataV3(..), savev3Version, savePlayerV3, loadPlayerV3)
 import Game.DroppedItem
 import Game.BlockEntity
-<<<<<<< HEAD
 import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), newGameState, stepAttackCooldown, applyAttackCooldown)
-||||||| 6bffd7a
-import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), newGameState)
-=======
 import Game.State (GameState(..), GameMode(..), PlayMode(..), CameraMode(..), cycleCameraMode, Projectile(..), newGameState)
->>>>>>> origin/main
 import Game.Creative (creativeClickSlot, creativePickFromPalette, creativeConsumeItem, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Game.Achievement (AchievementState, checkAchievement, unlockAchievement, achievementName, AchievementTrigger(..))
 import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), ChatMessage(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
@@ -267,12 +262,8 @@ main = do
         villagerTradesRef   = gsVillagerTrades gs
         playModeRef         = gsPlayMode gs
         hotbarPopupRef      = gsHotbarPopup gs
-<<<<<<< HEAD
         attackCooldownRef   = gsAttackCooldown gs
-||||||| 6bffd7a
-=======
         cameraModeRef       = gsCameraMode gs
->>>>>>> origin/main
         lastClickRef        = gsLastClick gs
     palettePageRef <- newIORef (0 :: Int)
 
