@@ -147,6 +147,7 @@ data GameState = GameState
   , gsHotbarPopup      :: !(IORef (Maybe (String, Float)))
     -- View bobbing
   , gsBobTime          :: !(IORef Float)
+
     -- Attack cooldown (0.0 = just attacked, 1.0 = fully recharged)
   , gsAttackCooldown   :: !(IORef Float)
     -- Camera perspective mode
@@ -237,6 +238,7 @@ newGameState spawnPos = do
     <*> newIORef []
     <*> newIORef Nothing  -- gsHotbarPopup
     <*> newIORef 0.0     -- gsBobTime
+
     <*> newIORef 1.0     -- gsAttackCooldown (fully recharged)
 
 -- | The cooldown recharge period in seconds (0.5s = Minecraft default).
