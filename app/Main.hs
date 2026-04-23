@@ -46,6 +46,10 @@ import Game.Creative (creativeClickSlot, creativePickFromPalette, creativeConsum
 import Game.Achievement (AchievementState, checkAchievement, unlockAchievement, achievementName, AchievementTrigger(..))
 import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), ChatMessage(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
 import Game.ItemDisplay (itemColor, itemMiniIcon, durabilityFraction, durabilityBarColor)
+import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts)
+import Game.ItemDisplay (itemColor, itemMiniIcon)
+import UI.Tooltip (buildTooltip, renderTooltipVertices)
+import Game.ItemDisplay (itemColor, itemMiniIcon, armorSlotSilhouette)
 import Engine.Sound
 import Game.Particle
 import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpProgress)
@@ -721,9 +725,9 @@ main = do
           let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
               ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
               mSlot = hitChestSlot ndcX ndcY
+          shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
           case mSlot of
             Just (ChestSlot idx) -> do
-              -- Click on chest slot (0-26): swap with cursor
               mChestPos <- readIORef chestPosRef
               case mChestPos of
                 Nothing -> pure ()
@@ -731,19 +735,44 @@ main = do
                   mChestInv <- getChestInventory blockEntityMapRef cPos
                   case mChestInv of
                     Nothing -> pure ()
-                    Just chestInv -> do
-                      cursor <- readIORef cursorItemRef
-                      let slotContent = getChestSlot chestInv idx
-                          newChestInv = setChestSlot chestInv idx cursor
-                      setChestInventory blockEntityMapRef cPos newChestInv
-                      writeIORef cursorItemRef slotContent
+                    Just chestInv ->
+                      if shiftHeld
+                        then do
+                          -- Shift-click on chest slot: move item to player inventory
+                          inv <- readIORef inventoryRef
+                          let (chestInv', inv') = shiftClickChestToInventory chestInv idx inv
+                          setChestInventory blockEntityMapRef cPos chestInv'
+                          writeIORef inventoryRef inv'
+                        else do
+                          -- Normal click: swap with cursor
+                          cursor <- readIORef cursorItemRef
+                          let slotContent = getChestSlot chestInv idx
+                              newChestInv = setChestSlot chestInv idx cursor
+                          setChestInventory blockEntityMapRef cPos newChestInv
+                          writeIORef cursorItemRef slotContent
             Just (ChestInvSlot idx) -> do
-              -- Click on player inventory slot: swap with cursor
-              curInv <- readIORef inventoryRef
-              cursor <- readIORef cursorItemRef
-              let slotContent = getSlot curInv idx
-              modifyIORef' inventoryRef (\i -> setSlot i idx cursor)
-              writeIORef cursorItemRef slotContent
+              if shiftHeld
+                then do
+                  -- Shift-click on player inventory slot: move to chest
+                  mChestPos <- readIORef chestPosRef
+                  case mChestPos of
+                    Nothing -> pure ()
+                    Just cPos -> do
+                      mChestInv <- getChestInventory blockEntityMapRef cPos
+                      case mChestInv of
+                        Nothing -> pure ()
+                        Just chestInv -> do
+                          inv <- readIORef inventoryRef
+                          let (chestInv', inv') = shiftClickInventoryToChest chestInv idx inv
+                          setChestInventory blockEntityMapRef cPos chestInv'
+                          writeIORef inventoryRef inv'
+                else do
+                  -- Normal click: swap with cursor
+                  curInv <- readIORef inventoryRef
+                  cursor <- readIORef cursorItemRef
+                  let slotContent = getSlot curInv idx
+                  modifyIORef' inventoryRef (\i -> setSlot i idx cursor)
+                  writeIORef cursorItemRef slotContent
             Nothing -> pure ()
 
           -- Right-click stack splitting for ChestOpen inventory slots
@@ -775,22 +804,39 @@ main = do
           let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
               ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
               mSlot = hitFurnaceSlot ndcX ndcY
+          shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
           case mSlot of
             Just FurnaceInputSlot -> do
-              fs <- readIORef furnaceStateRef
-              cursor <- readIORef cursorItemRef
-              let slotContent = getFurnaceInput fs
-              writeIORef furnaceStateRef (setFurnaceInput fs cursor)
-              writeIORef cursorItemRef slotContent
+              if shiftHeld
+                then do
+                  -- Shift-click on input slot: move to player inventory
+                  fs <- readIORef furnaceStateRef
+                  inv <- readIORef inventoryRef
+                  let (fs', inv') = shiftClickFurnaceInputToInventory fs inv
+                  writeIORef furnaceStateRef fs'
+                  writeIORef inventoryRef inv'
+                else do
+                  fs <- readIORef furnaceStateRef
+                  cursor <- readIORef cursorItemRef
+                  let slotContent = getFurnaceInput fs
+                  writeIORef furnaceStateRef (setFurnaceInput fs cursor)
+                  writeIORef cursorItemRef slotContent
             Just FurnaceFuelSlot -> do
-              fs <- readIORef furnaceStateRef
-              cursor <- readIORef cursorItemRef
-              let slotContent = getFurnaceFuel fs
-              writeIORef furnaceStateRef (setFurnaceFuel fs cursor)
-              writeIORef cursorItemRef slotContent
+              if shiftHeld
+                then do
+                  -- Shift-click on fuel slot: move to player inventory
+                  fs <- readIORef furnaceStateRef
+                  inv <- readIORef inventoryRef
+                  let (fs', inv') = shiftClickFurnaceFuelToInventory fs inv
+                  writeIORef furnaceStateRef fs'
+                  writeIORef inventoryRef inv'
+                else do
+                  fs <- readIORef furnaceStateRef
+                  cursor <- readIORef cursorItemRef
+                  let slotContent = getFurnaceFuel fs
+                  writeIORef furnaceStateRef (setFurnaceFuel fs cursor)
+                  writeIORef cursorItemRef slotContent
             Just FurnaceOutputSlot -> do
-              -- Shift+click: auto-move output to player inventory
-              shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
               if shiftHeld
                 then do
                   fs <- readIORef furnaceStateRef
@@ -812,11 +858,20 @@ main = do
                           writeIORef furnaceStateRef (setFurnaceOutput fs Nothing)
                     _ -> pure ()
             Just (FurnaceInvSlot idx) -> do
-              inv <- readIORef inventoryRef
-              cursor <- readIORef cursorItemRef
-              let slotContent = getSlot inv idx
-              writeIORef inventoryRef (setSlot inv idx cursor)
-              writeIORef cursorItemRef slotContent
+              if shiftHeld
+                then do
+                  -- Shift-click on player inventory: move to furnace input slot
+                  fs <- readIORef furnaceStateRef
+                  inv <- readIORef inventoryRef
+                  let (fs', inv') = shiftClickInventoryToFurnaceInput fs idx inv
+                  writeIORef furnaceStateRef fs'
+                  writeIORef inventoryRef inv'
+                else do
+                  inv <- readIORef inventoryRef
+                  cursor <- readIORef cursorItemRef
+                  let slotContent = getSlot inv idx
+                  writeIORef inventoryRef (setSlot inv idx cursor)
+                  writeIORef cursorItemRef slotContent
             Nothing -> pure ()
           -- Sync furnace IORef back to block entity after any UI interaction
           syncFurnaceToMap
@@ -850,6 +905,7 @@ main = do
           let ndcX = realToFrac mx / fromIntegral winW * 2.0 - 1.0 :: Float
               ndcY = realToFrac my / fromIntegral winH * 2.0 - 1.0 :: Float
               mSlot = hitDispenserSlot ndcX ndcY
+          shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
           case mSlot of
             Just (DispenserSlot idx) -> do
               mDispPos <- readIORef dispenserPosRef
@@ -859,18 +915,44 @@ main = do
                   mDispInv <- getDispenserInventory blockEntityMapRef dPos
                   case mDispInv of
                     Nothing -> pure ()
-                    Just dispInv -> do
-                      cursor <- readIORef cursorItemRef
-                      let slotContent = getDispenserSlot dispInv idx
-                          newDispInv = setDispenserSlot dispInv idx cursor
-                      setDispenserInventory blockEntityMapRef dPos newDispInv
-                      writeIORef cursorItemRef slotContent
+                    Just dispInv ->
+                      if shiftHeld
+                        then do
+                          -- Shift-click on dispenser slot: move item to player inventory
+                          inv <- readIORef inventoryRef
+                          let (dispInv', inv') = shiftClickDispenserToInventory dispInv idx inv
+                          setDispenserInventory blockEntityMapRef dPos dispInv'
+                          writeIORef inventoryRef inv'
+                        else do
+                          -- Normal click: swap with cursor
+                          cursor <- readIORef cursorItemRef
+                          let slotContent = getDispenserSlot dispInv idx
+                              newDispInv = setDispenserSlot dispInv idx cursor
+                          setDispenserInventory blockEntityMapRef dPos newDispInv
+                          writeIORef cursorItemRef slotContent
             Just (DispenserInvSlot idx) -> do
-              curInv <- readIORef inventoryRef
-              cursor <- readIORef cursorItemRef
-              let slotContent = getSlot curInv idx
-              modifyIORef' inventoryRef (\i -> setSlot i idx cursor)
-              writeIORef cursorItemRef slotContent
+              if shiftHeld
+                then do
+                  -- Shift-click on player inventory slot: move to dispenser
+                  mDispPos <- readIORef dispenserPosRef
+                  case mDispPos of
+                    Nothing -> pure ()
+                    Just dPos -> do
+                      mDispInv <- getDispenserInventory blockEntityMapRef dPos
+                      case mDispInv of
+                        Nothing -> pure ()
+                        Just dispInv -> do
+                          inv <- readIORef inventoryRef
+                          let (dispInv', inv') = shiftClickInventoryToDispenser dispInv idx inv
+                          setDispenserInventory blockEntityMapRef dPos dispInv'
+                          writeIORef inventoryRef inv'
+                else do
+                  -- Normal click: swap with cursor
+                  curInv <- readIORef inventoryRef
+                  cursor <- readIORef cursorItemRef
+                  let slotContent = getSlot curInv idx
+                  modifyIORef' inventoryRef (\i -> setSlot i idx cursor)
+                  writeIORef cursorItemRef slotContent
             Nothing -> pure ()
 
           -- Right-click stack splitting for DispenserOpen inventory slots
@@ -2798,7 +2880,7 @@ main = do
             chatState <- readIORef chatStateRef
             mVillProf <- readIORef villagerProfRef
             villTrades <- readIORef villagerTradesRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player')
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -3341,16 +3423,16 @@ tryTriggerAchievement achRef toastRef trigger = do
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- sleepMsgText: Just "message" when a bed-related message should be shown
 -- achToastText: Just "name" when an achievement toast should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
     Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ achToastVerts ++ chatMessageVerts
     ChatInput -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ healthVerts ++ hungerVerts ++ chatInputVerts ++ chatMessageVerts
-    InventoryOpen -> invScreenVerts ++ cursorVerts
-    CraftingOpen  -> craftScreenVerts ++ cursorVerts
-    ChestOpen     -> chestScreenVerts ++ cursorVerts
+    InventoryOpen -> invScreenVerts ++ cursorVerts ++ invTooltipVerts
+    CraftingOpen  -> craftScreenVerts ++ cursorVerts ++ craftTooltipVerts
+    ChestOpen     -> chestScreenVerts ++ cursorVerts ++ chestTooltipVerts
     FurnaceOpen   -> furnaceScreenVerts ++ cursorVerts
     DispenserOpen -> dispenserScreenVerts ++ cursorVerts
     EnchantingOpen -> enchantScreenVerts ++ cursorVerts
@@ -3838,12 +3920,22 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
               in slotBg ++ iconVerts ++ countText
 
         armorLabels = ["H", "C", "L", "B"]
+        armorSlotTypes :: [ArmorSlot]
+        armorSlotTypes = [Helmet, Chestplate, Leggings, Boots]
         renderArmorSlot idx =
           let x = -0.53; y = -0.78 + fromIntegral idx * 0.10
               sw = 0.08; sh = 0.08
               slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
-              label = renderText (x + 0.02) (y + 0.02) 0.4 (0.5, 0.5, 0.5, 0.5) (armorLabels !! idx)
-          in slotBg ++ label
+              mEquipped = if idx < length armorSlots then armorSlots !! idx else Nothing
+              slotType = armorSlotTypes !! idx
+              iconPixels = case mEquipped of
+                Just (ItemStack item _) -> itemMiniIcon item
+                Nothing                 -> armorSlotSilhouette slotType
+              pixW = sw / 3; pixH = sh / 3
+              iconVerts = concatMap (\(r, c, clr) ->
+                quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                     (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) iconPixels
+          in slotBg ++ iconVerts
 
     -- Crafting screen: grid + output + inventory below
     craftScreenVerts =
@@ -4248,17 +4340,47 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
 
-    -- Cursor item (follows mouse position — simplified to center for now)
-    cursorVerts = case cursorItem of
-      Nothing -> []
-      Just (ItemStack item _) ->
-        let colors = itemMiniIcon item
-            sw = 0.08; sh = 0.08
-            x = mouseX - sw / 2; y = mouseY - sh / 2
-            pixW = sw/3; pixH = sh/3
-        in concatMap (\(r, c, clr) ->
-             quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
-                  (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+    -- Cursor item (follows mouse position with mini-icon and count)
+    cursorVerts = buildCursorItemVerts cursorItem mouseX mouseY
+
+    -- Tooltip: render item info when hovering over a slot (no cursor item held)
+    tooltipOffset :: Float
+    tooltipOffset = 0.02
+
+    mkTooltipVerts :: Maybe Item -> [Float]
+    mkTooltipVerts mItem = case (cursorItem, mItem) of
+      (Nothing, Just item) ->
+        let info = buildTooltip item []
+        in renderTooltipVertices info (mouseX + tooltipOffset) (mouseY + tooltipOffset)
+      _ -> []
+
+    -- InventoryOpen tooltip: detect hovered inventory slot
+    invTooltipVerts :: [Float]
+    invTooltipVerts =
+      let mSlot = hitInventorySlot mouseX mouseY
+          mItem = mSlot >>= \idx -> fmap isItem (getSlot inv idx)
+      in mkTooltipVerts mItem
+
+    -- CraftingOpen tooltip: detect hovered crafting or inventory slot
+    craftTooltipVerts :: [Float]
+    craftTooltipVerts =
+      let mCraft = hitCraftingSlot mouseX mouseY
+          mItem = case mCraft of
+            Just (CraftGrid row col)  -> getCraftingSlot craftGrid row col
+            Just CraftOutput          -> fmap fst (craftPreview craftGrid)
+            Just (CraftInvSlot idx)   -> fmap isItem (getSlot inv idx)
+            Nothing                   -> Nothing
+      in mkTooltipVerts mItem
+
+    -- ChestOpen tooltip: detect hovered chest or inventory slot
+    chestTooltipVerts :: [Float]
+    chestTooltipVerts =
+      let mChest = hitChestSlot mouseX mouseY
+          mItem = case mChest of
+            Just (ChestSlot idx)    -> mChestInv >>= \ci -> fmap isItem (getChestSlot ci idx)
+            Just (ChestInvSlot idx) -> fmap isItem (getSlot inv idx)
+            Nothing                 -> Nothing
+      in mkTooltipVerts mItem
 
     -- Main menu screen
     menuVerts =

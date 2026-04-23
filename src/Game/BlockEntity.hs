@@ -22,6 +22,10 @@ module Game.BlockEntity
   , countNonEmptyChestSlots
   , countNonEmptyDispenserSlots
   , containerCapacityText
+  , shiftClickChestToInventory
+  , shiftClickInventoryToChest
+  , shiftClickDispenserToInventory
+  , shiftClickInventoryToDispenser
   ) where
 
 import Data.IORef
@@ -30,7 +34,7 @@ import Linear (V3(..))
 import qualified Data.Vector as V
 
 import Data.Maybe (isJust)
-import Game.Inventory (Inventory(..), ItemStack)
+import Game.Inventory (Inventory(..), ItemStack(..), addItem)
 import Game.Furnace (FurnaceState)
 
 -- | Number of slots in a chest (3 rows of 9)
@@ -160,3 +164,69 @@ countNonEmptyDispenserSlots inv =
 -- | Build a capacity display string like "USED: 5/27" for a container
 containerCapacityText :: Int -> Int -> String
 containerCapacityText used total = "USED: " ++ show used ++ "/" ++ show total
+
+-- | Shift-click a chest slot: move the item from chest slot to player inventory.
+-- Returns (updated chest inventory, updated player inventory).
+-- If the slot is empty or the player inventory is full, no-op.
+shiftClickChestToInventory :: Inventory -> Int -> Inventory -> (Inventory, Inventory)
+shiftClickChestToInventory chestInv slotIdx playerInv =
+  case getChestSlot chestInv slotIdx of
+    Nothing -> (chestInv, playerInv)
+    Just (ItemStack item count) ->
+      let (playerInv', leftover) = addItem playerInv item count
+          newSlot = if leftover <= 0
+                      then Nothing
+                      else Just (ItemStack item leftover)
+      in (setChestSlot chestInv slotIdx newSlot, playerInv')
+
+-- | Shift-click a player inventory slot while chest is open: move the item
+-- to the first empty chest slot. Returns (updated chest inventory, updated player inventory).
+-- If the inventory slot is empty or no empty chest slot exists, no-op.
+shiftClickInventoryToChest :: Inventory -> Int -> Inventory -> (Inventory, Inventory)
+shiftClickInventoryToChest chestInv slotIdx playerInv =
+  case invSlots playerInv V.!? slotIdx of
+    Just (Just stack) ->
+      case findEmptyContainerSlot 0 chestSlots chestInv of
+        Nothing  -> (chestInv, playerInv)
+        Just dst ->
+          let chestInv'  = setChestSlot chestInv dst (Just stack)
+              playerInv' = playerInv { invSlots = invSlots playerInv V.// [(slotIdx, Nothing)] }
+          in (chestInv', playerInv')
+    _ -> (chestInv, playerInv)
+
+-- | Shift-click a dispenser slot: move the item from dispenser slot to player inventory.
+-- Returns (updated dispenser inventory, updated player inventory).
+shiftClickDispenserToInventory :: Inventory -> Int -> Inventory -> (Inventory, Inventory)
+shiftClickDispenserToInventory dispInv slotIdx playerInv =
+  case getDispenserSlot dispInv slotIdx of
+    Nothing -> (dispInv, playerInv)
+    Just (ItemStack item count) ->
+      let (playerInv', leftover) = addItem playerInv item count
+          newSlot = if leftover <= 0
+                      then Nothing
+                      else Just (ItemStack item leftover)
+      in (setDispenserSlot dispInv slotIdx newSlot, playerInv')
+
+-- | Shift-click a player inventory slot while dispenser is open: move the item
+-- to the first empty dispenser slot. Returns (updated dispenser inventory, updated player inventory).
+shiftClickInventoryToDispenser :: Inventory -> Int -> Inventory -> (Inventory, Inventory)
+shiftClickInventoryToDispenser dispInv slotIdx playerInv =
+  case invSlots playerInv V.!? slotIdx of
+    Just (Just stack) ->
+      case findEmptyContainerSlot 0 dispenserSlots dispInv of
+        Nothing  -> (dispInv, playerInv)
+        Just dst ->
+          let dispInv'   = setDispenserSlot dispInv dst (Just stack)
+              playerInv' = playerInv { invSlots = invSlots playerInv V.// [(slotIdx, Nothing)] }
+          in (dispInv', playerInv')
+    _ -> (dispInv, playerInv)
+
+-- | Find first empty slot in a container inventory in range [lo..hi-1].
+findEmptyContainerSlot :: Int -> Int -> Inventory -> Maybe Int
+findEmptyContainerSlot lo hi inv = go lo
+  where
+    go i
+      | i >= hi   = Nothing
+      | otherwise = case invSlots inv V.!? i of
+          Just Nothing -> Just i
+          _            -> go (i + 1)

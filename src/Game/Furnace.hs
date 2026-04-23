@@ -15,10 +15,14 @@ module Game.Furnace
   , furnaceFuelFraction
   , furnaceSmeltFraction
   , shiftClickFurnaceOutput
+  , shiftClickFurnaceInputToInventory
+  , shiftClickFurnaceFuelToInventory
+  , shiftClickInventoryToFurnaceInput
+  , shiftClickInventoryToFurnaceFuel
   ) where
 
 import Game.Item (Item(..), MaterialType(..), FoodType(..))
-import Game.Inventory (ItemStack(..), Inventory, addItem)
+import Game.Inventory (ItemStack(..), Inventory(..), addItem, getSlot, setSlot)
 import World.Block (BlockType(..))
 
 -- | State of a furnace block
@@ -204,3 +208,49 @@ shiftClickFurnaceOutput fs inv =
                         then Nothing
                         else Just (ItemStack item leftover)
       in (fs { fsOutput = newOutput }, inv')
+
+-- | Shift-click furnace input slot: move item to player inventory.
+-- Returns (updated furnace state, updated player inventory).
+shiftClickFurnaceInputToInventory :: FurnaceState -> Inventory -> (FurnaceState, Inventory)
+shiftClickFurnaceInputToInventory fs inv =
+  case fsInput fs of
+    Nothing -> (fs, inv)
+    Just (ItemStack item count) ->
+      let (inv', leftover) = addItem inv item count
+          newInput = if leftover <= 0
+                       then Nothing
+                       else Just (ItemStack item leftover)
+      in (fs { fsInput = newInput }, inv')
+
+-- | Shift-click furnace fuel slot: move item to player inventory.
+-- Returns (updated furnace state, updated player inventory).
+shiftClickFurnaceFuelToInventory :: FurnaceState -> Inventory -> (FurnaceState, Inventory)
+shiftClickFurnaceFuelToInventory fs inv =
+  case fsFuel fs of
+    Nothing -> (fs, inv)
+    Just (ItemStack item count) ->
+      let (inv', leftover) = addItem inv item count
+          newFuel = if leftover <= 0
+                      then Nothing
+                      else Just (ItemStack item leftover)
+      in (fs { fsFuel = newFuel }, inv')
+
+-- | Shift-click player inventory slot to furnace input.
+-- Moves the item stack if the input slot is empty. Returns (updated furnace, updated inventory).
+shiftClickInventoryToFurnaceInput :: FurnaceState -> Int -> Inventory -> (FurnaceState, Inventory)
+shiftClickInventoryToFurnaceInput fs slotIdx inv =
+  case (fsInput fs, getSlot inv slotIdx) of
+    (Nothing, Just stack) ->
+      let inv' = setSlot inv slotIdx Nothing
+      in (fs { fsInput = Just stack }, inv')
+    _ -> (fs, inv)
+
+-- | Shift-click player inventory slot to furnace fuel.
+-- Moves the item stack if the fuel slot is empty. Returns (updated furnace, updated inventory).
+shiftClickInventoryToFurnaceFuel :: FurnaceState -> Int -> Inventory -> (FurnaceState, Inventory)
+shiftClickInventoryToFurnaceFuel fs slotIdx inv =
+  case (fsFuel fs, getSlot inv slotIdx) of
+    (Nothing, Just stack) ->
+      let inv' = setSlot inv slotIdx Nothing
+      in (fs { fsFuel = Just stack }, inv')
+    _ -> (fs, inv)
