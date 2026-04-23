@@ -1417,6 +1417,18 @@ main = do
             GLFW.Key'7 -> selectSlot 6
             GLFW.Key'8 -> selectSlot 7
             GLFW.Key'9 -> selectSlot 8
+            GLFW.Key'Q -> do
+              shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
+              inv <- readIORef inventoryRef
+              let slotIdx = invSelected inv
+                  (inv', mDrop) = dropFromSlot inv slotIdx shiftHeld
+              case mDrop of
+                Nothing -> pure ()
+                Just (item, count) -> do
+                  writeIORef inventoryRef inv'
+                  player <- readIORef playerRef
+                  let dropPos = plPos player + V3 0 1.62 0 + dirFromPlayer player ^* 1.5
+                  spawnDrop droppedItems item count dropPos
             GLFW.Key'F5 -> do
               player <- readIORef playerRef
               inv <- readIORef inventoryRef
