@@ -184,11 +184,21 @@ tileFull tileIdx lx ly = case tileIdx of
         in if checker then (200, 0, 200, 255) else (100, 0, 100, 255)
   where
 
-    -- Grass top: green with darker blade variations
+    -- Grass top: blade-like patterns with directional vertical grain
     grassTop x y =
-      let n = pixHash x y 42 `mod` 100
-          base = if n < 30 then (30, 140, 20) else if n < 60 then (50, 170, 30) else (40, 155, 25)
-          (br, bg, bb) = base
+      let -- Vertical blade shapes: hash based on x to create columns of blades
+          bladeHash = pixHash x 0 42 `mod` 16
+          -- Each blade column has a slightly different phase
+          bladePhase = pixHash x 0 43 `mod` 4
+          -- Vertical grain: alternating light/dark based on blade column
+          isLightBlade = (x + bladePhase) `mod` 3 /= 0
+          -- Per-pixel noise for subtle variation
+          n = pixHash x y 44 `mod` 20
+          -- Blade tip darkness (top rows slightly different)
+          tipDarken = if y <= 1 && bladeHash < 6 then 10 else 0
+          (br, bg, bb) = if isLightBlade
+                         then (50 + fromIntegral n `div` 2 - tipDarken, 180 - fromIntegral n - tipDarken, 30 + fromIntegral (n `div` 3))
+                         else (30 + fromIntegral n `div` 3 - tipDarken, 140 - fromIntegral (n `div` 2) - tipDarken, 20 + fromIntegral (n `div` 4))
       in (br, bg, bb, 255)
 
     -- Stone: multi-tone gray layers with subtle cracks
@@ -212,20 +222,33 @@ tileFull tileIdx lx ly = case tileIdx of
                       else fromIntegral (min 155 baseVal)
       in (v, v, v, 255)
 
-    -- Dirt: brown with speckled variation
+    -- Dirt: brown base with pebble spots and root-like veins
     dirtPattern x y =
       let n = pixHash x y 200 `mod` 100
-          r = if n < 25 then 120 else if n < 50 then 135 else 140
-          g = r * 60 `div` 140
-          b = r * 35 `div` 140
-      in (fromIntegral r, fromIntegral g, fromIntegral b, 255)
+          -- Base brown color in 100-150 range
+          baseVal = 100 + (n * 50) `div` 100
+          -- Pebble spots: lighter dots at ~5% of pixels
+          isPebble = pixHash x y 201 `mod` 100 < 5
+          -- Root-like darker veins: thin horizontal/diagonal lines via hash
+          veinHash = pixHash (x `div` 2) (y + x `div` 4) 202 `mod` 20
+          isVein = veinHash < 2
+          rv | isPebble  = fromIntegral (baseVal + 20)  -- lighter pebble
+             | isVein    = fromIntegral (80 + pixHash x y 203 `mod` 11)  -- dark vein 80-90
+             | otherwise = fromIntegral baseVal
+          gv = rv * 60 `div` 140
+          bv = rv * 35 `div` 140
+      in (rv, gv, bv, 255)
 
-    -- Grass side: dirt bottom with green strip on top
+    -- Grass side: smoother gradient from green top to dirt bottom with irregular transition
     grassSide x y
-      | y <= 2    = grassTop x y
-      | y == 3    = let n = pixHash x y 300 `mod` 3
-                    in if n == 0 then grassTop x y else dirtPattern x y
-      | otherwise = dirtPattern x y
+      | y <= 2    = grassTop x y       -- green top rows
+      | y >= 5    = dirtPattern x y    -- dirt bottom rows
+      | otherwise =
+          -- Transition zone (y=3-4): irregular edge using noise
+          let edgeNoise = pixHash x y 300 `mod` 10
+              -- At y=3, mostly green; at y=4, mostly dirt
+              greenThreshold = if y == 3 then 7 else 3
+          in if edgeNoise < greenThreshold then grassTop x y else dirtPattern x y
 
     -- Wood planks: tan with horizontal grain lines
     planksPattern x y =
