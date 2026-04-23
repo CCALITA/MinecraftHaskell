@@ -187,12 +187,26 @@ tileFull tileIdx lx ly = case tileIdx of
           (br, bg, bb) = base
       in (br, bg, bb, 255)
 
-    -- Stone: gray with crack-like darker lines
+    -- Stone: multi-tone gray layers with subtle cracks
     stonePattern x y =
-      let n = pixHash x y 100 `mod` 100
-          crack = pixHash (x `div` 3) (y `div` 4) 101 `mod` 10 < 2
-          base = if crack then 95 else if n < 20 then 115 else if n < 50 then 125 else 130
-      in (base, base, base, 255)
+      let -- Large-scale tone variation (÷4) for layered geology
+          largeTone = pixHash (x `div` 4) (y `div` 4) 100 `mod` 40
+          -- Medium-scale variation for patches
+          medTone   = pixHash (x `div` 2) (y `div` 2) 102 `mod` 20
+          -- Small-scale per-pixel grain
+          grain     = pixHash x y 103 `mod` 12
+          -- Thin dark crack lines (÷3 hash < threshold)
+          crackH    = pixHash (x `div` 3) (y `div` 3) 101 `mod` 20
+          isCrack   = crackH < 3
+          -- Horizontal sediment lines every ~5 pixels
+          sediment  = pixHash x (y `div` 5) 104 `mod` 15
+          isSediment = sediment < 2
+          -- Compose base value: 110-150 range with layered noise
+          baseVal   = 110 + largeTone - medTone `div` 2 + grain
+          v         = if isCrack then fromIntegral (max 80 (baseVal - 35))
+                      else if isSediment then fromIntegral (max 90 (baseVal - 15))
+                      else fromIntegral (min 155 baseVal)
+      in (v, v, v, 255)
 
     -- Dirt: brown with speckled variation
     dirtPattern x y =
@@ -235,12 +249,37 @@ tileFull tileIdx lx ly = case tileIdx of
           hole = n < 15
       in if hole then (20, 60, 15, 180) else (40 + fromIntegral (n `mod` 30), 120 + fromIntegral (n `mod` 40), 30, 255)
 
-    -- Cobblestone: irregular gray blocks
+    -- Cobblestone: irregular rounded stone shapes with mortar gaps
     cobblePattern x y =
-      let blockN = pixHash (x `div` 4) (y `div` 3) 800
-          border = x `mod` 4 == 0 || y `mod` 3 == 0
-          v = if border then 80 else fromIntegral (100 + blockN `mod` 40)
-      in (v, v, v, 255)
+      let -- Block-level regions using ÷5 and ÷4 for irregular stone shapes
+          bx        = x `div` 5
+          by        = y `div` 4
+          blockHash = pixHash bx by 800
+          -- Stone tone varies per block region (90-150 range)
+          stoneTone = 90 + blockHash `mod` 61
+          -- Determine if this pixel is at a block boundary (mortar line)
+          xInBlock  = x `mod` 5
+          yInBlock  = y `mod` 4
+          -- Offset alternate rows for irregular layout
+          rowOffset = if by `mod` 2 == 0 then 0 else 2
+          xShifted  = (x + rowOffset) `mod` 16
+          bxShift   = xShifted `div` 5
+          blockHashShift = pixHash bxShift by 800
+          stoneShift = 90 + blockHashShift `mod` 61
+          -- Mortar at boundaries with slight irregularity
+          mortarJitter = pixHash x y 801 `mod` 3
+          isMortarX = xInBlock == 0 || (xInBlock == 4 && mortarJitter == 0)
+          isMortarY = yInBlock == 0 || (yInBlock == 3 && mortarJitter == 1)
+          isMortar  = isMortarX || isMortarY
+          -- Per-pixel noise for surface texture
+          grain     = pixHash x y 802 `mod` 10
+          -- Mortar color is darker (70-80 range)
+          mortarV   = fromIntegral (70 + pixHash x y 803 `mod` 11)
+          -- Use shifted block hash for final stone color to get irregular shapes
+          rawStone  = if by `mod` 2 == 0 then stoneTone else stoneShift
+          stoneV    = fromIntegral (min 155 (rawStone + grain))
+      in if isMortar then (mortarV, mortarV, mortarV, 255)
+         else (stoneV, stoneV, stoneV, 255)
 
     -- Bedrock: very dark gray (25-45) with irregular mineral inclusions
     bedrockPattern x y =
