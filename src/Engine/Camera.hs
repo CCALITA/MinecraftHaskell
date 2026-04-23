@@ -7,6 +7,8 @@ module Engine.Camera
   , Frustum
   , extractFrustum
   , isAABBInFrustum
+  , thirdPersonOffset
+  , thirdPersonViewMatrix
   ) where
 
 import Linear
@@ -100,3 +102,24 @@ isAABBInFrustum planes (V3 minX minY minZ) (V3 maxX maxY maxZ) =
           py = if b >= 0 then maxY else minY
           pz = if c >= 0 then maxZ else minZ
       in a * px + b * py + c * pz + d >= 0
+
+-- | Compute the camera position offset for third-person views.
+--   @isBack@ True = behind the player (looking in same direction),
+--   False = in front of the player (looking back).
+--   @dist@ is the distance in blocks from the player's eye position.
+--   Returns @(offsetPosition, lookTarget)@ where the view matrix should
+--   use @lookAt offsetPosition lookTarget up@.
+thirdPersonOffset :: Bool -> Float -> Camera -> (V3 Float, V3 Float)
+thirdPersonOffset isBack dist cam =
+  let eyePos = camPosition cam
+      front  = normalize (camFront cam)
+  in if isBack
+       then (eyePos ^-^ (front ^* dist), eyePos)
+       else (eyePos ^+^ (front ^* dist), eyePos)
+
+-- | Build a view matrix for third-person camera.
+--   @isBack@ True = ThirdPersonBack, False = ThirdPersonFront.
+thirdPersonViewMatrix :: Bool -> Float -> Camera -> M44 Float
+thirdPersonViewMatrix isBack dist cam =
+  let (pos, target) = thirdPersonOffset isBack dist cam
+  in lookAt pos target (camUp cam)
