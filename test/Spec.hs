@@ -143,6 +143,7 @@ main = hspec $ do
   meshAOSpec
   directionalPistonSpec
   sunsetSunriseSpec
+  craftingPreviewSpec
   dropFromSlotSpec
   hotbarNumberKeySpec
   inventoryComprehensiveSpec
@@ -6732,6 +6733,108 @@ sunsetSunriseSpec = describe "Sunset and sunrise sky colors" $ do
       abs (b1 - b2) `shouldSatisfy` (< 0.05)
 
 -- =========================================================================
+-- Crafting Preview
+-- =========================================================================
+craftingPreviewSpec :: Spec
+craftingPreviewSpec = describe "Game.Crafting.craftPreview" $ do
+  -- craftPreview returns Nothing for empty / invalid grids
+  it "empty grid returns Nothing" $ do
+    craftPreview (emptyCraftingGrid 3) `shouldBe` Nothing
+
+  it "invalid pattern returns Nothing" $ do
+    let grid = setCraftingSlot
+              (setCraftingSlot (emptyCraftingGrid 3)
+                0 0 (Just (BlockItem Stone)))
+                0 1 (Just (BlockItem Dirt))
+    craftPreview grid `shouldBe` Nothing
+
+  -- craftPreview returns Just for valid recipes
+  it "single OakLog previews 4 OakPlanks" $ do
+    let grid = setCraftingSlot (emptyCraftingGrid 3) 0 0 (Just (BlockItem OakLog))
+    craftPreview grid `shouldBe` Just (BlockItem OakPlanks, 4)
+
+  it "2x2 planks previews CraftingTable" $ do
+    let p = Just (BlockItem OakPlanks)
+        grid = setCraftingSlot
+              (setCraftingSlot
+              (setCraftingSlot
+              (setCraftingSlot (emptyCraftingGrid 3)
+                0 0 p) 0 1 p) 1 0 p) 1 1 p
+    craftPreview grid `shouldBe` Just (BlockItem CraftingTable, 1)
+
+  it "preview result matches tryCraft CraftSuccess" $ do
+    let grid = setCraftingSlot (emptyCraftingGrid 3) 0 0 (Just (BlockItem OakLog))
+    case tryCraft grid of
+      CraftSuccess item count -> craftPreview grid `shouldBe` Just (item, count)
+      CraftFailure            -> expectationFailure "tryCraft should succeed"
+
+  it "preview is consistent across grid positions" $ do
+    let grid1 = setCraftingSlot (emptyCraftingGrid 3) 0 0 (Just (BlockItem OakLog))
+        grid2 = setCraftingSlot (emptyCraftingGrid 3) 2 2 (Just (BlockItem OakLog))
+    craftPreview grid1 `shouldBe` craftPreview grid2
+
+  it "preview updates when grid changes" $ do
+    let grid1 = setCraftingSlot (emptyCraftingGrid 3) 0 0 (Just (BlockItem OakLog))
+        grid2 = setCraftingSlot grid1 0 0 Nothing
+    craftPreview grid1 `shouldBe` Just (BlockItem OakPlanks, 4)
+    craftPreview grid2 `shouldBe` Nothing
+
+  it "preview returns Nothing for partially filled invalid pattern" $ do
+    let grid = setCraftingSlot
+              (setCraftingSlot (emptyCraftingGrid 3)
+                0 0 (Just (BlockItem OakPlanks)))
+                2 2 (Just (BlockItem Cobblestone))
+    craftPreview grid `shouldBe` Nothing
+
+  -- previewTint tests
+  it "previewTint reduces RGB by 0.55 factor" $ do
+    let (r, g, b, _) = previewTint (1.0, 1.0, 1.0, 1.0)
+    abs (r - 0.55) `shouldSatisfy` (< 1e-6)
+    abs (g - 0.55) `shouldSatisfy` (< 1e-6)
+    abs (b - 0.55) `shouldSatisfy` (< 1e-6)
+
+  it "previewTint reduces alpha by 0.5 factor" $ do
+    let (_, _, _, a) = previewTint (1.0, 1.0, 1.0, 1.0)
+    abs (a - 0.5) `shouldSatisfy` (< 1e-6)
+
+  it "previewTint of black stays black" $ do
+    previewTint (0.0, 0.0, 0.0, 0.0) `shouldBe` (0.0, 0.0, 0.0, 0.0)
+
+  it "previewTint preserves relative channel ratios" $ do
+    let (r, g, b, _) = previewTint (0.8, 0.4, 0.2, 1.0)
+    -- r should be 2x g and 4x b
+    abs (r - 2 * g) `shouldSatisfy` (< 1e-6)
+    abs (r - 4 * b) `shouldSatisfy` (< 1e-6)
+
+  it "previewTint is darker than original" $ do
+    let orig = (0.6, 0.8, 0.4, 0.9)
+        (r', g', b', a') = previewTint orig
+        (r, g, b, a) = orig
+    r' `shouldSatisfy` (< r)
+    g' `shouldSatisfy` (< g)
+    b' `shouldSatisfy` (< b)
+    a' `shouldSatisfy` (< a)
+
+  -- Realized vs preview distinction
+  it "tryCraft CraftSuccess is full-color (realized)" $ do
+    let grid = setCraftingSlot (emptyCraftingGrid 3) 0 0 (Just (BlockItem OakLog))
+    case tryCraft grid of
+      CraftSuccess item _ -> do
+        -- Realized state: no tint applied (colors are as-is from itemMiniIcon)
+        -- Preview state: tint is applied
+        -- We verify the tint function produces different (dimmer) values
+        let origColor = (1.0, 0.8, 0.6, 1.0) :: (Float, Float, Float, Float)
+            tinted = previewTint origColor
+        tinted `shouldSatisfy` (\(r,g,b,a) -> r < 1.0 && g < 0.8 && b < 0.6 && a < 1.0)
+        -- Confirm item is returned correctly
+        item `shouldBe` BlockItem OakPlanks
+      CraftFailure -> expectationFailure "should succeed"
+
+  it "preview Nothing when grid is cleared after valid recipe" $ do
+    let grid = setCraftingSlot (emptyCraftingGrid 3) 0 0 (Just (BlockItem OakLog))
+        clearedGrid = setCraftingSlot grid 0 0 Nothing
+    craftPreview grid `shouldBe` Just (BlockItem OakPlanks, 4)
+    craftPreview clearedGrid `shouldBe` Nothing
 -- Q key item drop (dropFromSlot)
 -- =========================================================================
 dropFromSlotSpec :: Spec

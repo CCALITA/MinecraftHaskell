@@ -1,6 +1,7 @@
 module Game.State
   ( GameState(..)
   , GameMode(..)
+  , PlayMode(..)
   , Projectile(..)
   , newGameState
   ) where

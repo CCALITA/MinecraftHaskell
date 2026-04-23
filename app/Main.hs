@@ -3607,18 +3607,19 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
         renderInvCraftOutput =
           let x = 0.35; y = -0.75; sz = 0.10
               slotBg = quad x y (x + sz) (y + sz) (0.2, 0.2, 0.15, 0.9)
-          in case tryCraft craftGrid of
-            CraftSuccess item count ->
+          in case craftPreview craftGrid of
+            Nothing -> slotBg
+            Just (item, count) ->
               let colors = itemMiniIcon item
+                  tintedColors = map (\(r, c, clr) -> (r, c, previewTint clr)) colors
                   pixW = sz / 3; pixH = sz / 3
                   iconVerts = concatMap (\(r, c, clr) ->
                        quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
-                            (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+                            (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) tintedColors
                   countText = if count > 1
-                    then renderText (x + sz - 0.03) (y + sz - 0.025) 0.6 (1,1,1,1) (show count)
+                    then renderText (x + sz - 0.03) (y + sz - 0.025) 0.6 (0.8, 0.8, 0.8, 0.5) (show count)
                     else []
               in slotBg ++ iconVerts ++ countText
-            CraftFailure -> slotBg
 
         armorLabels = ["H", "C", "L", "B"]
         renderArmorSlot idx =
@@ -3659,14 +3660,19 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
         renderCraftOutput =
           let x = 0.15; y = -0.27; sw = 0.12; sh = 0.12
               slotBg = quad x y (x + sw) (y + sh) (0.2, 0.2, 0.15, 0.9)
-          in case tryCraft craftGrid of
-            CraftFailure -> slotBg
-            CraftSuccess item _ ->
+          in case craftPreview craftGrid of
+            Nothing -> slotBg
+            Just (item, count) ->
               let colors = itemMiniIcon item
+                  tintedColors = map (\(r, c, clr) -> (r, c, previewTint clr)) colors
                   pixW = sw / 3; pixH = sh / 3
-              in slotBg ++ concatMap (\(r, c, clr) ->
+                  iconVerts = concatMap (\(r, c, clr) ->
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
-                        (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+                        (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) tintedColors
+                  countText = if count > 1
+                    then renderText (x + sw - 0.03) (y + sh - 0.025) 0.6 (0.8, 0.8, 0.8, 0.5) (show count)
+                    else []
+              in slotBg ++ iconVerts ++ countText
 
         renderCraftInvSlot idx =
           let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9

@@ -6,6 +6,8 @@ module Game.Crafting
   , setCraftingSlot
   , getCraftingSlot
   , tryCraft
+  , craftPreview
+  , previewTint
   , allRecipes
   , extractPattern
   , matchesPattern
@@ -62,6 +64,21 @@ tryCraft grid =
   in case findRecipe pattern of
     Just recipe -> CraftSuccess (rcResult recipe) (rcCount recipe)
     Nothing     -> CraftFailure
+
+-- | Preview the craft result without consuming materials.
+-- Returns Just (item, count) when the grid contains a valid recipe,
+-- Nothing otherwise.  Pure — no side effects.
+craftPreview :: CraftingGrid -> Maybe (Item, Int)
+craftPreview grid = case tryCraft grid of
+  CraftSuccess item count -> Just (item, count)
+  CraftFailure            -> Nothing
+
+-- | Apply a gray/transparent tint to an RGBA color tuple.
+-- Used to visually distinguish a preview (not-yet-crafted) item
+-- from a realized (already-crafted) one.
+-- Multiplies RGB by 0.55 and alpha by 0.5 to produce a faded look.
+previewTint :: (Float, Float, Float, Float) -> (Float, Float, Float, Float)
+previewTint (r, g, b, a) = (r * 0.55, g * 0.55, b * 0.55, a * 0.5)
 
 -- | Extract the minimal bounding pattern from the grid (trim empty rows/cols)
 extractPattern :: CraftingGrid -> [[Maybe Item]]
