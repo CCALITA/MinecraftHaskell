@@ -14,10 +14,17 @@ module Game.Inventory
   , hasItem
   , countItem
   , stackLimit
+  , dropFromSlot
+  , hotbarNumberKey
+  , sortInventory
+  , moveToSection
   ) where
 
 import Game.Item (Item(..), itemStackLimit)
 import qualified Data.Vector as V
+import qualified Data.Map.Strict as Map
+import Data.List (foldl', sortBy)
+import Data.Ord (comparing)
 
 -- | Default maximum stack size
 stackLimit :: Int
@@ -143,3 +150,100 @@ countItem inv item = go 0 0
 
 hasItem :: Inventory -> Item -> Int -> Bool
 hasItem inv item count = countItem inv item >= count
+
+-- | Drop items from a specific slot.
+--   If dropAll is True, drops the entire stack; otherwise drops 1.
+--   Returns (updated inventory, maybe (item, count dropped)).
+--   Returns Nothing if the slot is empty.
+dropFromSlot :: Inventory -> Int -> Bool -> (Inventory, Maybe (Item, Int))
+dropFromSlot inv slotIdx dropAll =
+  case getSlot inv slotIdx of
+    Nothing -> (inv, Nothing)
+    Just (ItemStack item cnt)
+      | dropAll || cnt <= 1 ->
+          (setSlot inv slotIdx Nothing, Just (item, cnt))
+      | otherwise ->
+          (setSlot inv slotIdx (Just (ItemStack item (cnt - 1))), Just (item, 1))
+-- | Handle number key press (1-9) in an open inventory/crafting/chest screen.
+-- If the cursor holds an item, place it into hotbar slot (swap if occupied).
+-- If the cursor is empty, pick up the hotbar slot contents into the cursor.
+-- Returns (updated inventory, updated cursor).
+hotbarNumberKey :: Inventory -> Maybe ItemStack -> Int -> (Inventory, Maybe ItemStack)
+hotbarNumberKey inv cursor slotIdx
+  | slotIdx < 0 || slotIdx >= hotbarSlots = (inv, cursor)
+  | otherwise = case cursor of
+      Nothing ->
+        -- Pick up hotbar slot contents into cursor
+        let occupant = getHotbarSlot inv slotIdx
+            inv' = setSlot inv slotIdx Nothing
+        in (inv', occupant)
+      Just _ ->
+        -- Place cursor into hotbar slot, pick up previous occupant
+        let occupant = getHotbarSlot inv slotIdx
+            inv' = setSlot inv slotIdx cursor
+        in (inv', occupant)
+-- | Sort inventory: group by item type, sum counts, split into stacks
+-- respecting stackLimit, sort by item Show order, place into slots
+-- starting from index 0. Preserves invSelected.
+sortInventory :: Inventory -> Inventory
+sortInventory inv =
+  let -- Extract all (Item, Int) pairs from occupied slots
+      pairs :: [(Item, Int)]
+      pairs = [ (isItem s, isCount s)
+              | idx <- [0 .. inventorySlots - 1]
+              , Just s <- [getSlot inv idx]
+              ]
+      -- Group by item type (using Show as the key) and sum counts
+      grouped :: Map.Map String (Item, Int)
+      grouped = foldl' (\m (item, cnt) ->
+        let key = show item
+        in Map.insertWith (\(_, c1) (i, c2) -> (i, c1 + c2)) key (item, cnt) m
+        ) Map.empty pairs
+      -- Sort entries by the Show key (alphabetical)
+      sorted :: [(Item, Int)]
+      sorted = map snd $ sortBy (comparing fst) (Map.toList grouped)
+      -- Split each (Item, totalCount) into stacks of at most stackLimit
+      stacks :: [Maybe ItemStack]
+      stacks = concatMap splitIntoStacks sorted
+      -- Pad with Nothing to fill all slots
+      allSlots :: [Maybe ItemStack]
+      allSlots = take inventorySlots (stacks ++ repeat Nothing)
+  in inv { invSlots = V.fromList allSlots }
+  where
+    splitIntoStacks :: (Item, Int) -> [Maybe ItemStack]
+    splitIntoStacks (item, total) =
+      let maxSz = itemStackLimit item
+          go 0 = []
+          go n = let sz = min maxSz n
+                 in Just (ItemStack item sz) : go (n - sz)
+      in go total
+-- | Shift-click quick-move: if slot is in hotbar (0-8), move its contents
+-- to the first empty main inventory slot (9-35). If slot is in main (9-35),
+-- move to the first empty hotbar slot (0-8). If no empty target slot exists,
+-- no-op. If the source slot is empty, no-op.
+moveToSection :: Inventory -> Int -> Inventory
+moveToSection inv idx
+  | idx < 0 || idx >= inventorySlots = inv
+  | otherwise = case getSlot inv idx of
+      Nothing -> inv
+      Just stack
+        | idx < hotbarSlots ->
+            -- Source is hotbar (0-8), find first empty main slot (9-35)
+            case findEmpty hotbarSlots (inventorySlots - 1) inv of
+              Nothing  -> inv
+              Just dst -> setSlot (setSlot inv idx Nothing) dst (Just stack)
+        | otherwise ->
+            -- Source is main (9-35), find first empty hotbar slot (0-8)
+            case findEmpty 0 (hotbarSlots - 1) inv of
+              Nothing  -> inv
+              Just dst -> setSlot (setSlot inv idx Nothing) dst (Just stack)
+
+-- | Find first empty slot in range [lo..hi] inclusive.
+findEmpty :: Int -> Int -> Inventory -> Maybe Int
+findEmpty lo hi inv = go lo
+  where
+    go i
+      | i > hi    = Nothing
+      | otherwise = case getSlot inv i of
+          Nothing -> Just i
+          _       -> go (i + 1)

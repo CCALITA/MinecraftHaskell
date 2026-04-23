@@ -144,6 +144,9 @@ main = hspec $ do
   directionalPistonSpec
   sunsetSunriseSpec
   craftingPreviewSpec
+  dropFromSlotSpec
+  hotbarNumberKeySpec
+  inventoryComprehensiveSpec
 
 -- =========================================================================
 -- Block
@@ -344,6 +347,201 @@ inventorySpec = describe "Game.Inventory" $ do
         (inv2, _) = addItem inv1 tool 1
     getSlot inv2 0 `shouldBe` Just (ItemStack tool 1)
     getSlot inv2 1 `shouldBe` Just (ItemStack tool 1)
+
+  -- sortInventory tests
+  describe "sortInventory" $ do
+    it "preserves total item count after sorting" $ do
+      let (inv1, _) = addItem emptyInventory (BlockItem Stone) 30
+          (inv2, _) = addItem inv1 (BlockItem Dirt) 20
+          (inv3, _) = addItem inv2 (BlockItem Stone) 15
+          sorted = sortInventory inv3
+          totalBefore = countItem inv3 (BlockItem Stone) + countItem inv3 (BlockItem Dirt)
+          totalAfter  = countItem sorted (BlockItem Stone) + countItem sorted (BlockItem Dirt)
+      totalAfter `shouldBe` totalBefore
+
+    it "produces no gaps between non-empty slots" $ do
+      -- Place items in non-contiguous slots
+      let inv0 = setSlot emptyInventory 5 (Just (ItemStack (BlockItem Sand) 10))
+          inv1 = setSlot inv0 15 (Just (ItemStack (BlockItem Dirt) 20))
+          inv2 = setSlot inv1 30 (Just (ItemStack (BlockItem Stone) 5))
+          sorted = sortInventory inv2
+          slots = [getSlot sorted i | i <- [0 .. inventorySlots - 1]]
+          nonEmpty = filter (/= Nothing) slots
+          -- All non-empty slots should be contiguous from the start
+          firstNSlots = take (length nonEmpty) slots
+      firstNSlots `shouldBe` nonEmpty
+
+    it "results are sorted by item Show order" $ do
+      let (inv1, _) = addItem emptyInventory (BlockItem Stone) 10
+          (inv2, _) = addItem inv1 (BlockItem Dirt) 10
+          (inv3, _) = addItem inv2 (BlockItem Sand) 10
+          sorted = sortInventory inv3
+          occupiedItems = [ show (isItem s)
+                          | i <- [0 .. inventorySlots - 1]
+                          , Just s <- [getSlot sorted i]
+                          ]
+          isSorted [] = True
+          isSorted [_] = True
+          isSorted (a:b:rest) = a <= b && isSorted (b:rest)
+      isSorted occupiedItems `shouldBe` True
+
+    it "preserves invSelected after sorting" $ do
+      let inv0 = selectHotbar emptyInventory 5
+          (inv1, _) = addItem inv0 (BlockItem Stone) 10
+          sorted = sortInventory inv1
+      invSelected sorted `shouldBe` 5
+
+    it "groups same item type and sums counts" $ do
+      -- Put same item in separate slots
+      let inv0 = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 10))
+          inv1 = setSlot inv0 5 (Just (ItemStack (BlockItem Stone) 20))
+          inv2 = setSlot inv1 10 (Just (ItemStack (BlockItem Stone) 30))
+          sorted = sortInventory inv2
+      -- 10+20+30=60 should fit in a single stack (stackLimit=64)
+      getSlot sorted 0 `shouldBe` Just (ItemStack (BlockItem Stone) 60)
+      -- No more Stone in other slots
+      countItem sorted (BlockItem Stone) `shouldBe` 60
+
+    it "splits into stacks when total exceeds stackLimit" $ do
+      -- 80 Stone total => one stack of 64 + one of 16
+      let inv0 = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 50))
+          inv1 = setSlot inv0 3 (Just (ItemStack (BlockItem Stone) 30))
+          sorted = sortInventory inv1
+      countItem sorted (BlockItem Stone) `shouldBe` 80
+      -- First stack should be full
+      case getSlot sorted 0 of
+        Just (ItemStack _ cnt) -> cnt `shouldBe` 64
+        Nothing -> expectationFailure "Expected stone in slot 0"
+      -- Second stack should have remainder
+      case getSlot sorted 1 of
+        Just (ItemStack _ cnt) -> cnt `shouldBe` 16
+        Nothing -> expectationFailure "Expected stone in slot 1"
+
+    it "sorting empty inventory stays empty" $ do
+      let sorted = sortInventory emptyInventory
+      invSlots sorted `shouldBe` invSlots emptyInventory
+
+    it "tool items (stackLimit 1) remain individual stacks" $ do
+      let tool1 = ToolItem Pickaxe Diamond 1561
+          tool2 = ToolItem Pickaxe Diamond 1561
+          inv0 = setSlot emptyInventory 10 (Just (ItemStack tool1 1))
+          inv1 = setSlot inv0 20 (Just (ItemStack tool2 1))
+          sorted = sortInventory inv1
+      -- Tools have stackLimit 1 so they should remain as separate stacks
+      getSlot sorted 0 `shouldBe` Just (ItemStack tool1 1)
+      getSlot sorted 1 `shouldBe` Just (ItemStack tool2 1)
+
+    it "mixed item types are sorted and contiguous" $ do
+      let (inv1, _) = addItem emptyInventory (MaterialItem Coal) 15
+          (inv2, _) = addItem inv1 (BlockItem Stone) 30
+          (inv3, _) = addItem inv2 (FoodItem Apple) 5
+          (inv4, _) = addItem inv3 (BlockItem Dirt) 20
+          sorted = sortInventory inv4
+          -- Verify total counts preserved
+          countCoal   = countItem sorted (MaterialItem Coal)
+          countStone  = countItem sorted (BlockItem Stone)
+          countApple  = countItem sorted (FoodItem Apple)
+          countDirt   = countItem sorted (BlockItem Dirt)
+      countCoal `shouldBe` 15
+      countStone `shouldBe` 30
+      countApple `shouldBe` 5
+      countDirt `shouldBe` 20
+      -- Verify sorted order: all non-empty slots should have Show-ordered items
+      let occupiedShows = [ show (isItem s)
+                          | i <- [0 .. inventorySlots - 1]
+                          , Just s <- [getSlot sorted i]
+                          ]
+          pairs' = zip occupiedShows (drop 1 occupiedShows)
+      all (\(a, b) -> a <= b) pairs' `shouldBe` True
+  -- moveToSection tests
+  it "moveToSection moves hotbar item to first empty main slot" $ do
+    let inv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 10))
+        inv' = moveToSection inv 0
+    getSlot inv' 0 `shouldBe` Nothing
+    getSlot inv' 9 `shouldBe` Just (ItemStack (BlockItem Stone) 10)
+
+  it "moveToSection moves main item to first empty hotbar slot" $ do
+    let inv = setSlot emptyInventory 15 (Just (ItemStack (BlockItem Dirt) 5))
+        inv' = moveToSection inv 15
+    getSlot inv' 15 `shouldBe` Nothing
+    getSlot inv' 0 `shouldBe` Just (ItemStack (BlockItem Dirt) 5)
+
+  it "moveToSection is no-op on empty slot" $ do
+    let inv' = moveToSection emptyInventory 3
+    inv' `shouldBe` emptyInventory
+
+  it "moveToSection is no-op when target section is full" $ do
+    -- Fill all main slots (9-35)
+    let fillMain inv idx
+          | idx > 35 = inv
+          | otherwise = fillMain (setSlot inv idx (Just (ItemStack (BlockItem Dirt) 1))) (idx + 1)
+        inv = setSlot (fillMain emptyInventory 9) 0 (Just (ItemStack (BlockItem Stone) 10))
+        inv' = moveToSection inv 0
+    -- Should be unchanged — no empty main slot
+    getSlot inv' 0 `shouldBe` Just (ItemStack (BlockItem Stone) 10)
+
+  it "moveToSection is no-op when hotbar is full and moving from main" $ do
+    -- Fill all hotbar slots (0-8)
+    let fillHotbar inv idx
+          | idx >= 9 = inv
+          | otherwise = fillHotbar (setSlot inv idx (Just (ItemStack (BlockItem Dirt) 1))) (idx + 1)
+        inv = setSlot (fillHotbar emptyInventory 0) 20 (Just (ItemStack (BlockItem Stone) 5))
+        inv' = moveToSection inv 20
+    -- Should be unchanged — no empty hotbar slot
+    getSlot inv' 20 `shouldBe` Just (ItemStack (BlockItem Stone) 5)
+
+  it "moveToSection skips occupied slots to find first empty" $ do
+    -- Occupy slots 9 and 10, leave 11 empty
+    let inv = setSlot (setSlot (setSlot emptyInventory 9 (Just (ItemStack (BlockItem Dirt) 1)))
+                                        10 (Just (ItemStack (BlockItem Dirt) 1)))
+                       0 (Just (ItemStack (BlockItem Stone) 3))
+        inv' = moveToSection inv 0
+    getSlot inv' 0 `shouldBe` Nothing
+    getSlot inv' 9 `shouldBe` Just (ItemStack (BlockItem Dirt) 1)
+    getSlot inv' 10 `shouldBe` Just (ItemStack (BlockItem Dirt) 1)
+    getSlot inv' 11 `shouldBe` Just (ItemStack (BlockItem Stone) 3)
+
+  it "moveToSection moves tool item from hotbar to main" $ do
+    let tool = ToolItem Pickaxe Iron 250
+        inv = setSlot emptyInventory 2 (Just (ItemStack tool 1))
+        inv' = moveToSection inv 2
+    getSlot inv' 2 `shouldBe` Nothing
+    getSlot inv' 9 `shouldBe` Just (ItemStack tool 1)
+
+  it "moveToSection moves tool item from main to hotbar" $ do
+    let tool = ToolItem Sword Diamond 1561
+        inv = setSlot emptyInventory 30 (Just (ItemStack tool 1))
+        inv' = moveToSection inv 30
+    getSlot inv' 30 `shouldBe` Nothing
+    getSlot inv' 0 `shouldBe` Just (ItemStack tool 1)
+
+  it "moveToSection is no-op for out-of-range slot index" $ do
+    moveToSection emptyInventory (-1) `shouldBe` emptyInventory
+    moveToSection emptyInventory 36 `shouldBe` emptyInventory
+
+  it "moveToSection preserves stack count" $ do
+    let inv = setSlot emptyInventory 5 (Just (ItemStack (BlockItem Stone) 64))
+        inv' = moveToSection inv 5
+    getSlot inv' 5 `shouldBe` Nothing
+    getSlot inv' 9 `shouldBe` Just (ItemStack (BlockItem Stone) 64)
+
+  it "moveToSection from hotbar slot 8 works" $ do
+    let inv = setSlot emptyInventory 8 (Just (ItemStack (BlockItem Sand) 32))
+        inv' = moveToSection inv 8
+    getSlot inv' 8 `shouldBe` Nothing
+    getSlot inv' 9 `shouldBe` Just (ItemStack (BlockItem Sand) 32)
+
+  it "moveToSection from main slot 9 moves to hotbar" $ do
+    let inv = setSlot emptyInventory 9 (Just (ItemStack (BlockItem Sand) 16))
+        inv' = moveToSection inv 9
+    getSlot inv' 9 `shouldBe` Nothing
+    getSlot inv' 0 `shouldBe` Just (ItemStack (BlockItem Sand) 16)
+
+  it "moveToSection from main slot 35 moves to hotbar" $ do
+    let inv = setSlot emptyInventory 35 (Just (ItemStack (FoodItem Apple) 10))
+        inv' = moveToSection inv 35
+    getSlot inv' 35 `shouldBe` Nothing
+    getSlot inv' 0 `shouldBe` Just (ItemStack (FoodItem Apple) 10)
 
 -- =========================================================================
 -- Crafting
@@ -6637,3 +6835,391 @@ craftingPreviewSpec = describe "Game.Crafting.craftPreview" $ do
         clearedGrid = setCraftingSlot grid 0 0 Nothing
     craftPreview grid `shouldBe` Just (BlockItem OakPlanks, 4)
     craftPreview clearedGrid `shouldBe` Nothing
+-- Q key item drop (dropFromSlot)
+-- =========================================================================
+dropFromSlotSpec :: Spec
+dropFromSlotSpec = describe "Game.Inventory.dropFromSlot" $ do
+  it "returns Nothing when selected slot is empty" $ do
+    let (inv', mDrop) = dropFromSlot emptyInventory 0 False
+    mDrop `shouldBe` Nothing
+    inv' `shouldBe` emptyInventory
+
+  it "drops 1 item from a stack of many (Q press)" $ do
+    let (inv, _) = addItem emptyInventory (BlockItem Stone) 10
+        (inv', mDrop) = dropFromSlot inv 0 False
+    mDrop `shouldBe` Just (BlockItem Stone, 1)
+    getSlot inv' 0 `shouldBe` Just (ItemStack (BlockItem Stone) 9)
+
+  it "drops entire stack when shift is held (Shift+Q)" $ do
+    let (inv, _) = addItem emptyInventory (BlockItem Stone) 10
+        (inv', mDrop) = dropFromSlot inv 0 True
+    mDrop `shouldBe` Just (BlockItem Stone, 10)
+    getSlot inv' 0 `shouldBe` Nothing
+
+  it "drops the last item and clears the slot" $ do
+    let (inv, _) = addItem emptyInventory (BlockItem Dirt) 1
+        (inv', mDrop) = dropFromSlot inv 0 False
+    mDrop `shouldBe` Just (BlockItem Dirt, 1)
+    getSlot inv' 0 `shouldBe` Nothing
+
+  it "shift+Q on single item clears the slot" $ do
+    let (inv, _) = addItem emptyInventory (BlockItem Dirt) 1
+        (inv', mDrop) = dropFromSlot inv 0 True
+    mDrop `shouldBe` Just (BlockItem Dirt, 1)
+    getSlot inv' 0 `shouldBe` Nothing
+
+  it "does not affect other slots" $ do
+    let (inv1, _) = addItem emptyInventory (BlockItem Stone) 10
+        (inv2, _) = addItem inv1 (BlockItem Dirt) 5
+        (inv', _) = dropFromSlot inv2 0 False
+    getSlot inv' 1 `shouldBe` Just (ItemStack (BlockItem Dirt) 5)
+
+  it "drops from non-zero hotbar slot" $ do
+    let inv0 = selectHotbar emptyInventory 3
+        inv1 = setSlot inv0 3 (Just (ItemStack (BlockItem OakLog) 16))
+        (inv', mDrop) = dropFromSlot inv1 3 False
+    mDrop `shouldBe` Just (BlockItem OakLog, 1)
+    getSlot inv' 3 `shouldBe` Just (ItemStack (BlockItem OakLog) 15)
+
+  it "shift+Q drops full stack from non-zero hotbar slot" $ do
+    let inv0 = selectHotbar emptyInventory 5
+        inv1 = setSlot inv0 5 (Just (ItemStack (BlockItem OakLog) 32))
+        (inv', mDrop) = dropFromSlot inv1 5 True
+    mDrop `shouldBe` Just (BlockItem OakLog, 32)
+    getSlot inv' 5 `shouldBe` Nothing
+
+  it "preserves invSelected after drop" $ do
+    let inv0 = selectHotbar emptyInventory 4
+        (inv1, _) = addItem inv0 (BlockItem Stone) 10
+        (inv', _) = dropFromSlot inv1 0 False
+    invSelected inv' `shouldBe` 4
+-- Hotbar Number Key Assignment
+-- =========================================================================
+hotbarNumberKeySpec :: Spec
+hotbarNumberKeySpec = describe "Game.Inventory.hotbarNumberKey" $ do
+  let stone3  = Just (ItemStack (BlockItem Stone) 3)
+      dirt5   = Just (ItemStack (BlockItem Dirt) 5)
+      sand10  = Just (ItemStack (BlockItem Sand) 10)
+      pickaxe = Just (ItemStack (ToolItem Pickaxe Iron 250) 1)
+
+  describe "cursor holds item, hotbar slot empty" $ do
+    it "places cursor item into empty hotbar slot 0" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory stone3 0
+      getHotbarSlot inv' 0 `shouldBe` stone3
+      cursor' `shouldBe` Nothing
+
+    it "places cursor item into empty hotbar slot 4" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory dirt5 4
+      getHotbarSlot inv' 4 `shouldBe` dirt5
+      cursor' `shouldBe` Nothing
+
+    it "places cursor item into empty hotbar slot 8" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory sand10 8
+      getHotbarSlot inv' 8 `shouldBe` sand10
+      cursor' `shouldBe` Nothing
+
+  describe "cursor holds item, hotbar slot occupied (swap)" $ do
+    it "swaps cursor with existing hotbar contents" $ do
+      let inv0 = setSlot emptyInventory 0 stone3
+          (inv', cursor') = hotbarNumberKey inv0 dirt5 0
+      getHotbarSlot inv' 0 `shouldBe` dirt5
+      cursor' `shouldBe` stone3
+
+    it "swap preserves stack counts" $ do
+      let inv0 = setSlot emptyInventory 3 (Just (ItemStack (BlockItem Stone) 32))
+          cursor = Just (ItemStack (BlockItem Dirt) 16)
+          (inv', cursor') = hotbarNumberKey inv0 cursor 3
+      getHotbarSlot inv' 3 `shouldBe` cursor
+      cursor' `shouldBe` Just (ItemStack (BlockItem Stone) 32)
+
+    it "swap with tool item works" $ do
+      let inv0 = setSlot emptyInventory 2 stone3
+          (inv', cursor') = hotbarNumberKey inv0 pickaxe 2
+      getHotbarSlot inv' 2 `shouldBe` pickaxe
+      cursor' `shouldBe` stone3
+
+  describe "cursor empty, hotbar slot occupied (pick up)" $ do
+    it "picks up hotbar contents into cursor" $ do
+      let inv0 = setSlot emptyInventory 0 stone3
+          (inv', cursor') = hotbarNumberKey inv0 Nothing 0
+      getHotbarSlot inv' 0 `shouldBe` Nothing
+      cursor' `shouldBe` stone3
+
+    it "picks up from any hotbar slot" $ do
+      let inv0 = setSlot emptyInventory 7 dirt5
+          (inv', cursor') = hotbarNumberKey inv0 Nothing 7
+      getHotbarSlot inv' 7 `shouldBe` Nothing
+      cursor' `shouldBe` dirt5
+
+    it "picks up tool from hotbar" $ do
+      let inv0 = setSlot emptyInventory 1 pickaxe
+          (inv', cursor') = hotbarNumberKey inv0 Nothing 1
+      getHotbarSlot inv' 1 `shouldBe` Nothing
+      cursor' `shouldBe` pickaxe
+
+  describe "cursor empty, hotbar slot empty (no-op)" $ do
+    it "returns unchanged inventory and Nothing cursor" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory Nothing 0
+      inv' `shouldBe` emptyInventory
+      cursor' `shouldBe` Nothing
+
+    it "no-op for any empty slot" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory Nothing 5
+      inv' `shouldBe` emptyInventory
+      cursor' `shouldBe` Nothing
+
+  describe "out-of-range slot index" $ do
+    it "negative index is no-op" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory stone3 (-1)
+      inv' `shouldBe` emptyInventory
+      cursor' `shouldBe` stone3
+
+    it "index >= hotbarSlots is no-op" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory stone3 9
+      inv' `shouldBe` emptyInventory
+      cursor' `shouldBe` stone3
+
+    it "large index is no-op" $ do
+      let (inv', cursor') = hotbarNumberKey emptyInventory dirt5 100
+      inv' `shouldBe` emptyInventory
+      cursor' `shouldBe` dirt5
+
+  describe "does not disturb other slots" $ do
+    it "placing into slot 0 does not touch slot 1" $ do
+      let inv0 = setSlot emptyInventory 1 dirt5
+          (inv', _) = hotbarNumberKey inv0 stone3 0
+      getHotbarSlot inv' 0 `shouldBe` stone3
+      getHotbarSlot inv' 1 `shouldBe` dirt5
+
+    it "swapping slot 3 does not affect slot 0 or 8" $ do
+      let inv0 = setSlot (setSlot (setSlot emptyInventory 0 stone3) 3 dirt5) 8 sand10
+          (inv', cursor') = hotbarNumberKey inv0 pickaxe 3
+      getHotbarSlot inv' 0 `shouldBe` stone3
+      getHotbarSlot inv' 3 `shouldBe` pickaxe
+      getHotbarSlot inv' 8 `shouldBe` sand10
+      cursor' `shouldBe` dirt5
+
+    it "picking up from slot 5 preserves non-hotbar inventory" $ do
+      let inv0 = setSlot (setSlot emptyInventory 5 stone3) 15 dirt5
+          (inv', cursor') = hotbarNumberKey inv0 Nothing 5
+      getSlot inv' 15 `shouldBe` dirt5
+      getHotbarSlot inv' 5 `shouldBe` Nothing
+      cursor' `shouldBe` stone3
+
+  describe "invSelected is preserved" $ do
+    it "placing item does not change selected slot" $ do
+      let inv0 = selectHotbar emptyInventory 3
+          (inv', _) = hotbarNumberKey inv0 stone3 0
+      invSelected inv' `shouldBe` 3
+
+    it "picking up does not change selected slot" $ do
+      let inv0 = selectHotbar (setSlot emptyInventory 2 dirt5) 7
+          (inv', _) = hotbarNumberKey inv0 Nothing 2
+      invSelected inv' `shouldBe` 7
+-- Inventory Comprehensive Tests
+-- =========================================================================
+inventoryComprehensiveSpec :: Spec
+inventoryComprehensiveSpec = describe "Game.Inventory comprehensive" $ do
+  -- Helper items
+  let stone = BlockItem Stone
+      dirt  = BlockItem Dirt
+      tool  = ToolItem Pickaxe Diamond 1561
+      food  = FoodItem Apple
+
+  describe "addItem basics" $ do
+    it "addItem to empty inventory places 1 stack in slot 0" $ do
+      let (inv, left) = addItem emptyInventory stone 10
+      left `shouldBe` 0
+      getSlot inv 0 `shouldBe` Just (ItemStack stone 10)
+
+    it "addItem merging into partial stack fills existing slot first" $ do
+      let (inv1, _) = addItem emptyInventory stone 40
+          (inv2, left) = addItem inv1 stone 20
+      left `shouldBe` 0
+      getSlot inv2 0 `shouldBe` Just (ItemStack stone 60)
+      getSlot inv2 1 `shouldBe` Nothing
+
+    it "addItem overflow when stack is full spills to next slot" $ do
+      let (inv1, _) = addItem emptyInventory stone 60
+          (inv2, left) = addItem inv1 stone 10
+      left `shouldBe` 0
+      getSlot inv2 0 `shouldBe` Just (ItemStack stone 64)
+      getSlot inv2 1 `shouldBe` Just (ItemStack stone 6)
+
+    it "addItem fills multiple slots when count exceeds one stack" $ do
+      let (inv, left) = addItem emptyInventory stone 150
+      left `shouldBe` 0
+      getSlot inv 0 `shouldBe` Just (ItemStack stone 64)
+      getSlot inv 1 `shouldBe` Just (ItemStack stone 64)
+      getSlot inv 2 `shouldBe` Just (ItemStack stone 22)
+
+    it "addItem returns correct leftover when inventory is completely full" $ do
+      let fillSlots inv 0 = inv
+          fillSlots inv n = let (inv', _) = addItem inv stone 64
+                            in fillSlots inv' (n - 1)
+          full = fillSlots emptyInventory inventorySlots
+          (_, leftover) = addItem full stone 42
+      leftover `shouldBe` 42
+
+  describe "removeItem basics" $ do
+    it "removeItem from single stack reduces count" $ do
+      let (inv1, _) = addItem emptyInventory stone 30
+          (inv2, removed) = removeItem inv1 stone 10
+      removed `shouldBe` 10
+      getSlot inv2 0 `shouldBe` Just (ItemStack stone 20)
+
+    it "removeItem from multiple stacks drains last-first" $ do
+      let (inv1, _) = addItem emptyInventory stone 100
+          -- stone is in slots 0(64) and 1(36)
+          (inv2, removed) = removeItem inv1 stone 50
+      removed `shouldBe` 50
+      -- Slot 1 drained first (had 36), then slot 0 loses 14
+      getSlot inv2 0 `shouldBe` Just (ItemStack stone 50)
+      getSlot inv2 1 `shouldBe` Nothing
+
+    it "removeItem returns actual removed count when insufficient" $ do
+      let (inv1, _) = addItem emptyInventory stone 15
+          (inv2, removed) = removeItem inv1 stone 100
+      removed `shouldBe` 15
+      getSlot inv2 0 `shouldBe` Nothing
+
+  describe "countItem and hasItem" $ do
+    it "countItem accuracy across multiple stacks" $ do
+      let (inv1, _) = addItem emptyInventory stone 100
+      countItem inv1 stone `shouldBe` 100
+
+    it "hasItem true when enough" $ do
+      let (inv1, _) = addItem emptyInventory stone 50
+      hasItem inv1 stone 50 `shouldBe` True
+
+    it "hasItem false when insufficient" $ do
+      let (inv1, _) = addItem emptyInventory stone 49
+      hasItem inv1 stone 50 `shouldBe` False
+
+  describe "setSlot and getSlot bounds" $ do
+    it "setSlot with negative index is no-op" $ do
+      let inv = setSlot emptyInventory (-1) (Just (ItemStack stone 10))
+      inv `shouldBe` emptyInventory
+
+    it "setSlot with index beyond max is no-op" $ do
+      let inv = setSlot emptyInventory 100 (Just (ItemStack stone 10))
+      inv `shouldBe` emptyInventory
+
+    it "getSlot with negative index returns Nothing" $ do
+      getSlot emptyInventory (-1) `shouldBe` Nothing
+
+    it "getSlot with index beyond max returns Nothing" $ do
+      getSlot emptyInventory 100 `shouldBe` Nothing
+
+  describe "selectHotbar bounds" $ do
+    it "selectHotbar with negative index is no-op" $ do
+      let inv = selectHotbar emptyInventory (-1)
+      invSelected inv `shouldBe` 0
+
+    it "selectHotbar with index > 8 is no-op" $ do
+      let inv = selectHotbar emptyInventory 9
+      invSelected inv `shouldBe` 0
+
+  describe "selectedItem" $ do
+    it "selectedItem returns correct slot after selectHotbar" $ do
+      let inv1 = setSlot emptyInventory 3 (Just (ItemStack dirt 20))
+          inv2 = selectHotbar inv1 3
+      selectedItem inv2 `shouldBe` Just (ItemStack dirt 20)
+
+  describe "emptyInventory" $ do
+    it "emptyInventory has 36 Nothing slots" $ do
+      let slots = invSlots emptyInventory
+      V.length slots `shouldBe` 36
+      V.all (== Nothing) slots `shouldBe` True
+
+    it "emptyInventory invSelected = 0" $ do
+      invSelected emptyInventory `shouldBe` 0
+
+  describe "itemStackLimit" $ do
+    it "tools stack to 1" $ do
+      itemStackLimit tool `shouldBe` 1
+
+    it "blocks stack to 64" $ do
+      itemStackLimit stone `shouldBe` 64
+
+  describe "addItem slot selection" $ do
+    it "addItem to slot with different item type stays separate" $ do
+      let (inv1, _) = addItem emptyInventory stone 10
+          (inv2, _) = addItem inv1 dirt 10
+      getSlot inv2 0 `shouldBe` Just (ItemStack stone 10)
+      getSlot inv2 1 `shouldBe` Just (ItemStack dirt 10)
+
+    it "mergeIntoExisting prefers earlier slots" $ do
+      let inv1 = setSlot emptyInventory 2 (Just (ItemStack stone 30))
+          inv2 = setSlot inv1 5 (Just (ItemStack stone 30))
+          (inv3, _) = addItem inv2 stone 10
+      -- Slot 2 should get the merge first
+      getSlot inv3 2 `shouldBe` Just (ItemStack stone 40)
+      getSlot inv3 5 `shouldBe` Just (ItemStack stone 30)
+
+    it "placeInEmpty prefers earlier empty slots" $ do
+      let inv1 = setSlot emptyInventory 0 (Just (ItemStack dirt 10))
+          inv2 = setSlot inv1 1 (Just (ItemStack dirt 10))
+          (inv3, _) = addItem inv2 stone 10
+      -- Slot 2 is the first empty
+      getSlot inv3 2 `shouldBe` Just (ItemStack stone 10)
+
+  describe "edge cases" $ do
+    it "addItem 0 count is no-op" $ do
+      let (inv, left) = addItem emptyInventory stone 0
+      left `shouldBe` 0
+      inv `shouldBe` emptyInventory
+
+    it "removeItem 0 count is no-op" $ do
+      let (inv1, _) = addItem emptyInventory stone 10
+          (inv2, removed) = removeItem inv1 stone 0
+      removed `shouldBe` 0
+      inv2 `shouldBe` inv1
+
+    it "removeItem more than exists returns actual count" $ do
+      let (inv1, _) = addItem emptyInventory stone 7
+          (_, removed) = removeItem inv1 stone 999
+      removed `shouldBe` 7
+
+    it "countItem returns 0 for item not in inventory" $ do
+      countItem emptyInventory stone `shouldBe` 0
+
+    it "hasItem returns True for threshold 0 even on empty inventory" $ do
+      hasItem emptyInventory stone 0 `shouldBe` True
+
+  describe "QuickCheck properties" $ do
+    it "total count preserved: add then count equals amount added" $
+      property $ \n ->
+        let count = abs n `mod` 2305  -- up to 36 * 64 = 2304
+            (inv, leftover) = addItem emptyInventory stone count
+        in countItem inv stone + leftover == count
+
+    it "add then remove round-trips: total count correct" $
+      property $ \n m ->
+        let addAmt = abs n `mod` 2305
+            remAmt = abs m `mod` (addAmt + 1)
+            (inv1, leftover) = addItem emptyInventory stone addAmt
+            added = addAmt - leftover
+            (inv2, removed) = removeItem inv1 stone remAmt
+        in countItem inv2 stone == added - removed
+
+    it "removing more than exists never removes more than available" $
+      property $ \n m ->
+        let addAmt = abs n `mod` 500
+            remAmt = abs m `mod` 1000
+            (inv1, leftover) = addItem emptyInventory stone addAmt
+            added = addAmt - leftover
+            (_, removed) = removeItem inv1 stone remAmt
+        in removed <= added
+
+    it "addItem never produces negative leftover" $
+      property $ \n ->
+        let count = abs n `mod` 5000
+            (_, leftover) = addItem emptyInventory stone count
+        in leftover >= 0
+
+    it "leftover + inventory count equals original add amount" $
+      property $ \n ->
+        let count = abs n `mod` 5000
+            (inv, leftover) = addItem emptyInventory stone count
+        in countItem inv stone + leftover == count

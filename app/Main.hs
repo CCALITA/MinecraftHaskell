@@ -544,10 +544,8 @@ main = do
                       writeIORef inventoryRef (setSlot inv slotIdx existing)
                       modifyIORef' playerRef (\p -> p { plArmorSlots = newArmorSlots })
                     _ -> do
-                      -- Not an armor item: normal swap with cursor
-                      cursor <- readIORef cursorItemRef
-                      writeIORef inventoryRef (setSlot inv slotIdx cursor)
-                      writeIORef cursorItemRef slotContent
+                      -- Not an armor item: shift-click quick-move between sections
+                      writeIORef inventoryRef (moveToSection inv slotIdx)
                   else do
                     cursor <- readIORef cursorItemRef
                     writeIORef inventoryRef (setSlot inv slotIdx cursor)
@@ -1419,6 +1417,18 @@ main = do
             GLFW.Key'7 -> selectSlot 6
             GLFW.Key'8 -> selectSlot 7
             GLFW.Key'9 -> selectSlot 8
+            GLFW.Key'Q -> do
+              shiftHeld <- isKeyDown (whWindow wh) GLFW.Key'LeftShift
+              inv <- readIORef inventoryRef
+              let slotIdx = invSelected inv
+                  (inv', mDrop) = dropFromSlot inv slotIdx shiftHeld
+              case mDrop of
+                Nothing -> pure ()
+                Just (item, count) -> do
+                  writeIORef inventoryRef inv'
+                  player <- readIORef playerRef
+                  let dropPos = plPos player + V3 0 1.62 0 + dirFromPlayer player ^* 1.5
+                  spawnDrop droppedItems item count dropPos
             GLFW.Key'F5 -> do
               player <- readIORef playerRef
               inv <- readIORef inventoryRef
@@ -1506,8 +1516,27 @@ main = do
           _ -> case key of  -- InventoryOpen, CraftingOpen, ChestOpen, or FurnaceOpen
             GLFW.Key'Escape -> closeUIScreen
             GLFW.Key'E      -> closeUIScreen
+            GLFW.Key'1 -> hotbarKeyAssign 0
+            GLFW.Key'2 -> hotbarKeyAssign 1
+            GLFW.Key'3 -> hotbarKeyAssign 2
+            GLFW.Key'4 -> hotbarKeyAssign 3
+            GLFW.Key'5 -> hotbarKeyAssign 4
+            GLFW.Key'6 -> hotbarKeyAssign 5
+            GLFW.Key'7 -> hotbarKeyAssign 6
+            GLFW.Key'8 -> hotbarKeyAssign 7
+            GLFW.Key'9 -> hotbarKeyAssign 8
+            GLFW.Key'R      -> do
+              curMode <- readIORef gameModeRef
+              when (curMode == InventoryOpen) $
+                modifyIORef' inventoryRef sortInventory
             _ -> pure ()
             where
+              hotbarKeyAssign slotIdx = do
+                inv <- readIORef inventoryRef
+                cursor <- readIORef cursorItemRef
+                let (inv', cursor') = hotbarNumberKey inv cursor slotIdx
+                writeIORef inventoryRef inv'
+                writeIORef cursorItemRef cursor'
               closeUIScreen = do
                 curMode <- readIORef gameModeRef
                 -- Return cursor item to inventory
@@ -3492,13 +3521,13 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
       -- Title
       ++ renderTextCentered (-0.85) 1.0 (1, 1, 1, 1) "INVENTORY"
       -- === TOP ROW: Armor (left) + 2x2 Crafting (center-right) ===
-      -- Armor slots background
-      ++ quad (-0.55) (-0.82) (-0.30) (-0.40) (0.35, 0.3, 0.35, 0.9)
-      ++ renderText (-0.53) (-0.85) 0.5 (0.8, 0.8, 0.8, 0.8) "ARMOR"
+      -- Armor slots background (slightly purple-tinted)
+      ++ quad (-0.55) (-0.82) (-0.30) (-0.40) (0.30, 0.25, 0.32, 0.9)
+      ++ renderText (-0.53) (-0.85) 0.5 (0.9, 0.85, 0.95, 0.9) "ARMOR"
       ++ concatMap renderArmorSlot [0..3]
-      -- 2x2 crafting grid background
-      ++ quad (-0.05) (-0.82) 0.22 (-0.58) (0.35, 0.35, 0.3, 0.9)
-      ++ renderText (-0.03) (-0.85) 0.5 (0.8, 0.8, 0.8, 0.8) "CRAFT"
+      -- 2x2 crafting grid background (slightly warm-tinted)
+      ++ quad (-0.05) (-0.82) 0.22 (-0.58) (0.32, 0.30, 0.25, 0.9)
+      ++ renderText (-0.03) (-0.85) 0.5 (0.95, 0.9, 0.8, 0.9) "CRAFTING"
       ++ concatMap renderInvCraftSlot [(r, c) | r <- [0..1], c <- [0..1]]
       -- Arrow
       ++ quad 0.25 (-0.73) 0.30 (-0.69) (1, 1, 1, 0.7)
@@ -3506,11 +3535,39 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
       ++ quad 0.33 (-0.77) 0.47 (-0.63) (0.25, 0.25, 0.2, 0.9)
       ++ renderInvCraftOutput
       -- === BOTTOM: Inventory grid (4 rows x 9 cols) ===
+      -- "INVENTORY" label above main grid
+      ++ renderText (invGridX0) (invGridY0 - 0.04) 0.5 (0.9, 0.9, 0.9, 0.9) "INVENTORY"
+      -- Main grid background (darker)
       ++ quad (invGridX0 - 0.02) (invGridY0 - 0.02)
               (invGridX0 + 9 * invSlotW + 0.02) (invGridY0 + 4 * invSlotH + 0.02)
-              (0.3, 0.3, 0.3, 0.9)
+              (0.25, 0.25, 0.25, 0.9)
+      -- Grid lines between slots
+      ++ invGridLines
       ++ concatMap renderInvSlot [0..35]
       where
+        -- Thin dark grid lines between inventory slots (1px wide)
+        gridLineColor :: (Float, Float, Float, Float)
+        gridLineColor = (0.05, 0.05, 0.05, 0.6)
+        gridLineW :: Float
+        gridLineW = 0.003  -- ~1px in NDC
+
+        invGridLines :: [Float]
+        invGridLines =
+          -- Vertical lines between columns (8 lines for 9 columns)
+          concatMap (\c ->
+            let lx = invGridX0 + fromIntegral c * invSlotW - gridLineW / 2
+                ly0 = invGridY0
+                ly1 = invGridY0 + 4 * invSlotH
+            in quad lx ly0 (lx + gridLineW) ly1 gridLineColor
+          ) ([1..8] :: [Int])
+          ++
+          -- Horizontal lines between rows (3 lines for 4 rows)
+          concatMap (\r ->
+            let ly = invGridY0 + fromIntegral r * invSlotH - gridLineW / 2
+                lx0 = invGridX0
+                lx1 = invGridX0 + 9 * invSlotW
+            in quad lx0 ly lx1 (ly + gridLineW) gridLineColor
+          ) ([1..3] :: [Int])
         renderInvSlot idx =
           let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
               col = if idx < 9 then idx else (idx - 9) `mod` 9
