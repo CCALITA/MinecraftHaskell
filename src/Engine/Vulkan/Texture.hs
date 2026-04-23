@@ -268,10 +268,14 @@ tileFull tileIdx lx ly = case tileIdx of
           (r, g, b) = if bright then (255, 200, 50) else (220, 80 + fromIntegral (n `mod` 30), 10)
       in (r, g, b, 255)
 
-    -- Glass: mostly transparent with faint border
+    -- Glass: thin gray border, mostly transparent interior with diagonal reflection streak
     glassPattern x y =
       let border = x == 0 || y == 0 || x == 15 || y == 15
-      in if border then (200, 220, 240, 120) else (220, 235, 250, 40)
+          -- Diagonal reflection streak: 1-2px bright line from top-left toward center
+          onStreak = let d = abs (x - y) in d <= 1 && x <= 8 && y <= 8
+      in if border then (180, 200, 220, 150)
+         else if onStreak then (240, 245, 255, 80)
+         else (220, 235, 250, 35)
 
     -- Log cross-section (top/bottom of oak log)
     logTop x y =
@@ -860,14 +864,24 @@ tileFull tileIdx lx ly = case tileIdx of
          else if isBase then (80, 80, 90, 255)
          else (0, 0, 0, 0)
 
-    -- Ice: light blue semi-transparent with white cracks
+    -- Ice: pale blue-white base with crack lines and frosted patches
     icePattern x y =
-      let n = pixHash x y 5400 `mod` 100
-          crack = pixHash (x `div` 4) (y `div` 3) 5401 `mod` 10 < 2
-          (r, g, b, a) = if crack then (220, 230, 255, 200)
-                         else if n < 30 then (140, 180, 220, 180)
-                         else (160, 200, 240, 190)
-      in (r, g, b, a)
+      let -- Crack line 1: jagged horizontal path near y=5
+          crack1 = let cy = 5 + (pixHash x 0 5410 `mod` 3) - 1
+                   in y == cy && x >= 1 && x <= 14
+          -- Crack line 2: jagged diagonal from top-right to bottom-left
+          crack2 = let cy = x + 3 + (pixHash x 1 5411 `mod` 3) - 1
+                   in y == cy && cy >= 0 && cy <= 15
+          -- Crack line 3: jagged vertical path near x=10
+          crack3 = let cx = 10 + (pixHash 0 y 5412 `mod` 3) - 1
+                   in x == cx && y >= 2 && y <= 13
+          isCrack = crack1 || crack2 || crack3
+          -- Frosted patches: ~20% of pixels are lighter
+          frosted = pixHash x y 5420 `mod` 100 < 20
+          (r, g, b) = if isCrack then (160, 190, 220)
+                      else if frosted then (230, 240, 250)
+                      else (200, 220, 240)
+      in (r, g, b, 220)
 
     -- Packed ice: solid opaque blue-white with dense cracks
     packedIcePattern x y =
