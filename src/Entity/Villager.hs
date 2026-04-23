@@ -4,9 +4,11 @@ module Entity.Villager
   , generateTrades
   , professionName
   , allProfessions
+  , executeTrade
   ) where
 
 import Game.Item (Item(..), MaterialType(..), FoodType(..), ToolType(..), ToolMaterial(..))
+import Game.Inventory (Inventory, hasItem, removeItem, addItem)
 import World.Block (BlockType(..))
 
 -- | Villager professions determining available trades
@@ -63,3 +65,13 @@ professionName = show
 -- | All professions as a list (convenience for iteration)
 allProfessions :: [VillagerProfession]
 allProfessions = [minBound .. maxBound]
+
+executeTrade :: Inventory -> TradeOffer -> Maybe (Inventory, TradeOffer)
+executeTrade inv trade
+  | toUsesLeft trade <= 0 = Nothing
+  | not (hasItem inv (toInputItem trade) (toInputCount trade)) = Nothing
+  | otherwise =
+      let (inv1, _) = removeItem inv (toInputItem trade) (toInputCount trade)
+          (inv2, _) = addItem inv1 (toOutputItem trade) (toOutputCount trade)
+          trade2 = trade { toUsesLeft = toUsesLeft trade - 1 }
+      in Just (inv2, trade2)

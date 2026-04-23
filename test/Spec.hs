@@ -20,7 +20,7 @@ import Game.Furnace
 import World.Weather
 import Entity.ECS
 import Entity.Component
-import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), AIState(..), mobInfo)
+import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), AIState(..), mobInfo, isPassive, isHostile)
 import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpForNextLevel, xpProgress)
 import World.Redstone
 import World.BlockRegistry
@@ -47,11 +47,11 @@ import Game.Particle (WeatherParticle(..), WeatherParticleType(..), spawnWeather
 import Game.Bucket (BucketAction(..), determineBucketAction, bucketTypeToFluidBlock, fluidBlockToBucketType)
 import World.Fluid (FluidState, FluidType(..), newFluidState, addFluidSource, removeFluid, getFluid, FluidBlock(..))
 
-import Engine.Mesh (MeshData(..), NeighborData(..), meshChunkWithLight, emptyNeighborData, BlockVertex(..))
+import Engine.Mesh (MeshData(..), NeighborData(..), meshChunkWithLight, emptyNeighborData, BlockVertex(..), computeVertexAO)
 import Entity.Pathfinding (findPath, pathDistance)
 import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
 import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, getTimeOfDay, TimeOfDay(..))
-import Game.State (GameState(..), newGameState)
+import Game.State (GameState(..), GameMode(..), newGameState)
 import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
 
 import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
@@ -140,6 +140,8 @@ main = hspec $ do
   crossChunkCullingSpec
   greedyMeshingSpec
   dimensionWiringSpec
+  meshAOSpec
+  directionalPistonSpec
 
 -- =========================================================================
 -- Block
@@ -2539,6 +2541,236 @@ villagerTradingSpec = describe "Entity.Villager trading framework" $ do
     let trades = generateTrades Shepherd
         hasWoolTrade = any (\t -> toInputItem t == BlockItem Wool) trades
     hasWoolTrade `shouldBe` True
+
+  it "Shepherd offers shears trade" $ do
+    let trades = generateTrades Shepherd
+        hasShears = any (\t -> case toOutputItem t of
+          ShearsItem _ -> True
+          _            -> False) trades
+    hasShears `shouldBe` True
+
+  -- Cleric trades
+  it "Cleric offers glass trade" $ do
+    let trades = generateTrades Cleric
+        hasGlass = any (\t -> toOutputItem t == BlockItem Glass) trades
+    hasGlass `shouldBe` True
+
+  it "Cleric offers redstone dust trade" $ do
+    let trades = generateTrades Cleric
+        hasRedstone = any (\t -> toOutputItem t == BlockItem RedstoneDust) trades
+    hasRedstone `shouldBe` True
+
+  it "Cleric has 2 trades" $ do
+    length (generateTrades Cleric) `shouldBe` 2
+
+  -- Farmer trade count
+  it "Farmer has 2 trades" $ do
+    length (generateTrades Farmer) `shouldBe` 2
+
+  -- Librarian trade count
+  it "Librarian has 2 trades" $ do
+    length (generateTrades Librarian) `shouldBe` 2
+
+  -- Butcher trade count
+  it "Butcher has 3 trades" $ do
+    length (generateTrades Butcher) `shouldBe` 3
+
+  -- Shepherd trade count
+  it "Shepherd has 2 trades" $ do
+    length (generateTrades Shepherd) `shouldBe` 2
+
+  -- Butcher outputs cooked porkchop
+  it "Butcher offers cooked porkchop trade" $ do
+    let trades = generateTrades Butcher
+        hasCookedPork = any (\t -> toOutputItem t == FoodItem CookedPorkchop) trades
+    hasCookedPork `shouldBe` True
+
+  -- Librarian outputs glass
+  it "Librarian offers glass output" $ do
+    let trades = generateTrades Librarian
+        hasGlass = any (\t -> toOutputItem t == BlockItem Glass) trades
+    hasGlass `shouldBe` True
+
+  -- executeTrade tests
+  it "executeTrade succeeds with sufficient items" $ do
+    let trade = TradeOffer (MaterialItem Wheat) 20 (MaterialItem GoldIngot) 1 12 12
+        inv0 = fst $ addItem emptyInventory (MaterialItem Wheat) 20
+    case executeTrade inv0 trade of
+      Just (inv', trade') -> do
+        hasItem inv' (MaterialItem GoldIngot) 1 `shouldBe` True
+        toUsesLeft trade' `shouldBe` 11
+      Nothing -> expectationFailure "executeTrade should have succeeded"
+
+  it "executeTrade removes input items from inventory" $ do
+    let trade = TradeOffer (MaterialItem Wheat) 20 (MaterialItem GoldIngot) 1 12 12
+        inv0 = fst $ addItem emptyInventory (MaterialItem Wheat) 20
+    case executeTrade inv0 trade of
+      Just (inv', _) -> do
+        hasItem inv' (MaterialItem Wheat) 1 `shouldBe` False
+      Nothing -> expectationFailure "executeTrade should have succeeded"
+
+  it "executeTrade fails with insufficient items" $ do
+    let trade = TradeOffer (MaterialItem Wheat) 20 (MaterialItem GoldIngot) 1 12 12
+        inv0 = fst $ addItem emptyInventory (MaterialItem Wheat) 10
+    executeTrade inv0 trade `shouldBe` Nothing
+
+  it "executeTrade fails with empty inventory" $ do
+    let trade = TradeOffer (MaterialItem Wheat) 20 (MaterialItem GoldIngot) 1 12 12
+    executeTrade emptyInventory trade `shouldBe` Nothing
+
+  it "executeTrade fails when trade out of stock" $ do
+    let trade = TradeOffer (MaterialItem Wheat) 20 (MaterialItem GoldIngot) 1 12 0
+        inv0 = fst $ addItem emptyInventory (MaterialItem Wheat) 20
+    executeTrade inv0 trade `shouldBe` Nothing
+
+  it "executeTrade decrements usesLeft by 1" $ do
+    let trade = TradeOffer (MaterialItem Coal) 15 (MaterialItem GoldIngot) 1 12 12
+        inv0 = fst $ addItem emptyInventory (MaterialItem Coal) 15
+    case executeTrade inv0 trade of
+      Just (_, trade') -> toUsesLeft trade' `shouldBe` 11
+      Nothing -> expectationFailure "trade should succeed"
+
+  it "executeTrade adds correct output count" $ do
+    let trade = TradeOffer (MaterialItem GoldIngot) 1 (FoodItem Bread) 4 12 12
+        inv0 = fst $ addItem emptyInventory (MaterialItem GoldIngot) 1
+    case executeTrade inv0 trade of
+      Just (inv', _) -> hasItem inv' (FoodItem Bread) 4 `shouldBe` True
+      Nothing -> expectationFailure "trade should succeed"
+
+  it "executeTrade can be applied multiple times" $ do
+    let trade = TradeOffer (MaterialItem Wheat) 20 (MaterialItem GoldIngot) 1 12 12
+        inv0 = fst $ addItem emptyInventory (MaterialItem Wheat) 64
+    case executeTrade inv0 trade of
+      Just (inv1, trade1) -> do
+        toUsesLeft trade1 `shouldBe` 11
+        case executeTrade inv1 trade1 of
+          Just (inv2, trade2) -> do
+            toUsesLeft trade2 `shouldBe` 10
+            hasItem inv2 (MaterialItem GoldIngot) 2 `shouldBe` True
+          Nothing -> expectationFailure "second trade should succeed"
+      Nothing -> expectationFailure "first trade should succeed"
+
+  it "executeTrade fails on last use when usesLeft is 1 then 0" $ do
+    let trade = TradeOffer (MaterialItem Wheat) 20 (MaterialItem GoldIngot) 1 12 1
+        inv0 = fst $ addItem emptyInventory (MaterialItem Wheat) 64
+    case executeTrade inv0 trade of
+      Just (inv1, trade1) -> do
+        toUsesLeft trade1 `shouldBe` 0
+        -- Next trade attempt should fail (out of stock)
+        executeTrade inv1 trade1 `shouldBe` Nothing
+      Nothing -> expectationFailure "first trade should succeed"
+
+  it "executeTrade with Blacksmith iron pickaxe trade" $ do
+    let trades = generateTrades Blacksmith
+        pickTrade = head $ filter (\t -> case toOutputItem t of
+          ToolItem Pickaxe Iron _ -> True
+          _ -> False) trades
+        inv0 = fst $ addItem emptyInventory (MaterialItem GoldIngot) 3
+    case executeTrade inv0 pickTrade of
+      Just (inv', _) -> do
+        let hasPick = any (\idx -> case getSlot inv' idx of
+              Just (ItemStack (ToolItem Pickaxe Iron _) _) -> True
+              _ -> False) [0..35]
+        hasPick `shouldBe` True
+      Nothing -> expectationFailure "pickaxe trade should succeed"
+
+  it "executeTrade with Shepherd wool trade" $ do
+    let trades = generateTrades Shepherd
+        woolTrade = head $ filter (\t -> toInputItem t == BlockItem Wool) trades
+        inv0 = fst $ addItem emptyInventory (BlockItem Wool) 18
+    case executeTrade inv0 woolTrade of
+      Just (inv', trade') -> do
+        hasItem inv' (MaterialItem GoldIngot) 1 `shouldBe` True
+        toUsesLeft trade' `shouldBe` (toMaxUses woolTrade - 1)
+      Nothing -> expectationFailure "wool trade should succeed"
+
+  -- Villager MobType in Entity.Mob
+  it "Villager is Passive behavior" $ do
+    miBehavior (mobInfo Villager) `shouldBe` Passive
+
+  it "Villager has 20 HP" $ do
+    miMaxHealth (mobInfo Villager) `shouldBe` 20
+
+  it "Villager has 0 attack damage" $ do
+    miAttackDmg (mobInfo Villager) `shouldBe` 0.0
+
+  it "Villager has 0 detect range" $ do
+    miDetectRange (mobInfo Villager) `shouldBe` 0.0
+
+  it "Villager has 0 attack range" $ do
+    miAttackRange (mobInfo Villager) `shouldBe` 0.0
+
+  it "Villager speed is 2.5" $ do
+    miSpeed (mobInfo Villager) `shouldBe` 2.5
+
+  it "isPassive returns True for Villager" $ do
+    isPassive Villager `shouldBe` True
+
+  it "isHostile returns False for Villager" $ do
+    isHostile Villager `shouldBe` False
+
+  -- GameState VillagerTrading mode
+  it "VillagerTrading is distinct from other GameModes" $ do
+    VillagerTrading `shouldNotBe` Playing
+    VillagerTrading `shouldNotBe` InventoryOpen
+    VillagerTrading `shouldNotBe` CraftingOpen
+    VillagerTrading `shouldNotBe` MainMenu
+
+  it "VillagerTrading shows correctly" $ do
+    show VillagerTrading `shouldBe` "VillagerTrading"
+
+  it "GameState initializes with empty villager trades" $ do
+    gs <- newGameState (V3 0 60 0)
+    trades <- readIORef (gsVillagerTrades gs)
+    trades `shouldBe` []
+
+  it "GameState initializes with no villager profession" $ do
+    gs <- newGameState (V3 0 60 0)
+    prof <- readIORef (gsVillagerProf gs)
+    prof `shouldBe` Nothing
+
+  it "GameState villager trades can be written and read" $ do
+    gs <- newGameState (V3 0 60 0)
+    let trades = generateTrades Farmer
+    writeIORef (gsVillagerTrades gs) trades
+    result <- readIORef (gsVillagerTrades gs)
+    result `shouldBe` trades
+
+  it "GameState villager profession can be written and read" $ do
+    gs <- newGameState (V3 0 60 0)
+    writeIORef (gsVillagerProf gs) (Just Blacksmith)
+    result <- readIORef (gsVillagerProf gs)
+    result `shouldBe` Just Blacksmith
+
+  -- Trade input/output item types are distinct
+  it "no trade has same input and output item" $ do
+    let allTrades = concatMap generateTrades allProfessions
+    mapM_ (\t -> toInputItem t `shouldNotBe` toOutputItem t) allTrades
+
+  -- Currency is GoldIngot (Emerald substitute)
+  it "Farmer wheat trade output is GoldIngot currency" $ do
+    let trades = generateTrades Farmer
+        wheatTrade = head $ filter (\t -> toInputItem t == MaterialItem Wheat) trades
+    toOutputItem wheatTrade `shouldBe` MaterialItem GoldIngot
+
+  it "Farmer bread trade input is GoldIngot currency" $ do
+    let trades = generateTrades Farmer
+        breadTrade = head $ filter (\t -> toOutputItem t == FoodItem Bread) trades
+    toInputItem breadTrade `shouldBe` MaterialItem GoldIngot
+
+  -- Blacksmith coal trade
+  it "Blacksmith accepts coal for currency" $ do
+    let trades = generateTrades Blacksmith
+        hasCoal = any (\t -> toInputItem t == MaterialItem Coal) trades
+    hasCoal `shouldBe` True
+
+  -- Blacksmith sword trade
+  it "Blacksmith offers iron sword trade" $ do
+    let trades = generateTrades Blacksmith
+        hasSword = any (\t -> case toOutputItem t of
+          ToolItem Sword Iron _ -> True
+          _                     -> False) trades
+    hasSword `shouldBe` True
 
 -- =========================================================================
 -- Tooltip
@@ -5827,3 +6059,283 @@ weatherParticleSpec = describe "Game.Particle weather" $ do
     it "snow particle produces 36 floats" $ length (renderWeatherParticles [WeatherParticle (V3 0 0 (-1)) SnowFlake] identity) `shouldBe` 36
     it "rain has blue color" $ case renderWeatherParticles [WeatherParticle (V3 0 0 (-1)) RainDrop] identity of { (_:_:r:g:b:_) -> do { r `shouldBe` 0.5; g `shouldBe` 0.6; b `shouldBe` 1.0 }; _ -> expectationFailure "no verts" }
     it "snow has white color" $ case renderWeatherParticles [WeatherParticle (V3 0 0 (-1)) SnowFlake] identity of { (_:_:r:g:b:_) -> do { r `shouldBe` 1.0; g `shouldBe` 1.0; b `shouldBe` 1.0 }; _ -> expectationFailure "no verts" }
+-- =========================================================================
+-- Directional Pistons
+-- =========================================================================
+directionalPistonSpec :: Spec
+directionalPistonSpec = describe "Directional Pistons" $ do
+
+  describe "BlockType constructors" $ do
+    it "PistonNorth exists and is distinct from Piston" $
+      PistonNorth `shouldSatisfy` (/= Piston)
+
+    it "PistonSouth exists and is distinct from Piston" $
+      PistonSouth `shouldSatisfy` (/= Piston)
+
+    it "PistonEast exists and is distinct from Piston" $
+      PistonEast `shouldSatisfy` (/= Piston)
+
+    it "PistonWest exists and is distinct from Piston" $
+      PistonWest `shouldSatisfy` (/= Piston)
+
+    it "PistonDown exists and is distinct from Piston" $
+      PistonDown `shouldSatisfy` (/= Piston)
+
+    it "PistonHeadNorth exists and is distinct from PistonHead" $
+      PistonHeadNorth `shouldSatisfy` (/= PistonHead)
+
+    it "PistonHeadSouth exists and is distinct from PistonHead" $
+      PistonHeadSouth `shouldSatisfy` (/= PistonHead)
+
+    it "PistonHeadEast exists and is distinct from PistonHead" $
+      PistonHeadEast `shouldSatisfy` (/= PistonHead)
+
+    it "PistonHeadWest exists and is distinct from PistonHead" $
+      PistonHeadWest `shouldSatisfy` (/= PistonHead)
+
+    it "PistonHeadDown exists and is distinct from PistonHead" $
+      PistonHeadDown `shouldSatisfy` (/= PistonHead)
+
+  describe "Enum ordering" $ do
+    it "directional pistons come after WheatCrop7" $ do
+      fromEnum PistonNorth `shouldSatisfy` (> fromEnum WheatCrop7)
+      fromEnum PistonSouth `shouldSatisfy` (> fromEnum WheatCrop7)
+      fromEnum PistonEast `shouldSatisfy` (> fromEnum WheatCrop7)
+      fromEnum PistonWest `shouldSatisfy` (> fromEnum WheatCrop7)
+      fromEnum PistonDown `shouldSatisfy` (> fromEnum WheatCrop7)
+
+    it "directional piston heads come after directional pistons" $ do
+      fromEnum PistonHeadNorth `shouldSatisfy` (> fromEnum PistonDown)
+      fromEnum PistonHeadSouth `shouldSatisfy` (> fromEnum PistonDown)
+      fromEnum PistonHeadEast `shouldSatisfy` (> fromEnum PistonDown)
+      fromEnum PistonHeadWest `shouldSatisfy` (> fromEnum PistonDown)
+      fromEnum PistonHeadDown `shouldSatisfy` (> fromEnum PistonDown)
+
+    it "PistonHeadDown is the last enum value (Bounded maxBound)" $
+      (maxBound :: BlockType) `shouldBe` PistonHeadDown
+
+  describe "isPistonBlock" $ do
+    it "Piston (upward) is a piston" $
+      isPistonBlock Piston `shouldBe` True
+
+    it "PistonNorth is a piston" $
+      isPistonBlock PistonNorth `shouldBe` True
+
+    it "PistonSouth is a piston" $
+      isPistonBlock PistonSouth `shouldBe` True
+
+    it "PistonEast is a piston" $
+      isPistonBlock PistonEast `shouldBe` True
+
+    it "PistonWest is a piston" $
+      isPistonBlock PistonWest `shouldBe` True
+
+    it "PistonDown is a piston" $
+      isPistonBlock PistonDown `shouldBe` True
+
+    it "Stone is not a piston" $
+      isPistonBlock Stone `shouldBe` False
+
+    it "PistonHead is not a piston (it is a head)" $
+      isPistonBlock PistonHead `shouldBe` False
+
+  describe "isPistonHeadBlock" $ do
+    it "PistonHead (upward) is a piston head" $
+      isPistonHeadBlock PistonHead `shouldBe` True
+
+    it "PistonHeadNorth is a piston head" $
+      isPistonHeadBlock PistonHeadNorth `shouldBe` True
+
+    it "PistonHeadSouth is a piston head" $
+      isPistonHeadBlock PistonHeadSouth `shouldBe` True
+
+    it "PistonHeadEast is a piston head" $
+      isPistonHeadBlock PistonHeadEast `shouldBe` True
+
+    it "PistonHeadWest is a piston head" $
+      isPistonHeadBlock PistonHeadWest `shouldBe` True
+
+    it "PistonHeadDown is a piston head" $
+      isPistonHeadBlock PistonHeadDown `shouldBe` True
+
+    it "Piston is not a piston head" $
+      isPistonHeadBlock Piston `shouldBe` False
+
+    it "Air is not a piston head" $
+      isPistonHeadBlock Air `shouldBe` False
+
+  describe "pistonDirection" $ do
+    it "Piston pushes upward (+Y)" $
+      pistonDirection Piston `shouldBe` V3 0 1 0
+
+    it "PistonNorth pushes +Z" $
+      pistonDirection PistonNorth `shouldBe` V3 0 0 1
+
+    it "PistonSouth pushes -Z" $
+      pistonDirection PistonSouth `shouldBe` V3 0 0 (-1)
+
+    it "PistonEast pushes +X" $
+      pistonDirection PistonEast `shouldBe` V3 1 0 0
+
+    it "PistonWest pushes -X" $
+      pistonDirection PistonWest `shouldBe` V3 (-1) 0 0
+
+    it "PistonDown pushes -Y" $
+      pistonDirection PistonDown `shouldBe` V3 0 (-1) 0
+
+  describe "pistonHeadForPiston" $ do
+    it "Piston maps to PistonHead" $
+      pistonHeadForPiston Piston `shouldBe` PistonHead
+
+    it "PistonNorth maps to PistonHeadNorth" $
+      pistonHeadForPiston PistonNorth `shouldBe` PistonHeadNorth
+
+    it "PistonSouth maps to PistonHeadSouth" $
+      pistonHeadForPiston PistonSouth `shouldBe` PistonHeadSouth
+
+    it "PistonEast maps to PistonHeadEast" $
+      pistonHeadForPiston PistonEast `shouldBe` PistonHeadEast
+
+    it "PistonWest maps to PistonHeadWest" $
+      pistonHeadForPiston PistonWest `shouldBe` PistonHeadWest
+
+    it "PistonDown maps to PistonHeadDown" $
+      pistonHeadForPiston PistonDown `shouldBe` PistonHeadDown
+
+  describe "block properties" $ do
+    it "all directional pistons are solid" $ do
+      let pistons = [PistonNorth, PistonSouth, PistonEast, PistonWest, PistonDown]
+      mapM_ (\p -> isSolid p `shouldBe` True) pistons
+
+    it "all directional pistons are not transparent" $ do
+      let pistons = [PistonNorth, PistonSouth, PistonEast, PistonWest, PistonDown]
+      mapM_ (\p -> isTransparent p `shouldBe` False) pistons
+
+    it "all directional pistons have hardness 0.5" $ do
+      let pistons = [PistonNorth, PistonSouth, PistonEast, PistonWest, PistonDown]
+      mapM_ (\p -> bpHardness (blockProperties p) `shouldBe` 0.5) pistons
+
+    it "all directional piston heads are solid" $ do
+      let heads = [PistonHeadNorth, PistonHeadSouth, PistonHeadEast, PistonHeadWest, PistonHeadDown]
+      mapM_ (\h -> isSolid h `shouldBe` True) heads
+
+    it "all directional piston heads have hardness 0.5" $ do
+      let heads = [PistonHeadNorth, PistonHeadSouth, PistonHeadEast, PistonHeadWest, PistonHeadDown]
+      mapM_ (\h -> bpHardness (blockProperties h) `shouldBe` 0.5) heads
+
+    it "directional piston properties match original Piston" $ do
+      let ref = blockProperties Piston
+      mapM_ (\p -> blockProperties p `shouldBe` ref)
+        [PistonNorth, PistonSouth, PistonEast, PistonWest, PistonDown]
+
+    it "directional piston head properties match original PistonHead" $ do
+      let ref = blockProperties PistonHead
+      mapM_ (\h -> blockProperties h `shouldBe` ref)
+        [PistonHeadNorth, PistonHeadSouth, PistonHeadEast, PistonHeadWest, PistonHeadDown]
+
+  describe "texture coordinates" $ do
+    it "PistonNorth push face is on FaceNorth" $
+      blockFaceTexCoords PistonNorth FaceNorth `shouldBe` V2 5 5
+
+    it "PistonSouth push face is on FaceSouth" $
+      blockFaceTexCoords PistonSouth FaceSouth `shouldBe` V2 5 5
+
+    it "PistonEast push face is on FaceEast" $
+      blockFaceTexCoords PistonEast FaceEast `shouldBe` V2 5 5
+
+    it "PistonWest push face is on FaceWest" $
+      blockFaceTexCoords PistonWest FaceWest `shouldBe` V2 5 5
+
+    it "PistonDown push face is on FaceBottom" $
+      blockFaceTexCoords PistonDown FaceBottom `shouldBe` V2 5 5
+
+    it "PistonNorth back face (south) is wooden base" $
+      blockFaceTexCoords PistonNorth FaceSouth `shouldBe` V2 4 0
+
+    it "PistonEast side faces are wooden" $ do
+      blockFaceTexCoords PistonEast FaceTop `shouldBe` V2 6 5
+      blockFaceTexCoords PistonEast FaceBottom `shouldBe` V2 6 5
+
+  describe "world integration" $ do
+    it "can place and read PistonNorth" $ do
+      withTestWorld $ \world -> do
+        worldSetBlock world (V3 5 64 5) PistonNorth
+        blk <- worldGetBlock world (V3 5 64 5)
+        blk `shouldBe` PistonNorth
+
+    it "can place and read PistonEast" $ do
+      withTestWorld $ \world -> do
+        worldSetBlock world (V3 5 64 5) PistonEast
+        blk <- worldGetBlock world (V3 5 64 5)
+        blk `shouldBe` PistonEast
+
+    it "can place and read PistonHeadSouth" $ do
+      withTestWorld $ \world -> do
+        worldSetBlock world (V3 5 64 5) PistonHeadSouth
+        blk <- worldGetBlock world (V3 5 64 5)
+        blk `shouldBe` PistonHeadSouth
+
+    it "can place and read PistonDown" $ do
+      withTestWorld $ \world -> do
+        worldSetBlock world (V3 5 64 5) PistonDown
+        blk <- worldGetBlock world (V3 5 64 5)
+        blk `shouldBe` PistonDown
+
+    it "can place and read PistonHeadDown" $ do
+      withTestWorld $ \world -> do
+        worldSetBlock world (V3 5 64 5) PistonHeadDown
+        blk <- worldGetBlock world (V3 5 64 5)
+        blk `shouldBe` PistonHeadDown
+
+-- =========================================================================
+-- Mesh AO (per-vertex ambient occlusion)
+-- =========================================================================
+meshAOSpec :: Spec
+meshAOSpec = describe "Engine.Mesh AO" $ do
+  describe "computeVertexAO" $ do
+    it "no neighbors solid => AO = 1.0" $
+      computeVertexAO False False False `shouldBe` 1.0
+    it "one side solid => AO = 2/3" $
+      computeVertexAO True False False `shouldSatisfy` (\v -> abs (v - 2.0/3.0) < 1e-6)
+    it "two sides solid => forces corner, AO = 0.0" $
+      computeVertexAO True True False `shouldBe` 0.0
+    it "two sides solid with corner already solid => AO = 0.0" $
+      computeVertexAO True True True `shouldBe` 0.0
+    it "one side + corner solid => AO = 1/3" $
+      computeVertexAO True False True `shouldSatisfy` (\v -> abs (v - 1.0/3.0) < 1e-6)
+    it "corner only solid => AO = 2/3" $
+      computeVertexAO False False True `shouldSatisfy` (\v -> abs (v - 2.0/3.0) < 1e-6)
+    it "both sides not solid, corner not solid => AO = 1.0" $
+      computeVertexAO False False False `shouldBe` 1.0
+    it "AO is always in [0, 1]" $
+      property $ \s1 s2 c ->
+        let ao = computeVertexAO s1 s2 c
+        in ao >= 0.0 && ao <= 1.0
+  describe "meshChunkWithLight AO integration" $ do
+    it "isolated block has all AO > 0 (no solid neighbors)" $ do
+      chunk <- newChunk (V2 0 0)
+      setBlock chunk 8 8 8 Stone
+      lm <- newLightMap
+      propagateSkyLight chunk lm
+      mesh <- meshChunkWithLight chunk lm emptyNeighborData
+      let verts = VS.toList (mdVertices mesh)
+      all (\v -> bvAO v > 0.0) verts `shouldBe` True
+    it "block with raised neighbors has varying AO on top face" $ do
+      chunk <- newChunk (V2 0 0)
+      setBlock chunk 8 250 8 Stone
+      setBlock chunk 7 250 8 Stone
+      setBlock chunk 7 251 8 Stone
+      setBlock chunk 8 250 7 Stone
+      setBlock chunk 8 251 7 Stone
+      lm <- newLightMap
+      propagateSkyLight chunk lm
+      mesh <- meshChunkWithLight chunk lm emptyNeighborData
+      let verts = VS.toList (mdVertices mesh)
+          topFaceVerts = filter (\v ->
+            let V3 px py pz = bvPosition v
+                V3 _ ny _ = bvNormal v
+            in abs (py - 251.0) < 0.01 && ny > 0.5 &&
+               px >= 8.0 && px <= 9.0 && pz >= 8.0 && pz <= 9.0) verts
+          aoVals = map bvAO topFaceVerts
+      length topFaceVerts `shouldBe` 4
+      (maximum aoVals - minimum aoVals) `shouldSatisfy` (> 0.01)

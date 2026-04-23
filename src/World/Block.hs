@@ -11,10 +11,14 @@ module World.Block
   , blockCollisionHeight
   , blockFaceTexCoords
   , allBlockFaces
+  , isPistonBlock
+  , pistonDirection
+  , isPistonHeadBlock
+  , pistonHeadForPiston
   ) where
 
 import Data.Word (Word8)
-import Linear (V2(..))
+import Linear (V2(..), V3(..))
 
 -- | Block types represented as Word8 for compact chunk storage
 data BlockType
@@ -113,6 +117,16 @@ data BlockType
   | WheatCrop5
   | WheatCrop6
   | WheatCrop7
+  | PistonNorth
+  | PistonSouth
+  | PistonEast
+  | PistonWest
+  | PistonDown
+  | PistonHeadNorth
+  | PistonHeadSouth
+  | PistonHeadEast
+  | PistonHeadWest
+  | PistonHeadDown
   deriving stock (Eq, Ord, Enum, Bounded, Show, Read)
 
 -- | Convert BlockType to/from Word8 for chunk storage
@@ -241,6 +255,16 @@ blockProperties = \case
   WheatCrop5       -> BlockProperties False True  0  0.0
   WheatCrop6       -> BlockProperties False True  0  0.0
   WheatCrop7       -> BlockProperties False True  0  0.0
+  PistonNorth      -> BlockProperties True  False 0  0.5
+  PistonSouth      -> BlockProperties True  False 0  0.5
+  PistonEast       -> BlockProperties True  False 0  0.5
+  PistonWest       -> BlockProperties True  False 0  0.5
+  PistonDown       -> BlockProperties True  False 0  0.5
+  PistonHeadNorth  -> BlockProperties True  False 0  0.5
+  PistonHeadSouth  -> BlockProperties True  False 0  0.5
+  PistonHeadEast   -> BlockProperties True  False 0  0.5
+  PistonHeadWest   -> BlockProperties True  False 0  0.5
+  PistonHeadDown   -> BlockProperties True  False 0  0.5
 
 isTransparent :: BlockType -> Bool
 isTransparent = bpTransparent . blockProperties
@@ -283,23 +307,21 @@ blockCollisionHeight OakSlab   = 0.5
 blockCollisionHeight _         = 1.0
 
 -- | Texture atlas coordinates for each block face.
---   Returns (u, v) tile position in a 16x16 texture atlas.
---   Each tile is 1/16th of the atlas (16px in a 256px atlas).
 blockFaceTexCoords :: BlockType -> BlockFace -> V2 Int
 blockFaceTexCoords blockType face = case blockType of
-  Air         -> V2 0 0  -- never rendered
+  Air         -> V2 0 0
   Stone       -> V2 1 0
   Dirt        -> V2 2 0
   Grass       -> case face of
-    FaceTop    -> V2 0 0   -- grass top
-    FaceBottom -> V2 2 0   -- dirt
-    _          -> V2 3 0   -- grass side
+    FaceTop    -> V2 0 0
+    FaceBottom -> V2 2 0
+    _          -> V2 3 0
   Sand        -> V2 4 0
   Gravel      -> V2 5 0
   OakLog      -> case face of
-    FaceTop    -> V2 5 1   -- log cross-section
+    FaceTop    -> V2 5 1
     FaceBottom -> V2 5 1
-    _          -> V2 4 1   -- log bark
+    _          -> V2 4 1
   OakLeaves   -> V2 6 1
   Water       -> V2 13 0
   Lava        -> V2 14 0
@@ -314,14 +336,14 @@ blockFaceTexCoords blockType face = case blockType of
   Snow        -> V2 2 4
   Clay        -> V2 8 4
   CraftingTable -> case face of
-    FaceTop    -> V2 11 3  -- crafting table top
-    FaceBottom -> V2 4 0   -- planks bottom
-    _          -> V2 11 2  -- crafting table side
+    FaceTop    -> V2 11 3
+    FaceBottom -> V2 4 0
+    _          -> V2 11 2
   Furnace     -> case face of
-    FaceTop    -> V2 14 3  -- furnace top
+    FaceTop    -> V2 14 3
     FaceBottom -> V2 14 3
-    FaceSouth  -> V2 12 2  -- furnace front
-    _          -> V2 13 2  -- furnace side
+    FaceSouth  -> V2 12 2
+    _          -> V2 13 2
   Chest       -> V2 9 1
   Torch       -> V2 0 5
   StoneBrick  -> V2 6 3
@@ -338,8 +360,8 @@ blockFaceTexCoords blockType face = case blockType of
   OakFence    -> V2 3 2
   Farmland    -> case face of
     FaceTop    -> V2 4 2
-    FaceBottom -> V2 2 0  -- dirt bottom
-    _          -> V2 2 0  -- dirt sides
+    FaceBottom -> V2 2 0
+    _          -> V2 2 0
   WheatCrop   -> V2 5 2
   OakSapling  -> V2 6 2
   Wool        -> V2 0 3
@@ -359,18 +381,18 @@ blockFaceTexCoords blockType face = case blockType of
   StoneSlab   -> V2 1 0
   OakSlab     -> V2 4 0
   Piston      -> case face of
-    FaceTop    -> V2 5 5   -- stone face on top
-    FaceBottom -> V2 4 0   -- wooden base on bottom
-    _          -> V2 6 5   -- wooden side
-  PistonHead  -> V2 7 5    -- flat wooden panel
+    FaceTop    -> V2 5 5
+    FaceBottom -> V2 4 0
+    _          -> V2 6 5
+  PistonHead  -> V2 7 5
   Rail        -> V2 8 5
   Dispenser   -> case face of
-    FaceSouth  -> V2 9 5  -- front face with opening
-    _          -> V2 14 3 -- stone-like sides (reuse furnace top)
+    FaceSouth  -> V2 9 5
+    _          -> V2 14 3
   EnchantingTable -> case face of
-    FaceTop    -> V2 5 5   -- enchanting table top (diamond-studded)
-    FaceBottom -> V2 11 1  -- obsidian bottom
-    _          -> V2 6 5   -- enchanting table side
+    FaceTop    -> V2 5 5
+    FaceBottom -> V2 11 1
+    _          -> V2 6 5
   Netherrack       -> V2 10 5
   SoulSand         -> V2 11 5
   Glowstone        -> V2 12 5
@@ -382,21 +404,21 @@ blockFaceTexCoords blockType face = case blockType of
   MossyCobblestone -> V2 3 4
   MossyStoneBrick  -> V2 4 4
   BirchLog      -> case face of
-    FaceTop    -> V2 1 6   -- birch log cross-section
+    FaceTop    -> V2 1 6
     FaceBottom -> V2 1 6
-    _          -> V2 0 6   -- birch log bark
+    _          -> V2 0 6
   BirchLeaves  -> V2 2 6
   BirchPlanks  -> V2 3 6
   SpruceLog    -> case face of
-    FaceTop    -> V2 5 6   -- spruce log cross-section
+    FaceTop    -> V2 5 6
     FaceBottom -> V2 5 6
-    _          -> V2 4 6   -- spruce log bark
+    _          -> V2 4 6
   SpruceLeaves -> V2 6 6
   SprucePlanks -> V2 7 6
   JungleLog    -> case face of
-    FaceTop    -> V2 9 6   -- jungle log cross-section
+    FaceTop    -> V2 9 6
     FaceBottom -> V2 9 6
-    _          -> V2 8 6   -- jungle log bark
+    _          -> V2 8 6
   JungleLeaves -> V2 10 6
   JunglePlanks -> V2 11 6
   TallGrass    -> V2 12 6
@@ -405,18 +427,18 @@ blockFaceTexCoords blockType face = case blockType of
   BrownMushroom -> V2 15 6
   RedMushroom  -> V2 0 7
   Bookshelf    -> case face of
-    FaceTop    -> V2 4 0   -- planks top
-    FaceBottom -> V2 4 0   -- planks bottom
-    _          -> V2 1 7   -- bookshelf side
+    FaceTop    -> V2 4 0
+    FaceBottom -> V2 4 0
+    _          -> V2 1 7
   Anvil        -> V2 2 7
   BrewingStand -> V2 3 7
   Ice          -> V2 4 7
   PackedIce    -> V2 5 7
   RedstoneLamp -> V2 6 7
   Hopper       -> case face of
-    FaceTop    -> V2 8 7   -- hopper opening
-    FaceBottom -> V2 7 7   -- hopper bottom
-    _          -> V2 7 7   -- hopper side
+    FaceTop    -> V2 8 7
+    FaceBottom -> V2 7 7
+    _          -> V2 7 7
   WheatCrop1   -> V2 1 7
   WheatCrop2   -> V2 2 7
   WheatCrop3   -> V2 3 7
@@ -424,3 +446,68 @@ blockFaceTexCoords blockType face = case blockType of
   WheatCrop5   -> V2 5 7
   WheatCrop6   -> V2 6 7
   WheatCrop7   -> V2 7 7
+  PistonNorth  -> case face of
+    FaceNorth  -> V2 5 5
+    FaceSouth  -> V2 4 0
+    _          -> V2 6 5
+  PistonSouth  -> case face of
+    FaceSouth  -> V2 5 5
+    FaceNorth  -> V2 4 0
+    _          -> V2 6 5
+  PistonEast   -> case face of
+    FaceEast   -> V2 5 5
+    FaceWest   -> V2 4 0
+    _          -> V2 6 5
+  PistonWest   -> case face of
+    FaceWest   -> V2 5 5
+    FaceEast   -> V2 4 0
+    _          -> V2 6 5
+  PistonDown   -> case face of
+    FaceBottom -> V2 5 5
+    FaceTop    -> V2 4 0
+    _          -> V2 6 5
+  PistonHeadNorth -> V2 7 5
+  PistonHeadSouth -> V2 7 5
+  PistonHeadEast  -> V2 7 5
+  PistonHeadWest  -> V2 7 5
+  PistonHeadDown  -> V2 7 5
+
+-- | Whether a block type is any piston variant (including the original upward Piston)
+isPistonBlock :: BlockType -> Bool
+isPistonBlock Piston      = True
+isPistonBlock PistonNorth = True
+isPistonBlock PistonSouth = True
+isPistonBlock PistonEast  = True
+isPistonBlock PistonWest  = True
+isPistonBlock PistonDown  = True
+isPistonBlock _           = False
+
+-- | Get the push direction vector for a piston block type.
+pistonDirection :: BlockType -> V3 Int
+pistonDirection Piston      = V3 0 1 0
+pistonDirection PistonNorth = V3 0 0 1
+pistonDirection PistonSouth = V3 0 0 (-1)
+pistonDirection PistonEast  = V3 1 0 0
+pistonDirection PistonWest  = V3 (-1) 0 0
+pistonDirection PistonDown  = V3 0 (-1) 0
+pistonDirection _           = V3 0 1 0
+
+-- | Whether a block type is any piston head variant
+isPistonHeadBlock :: BlockType -> Bool
+isPistonHeadBlock PistonHead      = True
+isPistonHeadBlock PistonHeadNorth = True
+isPistonHeadBlock PistonHeadSouth = True
+isPistonHeadBlock PistonHeadEast  = True
+isPistonHeadBlock PistonHeadWest  = True
+isPistonHeadBlock PistonHeadDown  = True
+isPistonHeadBlock _               = False
+
+-- | Get the piston head variant matching a given piston block type
+pistonHeadForPiston :: BlockType -> BlockType
+pistonHeadForPiston Piston      = PistonHead
+pistonHeadForPiston PistonNorth = PistonHeadNorth
+pistonHeadForPiston PistonSouth = PistonHeadSouth
+pistonHeadForPiston PistonEast  = PistonHeadEast
+pistonHeadForPiston PistonWest  = PistonHeadWest
+pistonHeadForPiston PistonDown  = PistonHeadDown
+pistonHeadForPiston _           = PistonHead

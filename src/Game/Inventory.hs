@@ -11,6 +11,8 @@ module Game.Inventory
   , selectHotbar
   , addItem
   , removeItem
+  , hasItem
+  , countItem
   , stackLimit
   ) where
 
@@ -129,3 +131,15 @@ removeItem inv item count = go inv (inventorySlots - 1) count 0
                 inv'' = setSlot inv' idx newSlot
             in go inv'' (idx - 1) (remaining - toRemove) (removed + toRemove)
           _ -> go inv' (idx - 1) remaining removed
+
+countItem :: Inventory -> Item -> Int
+countItem inv item = go 0 0
+  where
+    go idx acc
+      | idx >= inventorySlots = acc
+      | otherwise = case getSlot inv idx of
+          Just (ItemStack sItem cnt) | sItem == item -> go (idx + 1) (acc + cnt)
+          _ -> go (idx + 1) acc
+
+hasItem :: Inventory -> Item -> Int -> Bool
+hasItem inv item count = countItem inv item >= count
