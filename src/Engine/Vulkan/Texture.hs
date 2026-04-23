@@ -336,12 +336,23 @@ tileFull tileIdx lx ly = case tileIdx of
           v = fromIntegral (160 + n)
       in (v, fromIntegral (155 + n), fromIntegral (145 + n), 255)
 
-    -- Torch: mostly transparent with orange flame center
+    -- Torch: brown stick with shaped flame using distance falloff
     torchPattern x y =
-      let isStick = x >= 7 && x <= 8 && y >= 5 && y <= 15
-          isFlame = x >= 6 && x <= 9 && y >= 2 && y <= 6
-      in if isFlame then (255, 200, 50, 255)
-         else if isStick then (120, 90, 40, 255)
+      let isStick = x >= 7 && x <= 8 && y >= 6 && y <= 15
+          -- Flame region at top (y 0-5), shaped by distance from center
+          cx = 7.5 :: Double
+          cy = 2.5 :: Double
+          dx = fromIntegral x - cx
+          dy = fromIntegral y - cy
+          dist = sqrt (dx * dx + dy * dy) :: Double
+          isFlame = y <= 5 && dist < 4.0
+          -- Interpolate bright yellow center to orange at edges
+          t = min 1.0 (dist / 4.0) :: Double
+          flameR = round (255.0 - t * 0.0) :: Word8      -- stays 255
+          flameG = round (220.0 - t * 70.0) :: Word8     -- 220 -> 150
+          flameB = round (50.0 - t * 20.0) :: Word8      -- 50 -> 30
+      in if isFlame then (flameR, flameG, flameB, 255)
+         else if isStick then (100, 70, 35, 255)
          else (0, 0, 0, 0)  -- transparent
 
     -- Obsidian: very dark purple/black with faint purple streaks
