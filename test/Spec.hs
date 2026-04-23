@@ -38,6 +38,7 @@ import Game.Command
 import Game.Achievement
 import Game.Config
 import Game.Event
+import Game.ItemDisplay (armorSlotSilhouette, itemMiniIcon)
 import UI.Tooltip
 import UI.Screen
 
@@ -155,6 +156,7 @@ main = hspec $ do
   collectAllSpec
   stackSplittingSpec
   cursorItemRenderSpec
+  shiftClickContainerSpec
 
 -- =========================================================================
 -- Block
@@ -3193,6 +3195,48 @@ tooltipSpec = describe "UI.Tooltip" $ do
         vertsNoDur = renderTooltipVertices ttNoDur 0.0 0.0
         vertsDur   = renderTooltipVertices ttDur   0.0 0.0
     length vertsDur `shouldSatisfy` (> length vertsNoDur)
+
+  -- Tooltip hover integration tests
+  it "tooltip at hover offset (mouseX+0.02, mouseY+0.02) starts near that position" $ do
+    let tt = buildTooltip (BlockItem Stone) []
+        tx = 0.3; ty = -0.2
+        verts = renderTooltipVertices tt (tx + 0.02) (ty + 0.02)
+    -- First vertex x should be at or near the offset position
+    length verts `shouldSatisfy` (>= 6)
+    let firstX = verts !! 0
+        firstY = verts !! 1
+    firstX `shouldSatisfy` (\v -> abs (v - (tx + 0.02)) < 0.05)
+    firstY `shouldSatisfy` (\v -> abs (v - (ty + 0.02)) < 0.05)
+
+  it "tooltip for ToolItem with enchantments has more vertices than plain BlockItem" $ do
+    let ttPlain = buildTooltip (BlockItem Dirt) []
+        ttEnch  = buildTooltip (ToolItem Sword Diamond 1561) [Enchantment Sharpness 5]
+        vertsPlain = renderTooltipVertices ttPlain 0.0 0.0
+        vertsEnch  = renderTooltipVertices ttEnch  0.0 0.0
+    length vertsEnch `shouldSatisfy` (> length vertsPlain)
+
+  it "tooltip for FoodItem includes lore (more verts than no-lore item)" $ do
+    let ttNoLore = buildTooltip StickItem []
+        ttLore   = buildTooltip (FoodItem Steak) []
+        vertsNoLore = renderTooltipVertices ttNoLore 0.0 0.0
+        vertsLore   = renderTooltipVertices ttLore   0.0 0.0
+    length vertsLore `shouldSatisfy` (> length vertsNoLore)
+
+  it "tooltip background vertices (first 36 floats = 6 verts) have dark alpha" $ do
+    let tt = buildTooltip (BlockItem Stone) []
+        verts = renderTooltipVertices tt 0.0 0.0
+    -- Background quad = 6 vertices * 6 floats = 36 floats
+    -- Each vertex: x y r g b a; background alpha should be ~0.85
+    length verts `shouldSatisfy` (>= 36)
+    let bgAlpha = verts !! 5  -- alpha of first background vertex
+    bgAlpha `shouldSatisfy` (> 0.8)
+
+  it "tooltip vertices all have valid alpha (0-1 range)" $ do
+    let tt = buildTooltip (ToolItem Pickaxe Iron 250) [Enchantment Efficiency 3]
+        verts = renderTooltipVertices tt (-0.5) (-0.5)
+        -- Every 6th float starting at index 5 is alpha
+        alphas = [verts !! i | i <- [5, 11 .. length verts - 1]]
+    all (\a -> a >= 0 && a <= 1) alphas `shouldBe` True
 
 -- =========================================================================
 -- World structures
@@ -7996,3 +8040,230 @@ cursorItemRenderSpec = describe "Game.ItemDisplay.buildCursorItemVerts" $ do
 
     it "is within reasonable NDC range" $
       cursorIconSize `shouldSatisfy` (< 1.0)
+-- Shift-Click Between Containers and Player Inventory
+-- =========================================================================
+shiftClickContainerSpec :: Spec
+shiftClickContainerSpec = describe "Shift-click container transfers" $ do
+  describe "shiftClickChestToInventory" $ do
+    it "moves item from chest slot to player inventory" $ do
+      let chestInv = setChestSlot emptyChestInventory 5 (Just (ItemStack (BlockItem Stone) 32))
+          playerInv = emptyInventory
+          (chestInv', playerInv') = shiftClickChestToInventory chestInv 5 playerInv
+      getChestSlot chestInv' 5 `shouldBe` Nothing
+      getSlot playerInv' 0 `shouldBe` Just (ItemStack (BlockItem Stone) 32)
+
+    it "no-op when chest slot is empty" $ do
+      let chestInv = emptyChestInventory
+          playerInv = emptyInventory
+          (chestInv', playerInv') = shiftClickChestToInventory chestInv 5 playerInv
+      chestInv' `shouldBe` chestInv
+      playerInv' `shouldBe` playerInv
+
+    it "leaves leftover in chest if player inventory is full" $ do
+      let fullInv = foldl (\inv i -> setSlot inv i (Just (ItemStack (BlockItem Dirt) 64)))
+                          emptyInventory [0..35]
+          chestInv = setChestSlot emptyChestInventory 0 (Just (ItemStack (BlockItem Stone) 10))
+          (chestInv', playerInv') = shiftClickChestToInventory chestInv 0 fullInv
+      getChestSlot chestInv' 0 `shouldBe` Just (ItemStack (BlockItem Stone) 10)
+      playerInv' `shouldBe` fullInv
+
+    it "merges into existing stacks in player inventory" $ do
+      let playerInv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 60))
+          chestInv = setChestSlot emptyChestInventory 0 (Just (ItemStack (BlockItem Stone) 10))
+          (chestInv', playerInv') = shiftClickChestToInventory chestInv 0 playerInv
+      -- 4 should merge into slot 0 (filling to 64), remaining 6 goes to first empty
+      getChestSlot chestInv' 0 `shouldBe` Nothing
+      getSlot playerInv' 0 `shouldBe` Just (ItemStack (BlockItem Stone) 64)
+      getSlot playerInv' 1 `shouldBe` Just (ItemStack (BlockItem Stone) 6)
+
+  describe "shiftClickInventoryToChest" $ do
+    it "moves item from player inventory to first empty chest slot" $ do
+      let playerInv = setSlot emptyInventory 3 (Just (ItemStack (BlockItem Dirt) 20))
+          chestInv = emptyChestInventory
+          (chestInv', playerInv') = shiftClickInventoryToChest chestInv 3 playerInv
+      getChestSlot chestInv' 0 `shouldBe` Just (ItemStack (BlockItem Dirt) 20)
+      getSlot playerInv' 3 `shouldBe` Nothing
+
+    it "skips occupied chest slots" $ do
+      let playerInv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Sand) 5))
+          chestInv = setChestSlot emptyChestInventory 0 (Just (ItemStack (BlockItem Stone) 64))
+          (chestInv', playerInv') = shiftClickInventoryToChest chestInv 0 playerInv
+      getChestSlot chestInv' 0 `shouldBe` Just (ItemStack (BlockItem Stone) 64)
+      getChestSlot chestInv' 1 `shouldBe` Just (ItemStack (BlockItem Sand) 5)
+      getSlot playerInv' 0 `shouldBe` Nothing
+
+    it "no-op when player inventory slot is empty" $ do
+      let playerInv = emptyInventory
+          chestInv = emptyChestInventory
+          (chestInv', playerInv') = shiftClickInventoryToChest chestInv 0 playerInv
+      chestInv' `shouldBe` chestInv
+      playerInv' `shouldBe` playerInv
+
+    it "no-op when chest is full" $ do
+      let playerInv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Sand) 5))
+          fullChest = foldl (\inv i -> setChestSlot inv i (Just (ItemStack (BlockItem Stone) 64)))
+                            emptyChestInventory [0..26]
+          (chestInv', playerInv') = shiftClickInventoryToChest fullChest 0 playerInv
+      chestInv' `shouldBe` fullChest
+      playerInv' `shouldBe` playerInv
+
+  describe "shiftClickDispenserToInventory" $ do
+    it "moves item from dispenser slot to player inventory" $ do
+      let dispInv = setDispenserSlot emptyDispenserInventory 2 (Just (ItemStack (BlockItem Sand) 16))
+          playerInv = emptyInventory
+          (dispInv', playerInv') = shiftClickDispenserToInventory dispInv 2 playerInv
+      getDispenserSlot dispInv' 2 `shouldBe` Nothing
+      getSlot playerInv' 0 `shouldBe` Just (ItemStack (BlockItem Sand) 16)
+
+    it "no-op when dispenser slot is empty" $ do
+      let dispInv = emptyDispenserInventory
+          playerInv = emptyInventory
+          (dispInv', playerInv') = shiftClickDispenserToInventory dispInv 0 playerInv
+      dispInv' `shouldBe` dispInv
+      playerInv' `shouldBe` playerInv
+
+    it "leaves leftover in dispenser if player inventory is full" $ do
+      let fullInv = foldl (\inv i -> setSlot inv i (Just (ItemStack (BlockItem Dirt) 64)))
+                          emptyInventory [0..35]
+          dispInv = setDispenserSlot emptyDispenserInventory 0 (Just (ItemStack (BlockItem Stone) 5))
+          (dispInv', playerInv') = shiftClickDispenserToInventory dispInv 0 fullInv
+      getDispenserSlot dispInv' 0 `shouldBe` Just (ItemStack (BlockItem Stone) 5)
+      playerInv' `shouldBe` fullInv
+
+  describe "shiftClickInventoryToDispenser" $ do
+    it "moves item from player inventory to first empty dispenser slot" $ do
+      let playerInv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 10))
+          dispInv = emptyDispenserInventory
+          (dispInv', playerInv') = shiftClickInventoryToDispenser dispInv 0 playerInv
+      getDispenserSlot dispInv' 0 `shouldBe` Just (ItemStack (BlockItem Stone) 10)
+      getSlot playerInv' 0 `shouldBe` Nothing
+
+    it "skips occupied dispenser slots" $ do
+      let playerInv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Dirt) 3))
+          dispInv = setDispenserSlot emptyDispenserInventory 0 (Just (ItemStack (BlockItem Stone) 64))
+          (dispInv', playerInv') = shiftClickInventoryToDispenser dispInv 0 playerInv
+      getDispenserSlot dispInv' 0 `shouldBe` Just (ItemStack (BlockItem Stone) 64)
+      getDispenserSlot dispInv' 1 `shouldBe` Just (ItemStack (BlockItem Dirt) 3)
+      getSlot playerInv' 0 `shouldBe` Nothing
+
+    it "no-op when dispenser is full" $ do
+      let playerInv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Sand) 5))
+          fullDisp = foldl (\inv i -> setDispenserSlot inv i (Just (ItemStack (BlockItem Stone) 64)))
+                           emptyDispenserInventory [0..8]
+          (dispInv', playerInv') = shiftClickInventoryToDispenser fullDisp 0 playerInv
+      dispInv' `shouldBe` fullDisp
+      playerInv' `shouldBe` playerInv
+
+  describe "shiftClickFurnaceInputToInventory" $ do
+    it "moves furnace input to player inventory" $ do
+      let fs = newFurnaceState { fsInput = Just (ItemStack (BlockItem IronOre) 8) }
+          playerInv = emptyInventory
+          (fs', playerInv') = shiftClickFurnaceInputToInventory fs playerInv
+      fsInput fs' `shouldBe` Nothing
+      getSlot playerInv' 0 `shouldBe` Just (ItemStack (BlockItem IronOre) 8)
+
+    it "no-op when input slot is empty" $ do
+      let fs = newFurnaceState
+          playerInv = emptyInventory
+          (fs', playerInv') = shiftClickFurnaceInputToInventory fs playerInv
+      fs' `shouldBe` fs
+      playerInv' `shouldBe` playerInv
+
+  describe "shiftClickFurnaceFuelToInventory" $ do
+    it "moves furnace fuel to player inventory" $ do
+      let fs = newFurnaceState { fsFuel = Just (ItemStack (MaterialItem Coal) 4) }
+          playerInv = emptyInventory
+          (fs', playerInv') = shiftClickFurnaceFuelToInventory fs playerInv
+      fsFuel fs' `shouldBe` Nothing
+      getSlot playerInv' 0 `shouldBe` Just (ItemStack (MaterialItem Coal) 4)
+
+    it "no-op when fuel slot is empty" $ do
+      let fs = newFurnaceState
+          playerInv = emptyInventory
+          (fs', playerInv') = shiftClickFurnaceFuelToInventory fs playerInv
+      fs' `shouldBe` fs
+      playerInv' `shouldBe` playerInv
+
+  describe "shiftClickInventoryToFurnaceInput" $ do
+    it "moves player inventory item to furnace input" $ do
+      let playerInv = setSlot emptyInventory 2 (Just (ItemStack (BlockItem IronOre) 16))
+          fs = newFurnaceState
+          (fs', playerInv') = shiftClickInventoryToFurnaceInput fs 2 playerInv
+      fsInput fs' `shouldBe` Just (ItemStack (BlockItem IronOre) 16)
+      getSlot playerInv' 2 `shouldBe` Nothing
+
+    it "no-op when furnace input is occupied" $ do
+      let playerInv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Sand) 5))
+          fs = newFurnaceState { fsInput = Just (ItemStack (BlockItem IronOre) 8) }
+          (fs', playerInv') = shiftClickInventoryToFurnaceInput fs 0 playerInv
+      fsInput fs' `shouldBe` Just (ItemStack (BlockItem IronOre) 8)
+      getSlot playerInv' 0 `shouldBe` Just (ItemStack (BlockItem Sand) 5)
+
+    it "no-op when player inventory slot is empty" $ do
+      let playerInv = emptyInventory
+          fs = newFurnaceState
+          (fs', playerInv') = shiftClickInventoryToFurnaceInput fs 0 playerInv
+      fs' `shouldBe` fs
+      playerInv' `shouldBe` playerInv
+
+  describe "shiftClickInventoryToFurnaceFuel" $ do
+    it "moves player inventory item to furnace fuel" $ do
+      let playerInv = setSlot emptyInventory 5 (Just (ItemStack (MaterialItem Coal) 10))
+          fs = newFurnaceState
+          (fs', playerInv') = shiftClickInventoryToFurnaceFuel fs 5 playerInv
+      fsFuel fs' `shouldBe` Just (ItemStack (MaterialItem Coal) 10)
+      getSlot playerInv' 5 `shouldBe` Nothing
+
+    it "no-op when furnace fuel is occupied" $ do
+      let playerInv = setSlot emptyInventory 0 (Just (ItemStack (MaterialItem Coal) 5))
+          fs = newFurnaceState { fsFuel = Just (ItemStack (MaterialItem Coal) 8) }
+          (fs', playerInv') = shiftClickInventoryToFurnaceFuel fs 0 playerInv
+      fsFuel fs' `shouldBe` Just (ItemStack (MaterialItem Coal) 8)
+      getSlot playerInv' 0 `shouldBe` Just (ItemStack (MaterialItem Coal) 5)
+  describe "armorSlotSilhouette" $ do
+    it "returns non-empty pixel list for Helmet" $
+      armorSlotSilhouette Helmet `shouldSatisfy` (not . null)
+
+    it "returns non-empty pixel list for Chestplate" $
+      armorSlotSilhouette Chestplate `shouldSatisfy` (not . null)
+
+    it "returns non-empty pixel list for Leggings" $
+      armorSlotSilhouette Leggings `shouldSatisfy` (not . null)
+
+    it "returns non-empty pixel list for Boots" $
+      armorSlotSilhouette Boots `shouldSatisfy` (not . null)
+
+    it "helmet silhouette has same shape as helmet mini-icon" $ do
+      let silhouette = map (\(r, c, _) -> (r, c)) (armorSlotSilhouette Helmet)
+          icon = map (\(r, c, _) -> (r, c)) (itemMiniIcon (ArmorItem Helmet IronArmor 100))
+      silhouette `shouldBe` icon
+
+    it "chestplate silhouette has same shape as chestplate mini-icon" $ do
+      let silhouette = map (\(r, c, _) -> (r, c)) (armorSlotSilhouette Chestplate)
+          icon = map (\(r, c, _) -> (r, c)) (itemMiniIcon (ArmorItem Chestplate IronArmor 100))
+      silhouette `shouldBe` icon
+
+    it "leggings silhouette has same shape as leggings mini-icon" $ do
+      let silhouette = map (\(r, c, _) -> (r, c)) (armorSlotSilhouette Leggings)
+          icon = map (\(r, c, _) -> (r, c)) (itemMiniIcon (ArmorItem Leggings IronArmor 100))
+      silhouette `shouldBe` icon
+
+    it "boots silhouette has same shape as boots mini-icon" $ do
+      let silhouette = map (\(r, c, _) -> (r, c)) (armorSlotSilhouette Boots)
+          icon = map (\(r, c, _) -> (r, c)) (itemMiniIcon (ArmorItem Boots IronArmor 100))
+      silhouette `shouldBe` icon
+
+    it "silhouette uses gray color with 0.5 alpha" $ do
+      let pixels = armorSlotSilhouette Helmet
+          allGray = all (\(_, _, (r, g, b, a)) -> r == 0.35 && g == 0.35 && b == 0.35 && a == 0.5) pixels
+      allGray `shouldBe` True
+
+    it "silhouette colors differ from equipped item colors" $ do
+      let silColors = map (\(_, _, c) -> c) (armorSlotSilhouette Helmet)
+          itemColors = map (\(_, _, c) -> c) (itemMiniIcon (ArmorItem Helmet DiamondArmor 100))
+      silColors `shouldSatisfy` (/= itemColors)
+
+    it "all four armor slot silhouettes have valid pixel coordinates" $ do
+      let allPixels = concatMap armorSlotSilhouette [Helmet, Chestplate, Leggings, Boots]
+          validCoords = all (\(r, c, _) -> r >= 0 && r <= 2 && c >= 0 && c <= 2) allPixels
+      validCoords `shouldBe` True

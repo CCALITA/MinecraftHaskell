@@ -3,6 +3,7 @@ module Game.ItemDisplay
   , itemMiniIcon
   , buildCursorItemVerts
   , cursorIconSize
+  , armorSlotSilhouette
   ) where
 
 import Game.Item
@@ -333,3 +334,18 @@ buildCursorItemVerts (Just (ItemStack item cnt)) mx my =
         then renderText (x + sw - 0.025) (y + sh - 0.02) 0.6 (1,1,1,1) (show cnt)
         else []
   in iconVerts ++ countText
+-- | Gray silhouette for an empty armor slot (3x3 grid, same format as itemMiniIcon).
+--   Shows the shape of the expected armor piece in a muted gray color.
+armorSlotSilhouette :: ArmorSlot -> [(Int, Int, (Float, Float, Float, Float))]
+armorSlotSilhouette Helmet =
+  [(0,0,g),(0,1,g),(0,2,g), (1,0,g),(1,2,g)]
+  where g = (0.35, 0.35, 0.35, 0.5)
+armorSlotSilhouette Chestplate =
+  [(0,0,g),(0,1,g),(0,2,g), (1,0,g),(1,1,g),(1,2,g), (2,0,g),(2,2,g)]
+  where g = (0.35, 0.35, 0.35, 0.5)
+armorSlotSilhouette Leggings =
+  [(0,0,g),(0,1,g),(0,2,g), (1,0,g),(1,2,g), (2,0,g),(2,2,g)]
+  where g = (0.35, 0.35, 0.35, 0.5)
+armorSlotSilhouette Boots =
+  [(1,0,g),(1,2,g), (2,0,g),(2,2,g)]
+  where g = (0.35, 0.35, 0.35, 0.5)
