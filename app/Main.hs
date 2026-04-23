@@ -1504,12 +1504,27 @@ main = do
           _ -> case key of  -- InventoryOpen, CraftingOpen, ChestOpen, or FurnaceOpen
             GLFW.Key'Escape -> closeUIScreen
             GLFW.Key'E      -> closeUIScreen
+            GLFW.Key'1 -> hotbarKeyAssign 0
+            GLFW.Key'2 -> hotbarKeyAssign 1
+            GLFW.Key'3 -> hotbarKeyAssign 2
+            GLFW.Key'4 -> hotbarKeyAssign 3
+            GLFW.Key'5 -> hotbarKeyAssign 4
+            GLFW.Key'6 -> hotbarKeyAssign 5
+            GLFW.Key'7 -> hotbarKeyAssign 6
+            GLFW.Key'8 -> hotbarKeyAssign 7
+            GLFW.Key'9 -> hotbarKeyAssign 8
             GLFW.Key'R      -> do
               curMode <- readIORef gameModeRef
               when (curMode == InventoryOpen) $
                 modifyIORef' inventoryRef sortInventory
             _ -> pure ()
             where
+              hotbarKeyAssign slotIdx = do
+                inv <- readIORef inventoryRef
+                cursor <- readIORef cursorItemRef
+                let (inv', cursor') = hotbarNumberKey inv cursor slotIdx
+                writeIORef inventoryRef inv'
+                writeIORef cursorItemRef cursor'
               closeUIScreen = do
                 curMode <- readIORef gameModeRef
                 -- Return cursor item to inventory
