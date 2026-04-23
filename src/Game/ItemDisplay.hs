@@ -1,6 +1,8 @@
 module Game.ItemDisplay
   ( itemColor
   , itemMiniIcon
+  , durabilityBarColor
+  , durabilityFraction
   ) where
 
 import Game.Item
@@ -299,3 +301,32 @@ itemMiniIcon (BlockItem bt) = blockMiniIcon bt
     blockMiniIcon _ = fill (itemColor (BlockItem bt))
 itemMiniIcon item = fillSolid (itemColor item)
   where fillSolid c = [(r,col,c) | r <- [0..2], col <- [0..2]]
+
+-- | Compute the durability fraction (0.0 = broken, 1.0 = full) for an item.
+--   Returns Nothing if the item has no durability or is at full durability.
+durabilityFraction :: Item -> Maybe Float
+durabilityFraction item = case itemMaxDurability item of
+  Nothing  -> Nothing
+  Just maxD ->
+    let cur = itemCurrentDurability item
+        frac = fromIntegral cur / fromIntegral maxD
+    in if cur >= maxD
+       then Nothing  -- full durability, no bar needed
+       else Just (max 0 (min 1 frac))
+
+-- | Get current durability from an item (the Int field in each durability-bearing constructor).
+itemCurrentDurability :: Item -> Int
+itemCurrentDurability (ToolItem _ _ dur) = dur
+itemCurrentDurability (ArmorItem _ _ dur) = dur
+itemCurrentDurability (ShearsItem dur) = dur
+itemCurrentDurability (FlintAndSteelItem dur) = dur
+itemCurrentDurability (FishingRodItem dur) = dur
+itemCurrentDurability _ = 0
+
+-- | Choose durability bar color based on remaining fraction.
+--   Green (>50%), yellow (25%-50%), red (<25%).
+durabilityBarColor :: Float -> (Float, Float, Float, Float)
+durabilityBarColor frac
+  | frac > 0.5  = (0.1, 0.85, 0.1, 1.0)   -- green
+  | frac > 0.25 = (0.9, 0.85, 0.1, 1.0)    -- yellow
+  | otherwise    = (0.85, 0.1, 0.1, 1.0)    -- red

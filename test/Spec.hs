@@ -53,6 +53,7 @@ import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLigh
 import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, isDawn, isDusk, getTimeOfDay, TimeOfDay(..))
 import Game.State (GameState(..), GameMode(..), PlayMode(..), newGameState)
 import Game.Creative (creativePalette, creativePaletteSize, creativeClickSlot, creativePickFromPalette, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteCols, paletteSlotsPerPage, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
+import Game.ItemDisplay (durabilityBarColor, durabilityFraction)
 import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
 
 import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
@@ -149,6 +150,7 @@ main = hspec $ do
   hotbarNumberKeySpec
   inventoryComprehensiveSpec
   creativeInventorySpec
+  durabilityBarSpec
 
 -- =========================================================================
 -- Block
@@ -7483,3 +7485,162 @@ creativeInventorySpec = describe "Game.Creative" $ do
       writeIORef (gsPlayMode gs) Survival
       pm <- readIORef (gsPlayMode gs)
       pm `shouldBe` Survival
+
+-- =========================================================================
+-- Durability Bar
+-- =========================================================================
+durabilityBarSpec :: Spec
+durabilityBarSpec = describe "Durability bar rendering" $ do
+
+  -- ---- itemMaxDurability ----
+  describe "itemMaxDurability" $ do
+    it "returns max durability for wood pickaxe" $
+      itemMaxDurability (ToolItem Pickaxe Wood 30) `shouldBe` Just 59
+
+    it "returns max durability for diamond sword" $
+      itemMaxDurability (ToolItem Sword Diamond 1000) `shouldBe` Just 1561
+
+    it "returns max durability for iron axe" $
+      itemMaxDurability (ToolItem Axe Iron 100) `shouldBe` Just 250
+
+    it "returns max durability for stone shovel" $
+      itemMaxDurability (ToolItem Shovel StoneTier 50) `shouldBe` Just 131
+
+    it "returns max durability for shears" $
+      itemMaxDurability (ShearsItem 100) `shouldBe` Just 238
+
+    it "returns max durability for flint and steel" $
+      itemMaxDurability (FlintAndSteelItem 32) `shouldBe` Just 64
+
+    it "returns max durability for fishing rod" $
+      itemMaxDurability (FishingRodItem 10) `shouldBe` Just 64
+
+    it "returns max durability for leather helmet" $
+      itemMaxDurability (ArmorItem Helmet LeatherArmor 30) `shouldBe` Just 55
+
+    it "returns max durability for iron chestplate" $
+      itemMaxDurability (ArmorItem Chestplate IronArmor 200) `shouldBe` Just 240
+
+    it "returns max durability for diamond leggings" $
+      itemMaxDurability (ArmorItem Leggings DiamondArmor 400) `shouldBe` Just 495
+
+    it "returns max durability for gold boots" $
+      itemMaxDurability (ArmorItem Boots GoldArmor 50) `shouldBe` Just 91
+
+    it "returns Nothing for block item" $
+      itemMaxDurability (BlockItem Stone) `shouldBe` Nothing
+
+    it "returns Nothing for food item" $
+      itemMaxDurability (FoodItem Apple) `shouldBe` Nothing
+
+    it "returns Nothing for material item" $
+      itemMaxDurability (MaterialItem Coal) `shouldBe` Nothing
+
+    it "returns Nothing for stick" $
+      itemMaxDurability StickItem `shouldBe` Nothing
+
+    it "returns Nothing for compass" $
+      itemMaxDurability CompassItem `shouldBe` Nothing
+
+  -- ---- durabilityFraction ----
+  describe "durabilityFraction" $ do
+    it "returns Nothing for items without durability" $
+      durabilityFraction (BlockItem Dirt) `shouldBe` Nothing
+
+    it "returns Nothing for full durability tool" $
+      durabilityFraction (ToolItem Pickaxe Wood 59) `shouldBe` Nothing
+
+    it "returns Nothing for full durability shears" $
+      durabilityFraction (ShearsItem 238) `shouldBe` Nothing
+
+    it "returns ~0.5 for half durability tool" $ do
+      let Just frac = durabilityFraction (ToolItem Pickaxe Diamond 780)
+      frac `shouldSatisfy` (\f -> f > 0.49 && f < 0.51)
+
+    it "returns fraction for partially used shears" $ do
+      let Just frac = durabilityFraction (ShearsItem 119)
+      frac `shouldSatisfy` (\f -> f > 0.49 && f < 0.51)
+
+    it "returns 0 for zero durability" $ do
+      let Just frac = durabilityFraction (ToolItem Sword Iron 0)
+      frac `shouldBe` 0.0
+
+    it "returns low fraction for nearly broken armor" $ do
+      let Just frac = durabilityFraction (ArmorItem Chestplate DiamondArmor 1)
+      frac `shouldSatisfy` (\f -> f > 0.0 && f < 0.01)
+
+    it "returns Nothing for full durability armor" $
+      durabilityFraction (ArmorItem Helmet IronArmor 165) `shouldBe` Nothing
+
+  -- ---- durabilityBarColor thresholds ----
+  describe "durabilityBarColor" $ do
+    it "returns green for fraction > 0.5" $ do
+      let (r, g, _, _) = durabilityBarColor 0.75
+      g `shouldSatisfy` (> r)
+
+    it "returns green at fraction 0.51" $ do
+      let (r, g, _, _) = durabilityBarColor 0.51
+      g `shouldSatisfy` (> r)
+
+    it "returns yellow at fraction 0.50" $ do
+      let (r, g, _, _) = durabilityBarColor 0.50
+      -- yellow: r ~= 0.9, g ~= 0.85
+      r `shouldSatisfy` (> 0.5)
+      g `shouldSatisfy` (> 0.5)
+
+    it "returns yellow at fraction 0.26" $ do
+      let (r, g, _, _) = durabilityBarColor 0.26
+      r `shouldSatisfy` (> 0.5)
+      g `shouldSatisfy` (> 0.5)
+
+    it "returns red at fraction 0.25" $ do
+      let (r, g, _, _) = durabilityBarColor 0.25
+      r `shouldSatisfy` (> 0.5)
+      g `shouldSatisfy` (< 0.5)
+
+    it "returns red at fraction 0.1" $ do
+      let (r, g, _, _) = durabilityBarColor 0.1
+      r `shouldSatisfy` (> 0.5)
+      g `shouldSatisfy` (< 0.5)
+
+    it "returns red at fraction 0.0" $ do
+      let (r, g, _, _) = durabilityBarColor 0.0
+      r `shouldSatisfy` (> 0.5)
+      g `shouldSatisfy` (< 0.5)
+
+    it "green color has alpha 1.0" $ do
+      let (_, _, _, a) = durabilityBarColor 0.75
+      a `shouldBe` 1.0
+
+    it "yellow color has alpha 1.0" $ do
+      let (_, _, _, a) = durabilityBarColor 0.35
+      a `shouldBe` 1.0
+
+    it "red color has alpha 1.0" $ do
+      let (_, _, _, a) = durabilityBarColor 0.1
+      a `shouldBe` 1.0
+
+  -- ---- integration: durability bar color from item ----
+  describe "durability bar color from item" $ do
+    it "nearly broken iron pickaxe gets red" $ do
+      let Just frac = durabilityFraction (ToolItem Pickaxe Iron 10)
+          (r, g, _, _) = durabilityBarColor frac
+      r `shouldSatisfy` (> 0.5)
+      g `shouldSatisfy` (< 0.5)
+
+    it "half-used diamond sword gets green" $ do
+      let Just frac = durabilityFraction (ToolItem Sword Diamond 1000)
+          (r, g, _, _) = durabilityBarColor frac
+      g `shouldSatisfy` (> r)
+
+    it "quarter-used shears gets yellow" $ do
+      let Just frac = durabilityFraction (ShearsItem 80)
+          (r, g, _, _) = durabilityBarColor frac
+      r `shouldSatisfy` (> 0.5)
+      g `shouldSatisfy` (> 0.5)
+
+    it "low durability armor gets red" $ do
+      let Just frac = durabilityFraction (ArmorItem Boots IronArmor 20)
+          (r, g, _, _) = durabilityBarColor frac
+      r `shouldSatisfy` (> 0.5)
+      g `shouldSatisfy` (< 0.5)

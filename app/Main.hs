@@ -45,7 +45,7 @@ import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), ne
 import Game.Creative (creativeClickSlot, creativePickFromPalette, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Game.Achievement (AchievementState, checkAchievement, unlockAchievement, achievementName, AchievementTrigger(..))
 import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), ChatMessage(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
-import Game.ItemDisplay (itemColor, itemMiniIcon)
+import Game.ItemDisplay (itemColor, itemMiniIcon, durabilityBarColor, durabilityFraction)
 import Engine.Sound
 import Game.Particle
 import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpProgress)
@@ -3211,6 +3211,21 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
       [x0, y0, r, g, b, a,  x1, y0, r, g, b, a,  x1, y1, r, g, b, a
       ,x0, y0, r, g, b, a,  x1, y1, r, g, b, a,  x0, y1, r, g, b, a]
 
+    -- Durability bar: colored bar at bottom of a slot for items with durability.
+    -- x0'/y0' = slot content origin, sw/sh = slot content size
+    durabilityBar :: Float -> Float -> Float -> Float -> Item -> [Float]
+    durabilityBar dbx0 dby0 dbsw dbsh dbitem =
+      case durabilityFraction dbitem of
+        Nothing   -> []
+        Just frac ->
+          let barH = dbsh * 0.08
+              barY = dby0 + dbsh - barH
+              fillW = dbsw * frac
+              bgColor  = (0.0, 0.0, 0.0, 0.8)
+              barColor = durabilityBarColor frac
+          in quad dbx0 barY (dbx0 + dbsw) (dby0 + dbsh) bgColor
+             ++ quad dbx0 barY (dbx0 + fillW) (dby0 + dbsh) barColor
+
     -- Dark outline (1px larger, semi-transparent black) behind white crosshair
     co = 0.003 :: Float  -- outline extra size
     outline = (0.0, 0.0, 0.0, 0.5 :: Float)
@@ -3268,7 +3283,7 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
               countText = if cnt > 1
                 then renderText (x0 + sw - 0.025) (y0 + sh - 0.02) 0.6 (1,1,1,1) (show cnt)
                 else []
-          in iconVerts ++ countText
+          in iconVerts ++ countText ++ durabilityBar x0 y0 sw sh item
 
     -- Highlight selected slot
     sel = invSelected inv
@@ -3625,9 +3640,11 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
             Just (ItemStack item _) ->
               let colors = itemMiniIcon item
                   pixW = sw / 3; pixH = sh / 3
-              in slotBg ++ concatMap (\(r, c, clr) ->
+                  iconVerts = concatMap (\(r, c, clr) ->
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+                  durBar = durabilityBar x y sw sh item
+              in slotBg ++ iconVerts ++ durBar
 
         -- 2x2 crafting grid positions (above inventory)
         craft2x2X0 = -0.03 :: Float
@@ -3644,9 +3661,11 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
             Just item ->
               let colors = itemMiniIcon item
                   pixW = sw / 3; pixH = sh / 3
-              in slotBg ++ concatMap (\(r, c, clr) ->
+                  iconVerts = concatMap (\(r, c, clr) ->
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+                  durBar = durabilityBar x y sw sh item
+              in slotBg ++ iconVerts ++ durBar
 
         renderInvCraftOutput =
           let x = 0.35; y = -0.75; sz = 0.10
@@ -3697,9 +3716,11 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
             Just item ->
               let colors = itemMiniIcon item
                   pixW = sw / 3; pixH = sh / 3
-              in slotBg ++ concatMap (\(r, c, clr) ->
+                  iconVerts = concatMap (\(r, c, clr) ->
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+                  durBar = durabilityBar x y sw sh item
+              in slotBg ++ iconVerts ++ durBar
 
         renderCraftOutput =
           let x = 0.15; y = -0.27; sw = 0.12; sh = 0.12
@@ -3731,9 +3752,11 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
             Just (ItemStack item _) ->
               let colors = itemMiniIcon item
                   pixW = sw / 3; pixH = sh / 3
-              in slotBg ++ concatMap (\(r, c, clr) ->
+                  iconVerts = concatMap (\(r, c, clr) ->
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+                  durBar = durabilityBar x y sw sh item
+              in slotBg ++ iconVerts ++ durBar
 
     -- Chest screen: 27 chest slots (3 rows of 9) + 36 player inventory slots below
     chestScreenVerts =
@@ -3769,9 +3792,11 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
               Just (ItemStack item _) ->
                 let colors = itemMiniIcon item
                     pixW = sw / 3; pixH = sh / 3
-                in slotBg ++ concatMap (\(r, c, clr) ->
+                    iconVerts = concatMap (\(r, c, clr) ->
                      quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                           (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+                    durBar = durabilityBar x y sw sh item
+                in slotBg ++ iconVerts ++ durBar
 
         renderChestInvSlot idx =
           let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
@@ -3786,9 +3811,11 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
             Just (ItemStack item _) ->
               let colors = itemMiniIcon item
                   pixW = sw / 3; pixH = sh / 3
-              in slotBg ++ concatMap (\(r, c, clr) ->
+                  iconVerts = concatMap (\(r, c, clr) ->
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+                  durBar = durabilityBar x y sw sh item
+              in slotBg ++ iconVerts ++ durBar
 
     -- Furnace screen: input slot, fuel slot, output slot, progress arrows, inventory below
     furnaceScreenVerts =
@@ -3826,9 +3853,11 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
             Just (ItemStack item _cnt) ->
               let colors = itemMiniIcon item
                   pixW = furnSlotSz / 3; pixH = furnSlotSz / 3
-              in slotBg ++ concatMap (\(r, c, clr) ->
+                  iconVerts = concatMap (\(r, c, clr) ->
                    quad (sx + fromIntegral c * pixW) (sy + fromIntegral r * pixH)
                         (sx + fromIntegral (c+1) * pixW) (sy + fromIntegral (r+1) * pixH) clr) colors
+                  durBar = durabilityBar sx sy furnSlotSz furnSlotSz item
+              in slotBg ++ iconVerts ++ durBar
 
         renderFurnaceOutputSlot =
           let sz = 0.13
@@ -3894,9 +3923,11 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
             Just (ItemStack item _) ->
               let colors = itemMiniIcon item
                   pixW = sw / 3; pixH = sh / 3
-              in slotBg ++ concatMap (\(r, c, clr) ->
+                  iconVerts = concatMap (\(r, c, clr) ->
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+                  durBar = durabilityBar x y sw sh item
+              in slotBg ++ iconVerts ++ durBar
 
     -- Dispenser screen: 3x3 grid of 9 slots + player inventory below
     dispenserScreenVerts =
@@ -3933,9 +3964,11 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
               Just (ItemStack item _) ->
                 let colors = itemMiniIcon item
                     pixW = sw / 3; pixH = sh / 3
-                in slotBg ++ concatMap (\(r, c, clr) ->
+                    iconVerts = concatMap (\(r, c, clr) ->
                      quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                           (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+                    durBar = durabilityBar x y sw sh item
+                in slotBg ++ iconVerts ++ durBar
 
         renderDispInvSlot idx =
           let row = if idx < 9 then 0 else 1 + (idx - 9) `div` 9
@@ -3950,9 +3983,11 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
             Just (ItemStack item _) ->
               let colors = itemMiniIcon item
                   pixW = sw / 3; pixH = sh / 3
-              in slotBg ++ concatMap (\(r, c, clr) ->
+                  iconVerts = concatMap (\(r, c, clr) ->
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+                  durBar = durabilityBar x y sw sh item
+              in slotBg ++ iconVerts ++ durBar
 
     -- Enchanting screen
     enchantScreenVerts =
@@ -4002,9 +4037,11 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
             Just (ItemStack item _) ->
               let colors = itemMiniIcon item
                   pixW = sw / 3; pixH = sh / 3
-              in slotBg ++ concatMap (\(r, c, clr) ->
+                  iconVerts = concatMap (\(r, c, clr) ->
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+                  durBar = durabilityBar x y sw sh item
+              in slotBg ++ iconVerts ++ durBar
 
     -- Villager trading screen
     villagerTradeScreenVerts =
@@ -4052,9 +4089,11 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
             Just (ItemStack item _) ->
               let colors = itemMiniIcon item
                   pixW = sw / 3; pixH = sh / 3
-              in slotBg ++ concatMap (\(r, c, clr) ->
+                  iconVerts = concatMap (\(r, c, clr) ->
                    quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                         (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+                  durBar = durabilityBar x y sw sh item
+              in slotBg ++ iconVerts ++ durBar
 
     -- Cursor item (follows mouse position — simplified to center for now)
     cursorVerts = case cursorItem of

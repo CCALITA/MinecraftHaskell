@@ -27,6 +27,7 @@ module Game.Item
   , mobDrops
   , potionName
   , potionColor
+  , itemMaxDurability
   , lookupItemByName
   ) where
 
@@ -128,6 +129,33 @@ toolMiningSpeed _ mat = tiMiningSpeed (toolInfo mat)
 -- | Harvest level for a material
 toolHarvestLevel :: ToolMaterial -> Int
 toolHarvestLevel = tiHarvestLevel . toolInfo
+
+-- | Maximum durability for items that have durability.
+--   Returns Nothing for items without durability tracking.
+itemMaxDurability :: Item -> Maybe Int
+itemMaxDurability (ToolItem _ mat _) = Just (tiMaxDurability (toolInfo mat))
+itemMaxDurability (ArmorItem slot mat _) = Just (armorMaxDur slot mat)
+  where
+    armorMaxDur Helmet     LeatherArmor  = 55
+    armorMaxDur Helmet     IronArmor     = 165
+    armorMaxDur Helmet     GoldArmor     = 77
+    armorMaxDur Helmet     DiamondArmor  = 363
+    armorMaxDur Chestplate LeatherArmor  = 80
+    armorMaxDur Chestplate IronArmor     = 240
+    armorMaxDur Chestplate GoldArmor     = 112
+    armorMaxDur Chestplate DiamondArmor  = 528
+    armorMaxDur Leggings   LeatherArmor  = 75
+    armorMaxDur Leggings   IronArmor     = 225
+    armorMaxDur Leggings   GoldArmor     = 105
+    armorMaxDur Leggings   DiamondArmor  = 495
+    armorMaxDur Boots      LeatherArmor  = 65
+    armorMaxDur Boots      IronArmor     = 195
+    armorMaxDur Boots      GoldArmor     = 91
+    armorMaxDur Boots      DiamondArmor  = 429
+itemMaxDurability (ShearsItem _) = Just 238
+itemMaxDurability (FlintAndSteelItem _) = Just 64
+itemMaxDurability (FishingRodItem _) = Just 64
+itemMaxDurability _ = Nothing
 
 -- | Convert a block type to a block item
 itemFromBlock :: BlockType -> Item
