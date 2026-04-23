@@ -66,6 +66,7 @@ import Data.Binary (encode, decode)
 import Data.IORef (newIORef, readIORef, writeIORef, modifyIORef')
 import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.List (nub, isPrefixOf, isInfixOf)
+import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted, glowColor, glowThickness)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity)
@@ -74,6 +75,7 @@ import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Unboxed as UV
 import Control.Concurrent.STM (atomically, readTVar)
 import qualified Data.HashMap.Strict as HM
+import qualified Data.Map.Strict as Map
 import System.Directory (removeDirectoryRecursive, doesFileExist)
 import System.IO.Temp (withSystemTempDirectory)
 import Data.Function ((&))
