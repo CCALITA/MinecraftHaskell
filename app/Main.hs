@@ -45,6 +45,8 @@ import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), ne
 import Game.Creative (creativeClickSlot, creativePickFromPalette, creativeConsumeItem, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Game.Achievement (AchievementState, checkAchievement, unlockAchievement, achievementName, AchievementTrigger(..))
 import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), ChatMessage(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
+import Game.ItemDisplay (itemColor, itemMiniIcon)
+import UI.Tooltip (buildTooltip, renderTooltipVertices)
 import Game.ItemDisplay (itemColor, itemMiniIcon, armorSlotSilhouette)
 import Engine.Sound
 import Game.Particle
@@ -3348,9 +3350,9 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
     Paused   -> pauseVerts
     Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ achToastVerts ++ chatMessageVerts
     ChatInput -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ healthVerts ++ hungerVerts ++ chatInputVerts ++ chatMessageVerts
-    InventoryOpen -> invScreenVerts ++ cursorVerts
-    CraftingOpen  -> craftScreenVerts ++ cursorVerts
-    ChestOpen     -> chestScreenVerts ++ cursorVerts
+    InventoryOpen -> invScreenVerts ++ cursorVerts ++ invTooltipVerts
+    CraftingOpen  -> craftScreenVerts ++ cursorVerts ++ craftTooltipVerts
+    ChestOpen     -> chestScreenVerts ++ cursorVerts ++ chestTooltipVerts
     FurnaceOpen   -> furnaceScreenVerts ++ cursorVerts
     DispenserOpen -> dispenserScreenVerts ++ cursorVerts
     EnchantingOpen -> enchantScreenVerts ++ cursorVerts
@@ -4241,6 +4243,45 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
         in concatMap (\(r, c, clr) ->
              quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
                   (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) colors
+
+    -- Tooltip: render item info when hovering over a slot (no cursor item held)
+    tooltipOffset :: Float
+    tooltipOffset = 0.02
+
+    mkTooltipVerts :: Maybe Item -> [Float]
+    mkTooltipVerts mItem = case (cursorItem, mItem) of
+      (Nothing, Just item) ->
+        let info = buildTooltip item []
+        in renderTooltipVertices info (mouseX + tooltipOffset) (mouseY + tooltipOffset)
+      _ -> []
+
+    -- InventoryOpen tooltip: detect hovered inventory slot
+    invTooltipVerts :: [Float]
+    invTooltipVerts =
+      let mSlot = hitInventorySlot mouseX mouseY
+          mItem = mSlot >>= \idx -> fmap isItem (getSlot inv idx)
+      in mkTooltipVerts mItem
+
+    -- CraftingOpen tooltip: detect hovered crafting or inventory slot
+    craftTooltipVerts :: [Float]
+    craftTooltipVerts =
+      let mCraft = hitCraftingSlot mouseX mouseY
+          mItem = case mCraft of
+            Just (CraftGrid row col)  -> getCraftingSlot craftGrid row col
+            Just CraftOutput          -> fmap fst (craftPreview craftGrid)
+            Just (CraftInvSlot idx)   -> fmap isItem (getSlot inv idx)
+            Nothing                   -> Nothing
+      in mkTooltipVerts mItem
+
+    -- ChestOpen tooltip: detect hovered chest or inventory slot
+    chestTooltipVerts :: [Float]
+    chestTooltipVerts =
+      let mChest = hitChestSlot mouseX mouseY
+          mItem = case mChest of
+            Just (ChestSlot idx)    -> mChestInv >>= \ci -> fmap isItem (getChestSlot ci idx)
+            Just (ChestInvSlot idx) -> fmap isItem (getSlot inv idx)
+            Nothing                 -> Nothing
+      in mkTooltipVerts mItem
 
     -- Main menu screen
     menuVerts =

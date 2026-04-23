@@ -3191,6 +3191,48 @@ tooltipSpec = describe "UI.Tooltip" $ do
         vertsDur   = renderTooltipVertices ttDur   0.0 0.0
     length vertsDur `shouldSatisfy` (> length vertsNoDur)
 
+  -- Tooltip hover integration tests
+  it "tooltip at hover offset (mouseX+0.02, mouseY+0.02) starts near that position" $ do
+    let tt = buildTooltip (BlockItem Stone) []
+        tx = 0.3; ty = -0.2
+        verts = renderTooltipVertices tt (tx + 0.02) (ty + 0.02)
+    -- First vertex x should be at or near the offset position
+    length verts `shouldSatisfy` (>= 6)
+    let firstX = verts !! 0
+        firstY = verts !! 1
+    firstX `shouldSatisfy` (\v -> abs (v - (tx + 0.02)) < 0.05)
+    firstY `shouldSatisfy` (\v -> abs (v - (ty + 0.02)) < 0.05)
+
+  it "tooltip for ToolItem with enchantments has more vertices than plain BlockItem" $ do
+    let ttPlain = buildTooltip (BlockItem Dirt) []
+        ttEnch  = buildTooltip (ToolItem Sword Diamond 1561) [Enchantment Sharpness 5]
+        vertsPlain = renderTooltipVertices ttPlain 0.0 0.0
+        vertsEnch  = renderTooltipVertices ttEnch  0.0 0.0
+    length vertsEnch `shouldSatisfy` (> length vertsPlain)
+
+  it "tooltip for FoodItem includes lore (more verts than no-lore item)" $ do
+    let ttNoLore = buildTooltip StickItem []
+        ttLore   = buildTooltip (FoodItem Steak) []
+        vertsNoLore = renderTooltipVertices ttNoLore 0.0 0.0
+        vertsLore   = renderTooltipVertices ttLore   0.0 0.0
+    length vertsLore `shouldSatisfy` (> length vertsNoLore)
+
+  it "tooltip background vertices (first 36 floats = 6 verts) have dark alpha" $ do
+    let tt = buildTooltip (BlockItem Stone) []
+        verts = renderTooltipVertices tt 0.0 0.0
+    -- Background quad = 6 vertices * 6 floats = 36 floats
+    -- Each vertex: x y r g b a; background alpha should be ~0.85
+    length verts `shouldSatisfy` (>= 36)
+    let bgAlpha = verts !! 5  -- alpha of first background vertex
+    bgAlpha `shouldSatisfy` (> 0.8)
+
+  it "tooltip vertices all have valid alpha (0-1 range)" $ do
+    let tt = buildTooltip (ToolItem Pickaxe Iron 250) [Enchantment Efficiency 3]
+        verts = renderTooltipVertices tt (-0.5) (-0.5)
+        -- Every 6th float starting at index 5 is alpha
+        alphas = [verts !! i | i <- [5, 11 .. length verts - 1]]
+    all (\a -> a >= 0 && a <= 1) alphas `shouldBe` True
+
 -- =========================================================================
 -- World structures
 -- =========================================================================
