@@ -297,20 +297,39 @@ tileFull tileIdx lx ly = case tileIdx of
     tntTop _ _ = (180, 180, 180, 255)
     tntBottom _ _ = (180, 180, 180, 255)
 
-    -- Chest: brown wood box
+    -- Chest: brown wooden body with horizontal plank grain, gold latch, dark border
     chestPattern x y =
       let border = x == 0 || y == 0 || x == 15 || y == 15
-          latch = x >= 6 && x <= 9 && y >= 6 && y <= 8
-      in if latch then (200, 180, 50, 255)  -- gold latch
-         else if border then (100, 65, 30, 255) -- dark border
-         else (140, 95, 45, 255)  -- wood
+          topBorder = y <= 1
+          bottomBorder = y >= 14
+          latch = x >= 6 && x <= 9 && y >= 7 && y <= 8
+          -- Horizontal plank grain
+          n = pixHash x y 1400 `mod` 15
+          grain = pixHash x (y `div` 3) 1401 `mod` 10
+          plankLine = y `mod` 4 == 0
+          baseR = if plankLine then fromIntegral (130 + n) else fromIntegral (145 + n)
+          baseG = if plankLine then fromIntegral (85 + n) else fromIntegral (95 + n)
+          baseB = if plankLine then fromIntegral (35 + grain) else fromIntegral (45 + grain)
+      in if latch then (220, 190, 50, 255)
+         else if topBorder || bottomBorder then (60, 40, 20, 255)
+         else if border then (80, 55, 25, 255)
+         else (baseR, baseG, baseB, 255)
 
-    -- Furnace side: stone with dark opening
+    -- Furnace side: stone-gray casing with dark furnace opening in center
     furnaceSide x y =
       let opening = x >= 4 && x <= 11 && y >= 5 && y <= 12
-      in if opening then (40, 40, 40, 255) else stonePattern x y
+          n = pixHash x y 1300 `mod` 12
+          -- Stone-gray casing base (130,130,130) with noise
+          casingV = fromIntegral (124 + n) :: Word8
+      in if opening then (40, 40, 40, 255)
+         else (casingV, casingV, casingV, 255)
 
-    furnaceTop = stonePattern
+    -- Furnace top: gray stone top with subtle grid pattern
+    furnaceTop x y =
+      let n = pixHash x y 1310 `mod` 10
+          gridLine = x `mod` 4 == 0 || y `mod` 4 == 0
+          baseV = if gridLine then fromIntegral (118 + n) else fromIntegral (128 + n)
+      in (baseV, baseV, baseV, 255)
 
     -- Stone brick: cut stone blocks with mortar lines
     stoneBrickPattern x y =
@@ -319,10 +338,24 @@ tileFull tileIdx lx ly = case tileIdx of
           v = if isMortar then 100 else fromIntegral (130 + n)
       in (v, v, v, 255)
 
-    -- Crafting table top: wooden grid pattern
+    -- Crafting table top: brown wooden 4x4 grid with per-cell tone and tool marks
     craftingTop x y =
-      let grid = x `mod` 8 == 0 || y `mod` 8 == 0
-      in if grid then (80, 55, 25, 255) else planksPattern x y
+      let gridLine = x `mod` 4 == 0 || y `mod` 4 == 0
+          cellX = x `div` 4
+          cellY = y `div` 4
+          cellHash = pixHash cellX cellY 1500 `mod` 20
+          -- Per-cell tone variation on tan/brown base
+          baseR = fromIntegral (160 + cellHash) :: Word8
+          baseG = fromIntegral (120 + cellHash) :: Word8
+          baseB = fromIntegral (70 + cellHash `div` 2) :: Word8
+          -- Occasional darker diagonal scratches (tool marks)
+          scratch = pixHash (x + y) (x - y + 16) 1501 `mod` 30 < 2
+          scratchR = fromIntegral (max 0 (fromIntegral baseR - 40 :: Int)) :: Word8
+          scratchG = fromIntegral (max 0 (fromIntegral baseG - 30 :: Int)) :: Word8
+          scratchB = fromIntegral (max 0 (fromIntegral baseB - 20 :: Int)) :: Word8
+      in if gridLine then (80, 55, 25, 255)
+         else if scratch then (scratchR, scratchG, scratchB, 255)
+         else (baseR, baseG, baseB, 255)
 
     -- Snow: white with subtle variation
     snowPattern x y =
@@ -594,48 +627,64 @@ tileFull tileIdx lx ly = case tileIdx of
       in if isRail then (140 + fromIntegral n, 140 + fromIntegral n, 145 + fromIntegral n, 255)
          else if isTie then (90 + fromIntegral (n `div` 2), 60 + fromIntegral (n `div` 3), 30, 255)
          else (0, 0, 0, 0)
-    -- Dispenser front: stone-like body with dark opening hole in the center
+    -- Dispenser front: stone gray base with dark centered face/mouth opening
     dispenserFrontPattern x y =
-      let isOpening = x >= 5 && x <= 10 && y >= 5 && y <= 10
+      let -- Distinctive mouth shape at y=8-12
+          isMouth = x >= 4 && x <= 11 && y >= 8 && y <= 12
+          -- Upper face opening (eyes area)
+          isEye = (x >= 4 && x <= 6 && y >= 5 && y <= 7)
+               || (x >= 9 && x <= 11 && y >= 5 && y <= 7)
           border = x == 0 || x == 15 || y == 0 || y == 15
           n = pixHash x y 2700 `mod` 20
           baseV = fromIntegral (120 + n) :: Word8
-      in if isOpening then (30, 30, 35, 255)
+      in if isMouth then (25, 25, 30, 255)
+         else if isEye then (35, 35, 40, 255)
          else if border then (90, 90, 95, 255)
          else (baseV, baseV, fromIntegral (baseV + 3), 255)
 
-    -- Enchanting table top: dark obsidian base with diamond-studded pattern and runes
+    -- Enchanting table top: dark purple-black surface with glowing blue-cyan rune symbols
     enchantingTableTop x y =
       let n = pixHash x y 2700 `mod` 100
-          -- Diamond studs at corners and center
-          isDiamond = (x == 2 && y == 2) || (x == 13 && y == 2)
-                   || (x == 2 && y == 13) || (x == 13 && y == 13)
-                   || (x >= 7 && x <= 8 && y >= 7 && y <= 8)
-          -- Rune symbols (glowing purple lines)
-          isRune = (x == 5 && y >= 4 && y <= 11)
-                || (x == 10 && y >= 4 && y <= 11)
-                || (y == 4 && x >= 5 && x <= 10)
-                || (y == 11 && x >= 5 && x <= 10)
-          -- Border
+          -- Glowing rune-like symbols: simple geometric shapes in blue-cyan
+          isRuneCircle = let dx = x - 7; dy = y - 7
+                             dist = dx * dx + dy * dy
+                         in dist >= 9 && dist <= 16
+          isRuneCross = ((x == 7 || x == 8) && y >= 3 && y <= 12)
+                     || ((y == 7 || y == 8) && x >= 3 && x <= 12)
+          isRuneCorner = (x == 3 && y == 3) || (x == 12 && y == 3)
+                      || (x == 3 && y == 12) || (x == 12 && y == 12)
+          isRuneDiamond = (x == 7 && y == 2) || (x == 8 && y == 2)
+                       || (x == 7 && y == 13) || (x == 8 && y == 13)
+                       || (x == 2 && y == 7) || (x == 2 && y == 8)
+                       || (x == 13 && y == 7) || (x == 13 && y == 8)
+          isRune = isRuneCircle || isRuneCorner || isRuneDiamond
+          isRuneFaint = isRuneCross && not isRuneCircle
           border = x == 0 || x == 15 || y == 0 || y == 15
-      in if isDiamond then (100, 220, 255, 255)  -- bright cyan diamond
-         else if isRune then (120, 50, 180, 255)  -- glowing purple rune
-         else if border then (15, 8, 20, 255)     -- dark border
-         else if n < 20 then (25, 12, 35, 255)    -- dark obsidian variant
-         else (20, 10, 30, 255)                    -- obsidian base
+          -- Base surface noise
+          baseR = fromIntegral (28 + n `mod` 6) :: Word8
+          baseG = fromIntegral (13 + n `mod` 5) :: Word8
+          baseB = fromIntegral (38 + n `mod` 6) :: Word8
+      in if isRune then (80, 200, 240, 255)       -- bright blue-cyan rune glow
+         else if isRuneFaint then (40, 100, 130, 255) -- subtle inner rune lines
+         else if border then (20, 8, 28, 255)
+         else (baseR, baseG, baseB, 255)
 
-    -- Enchanting table side: dark obsidian with subtle purple glow
+    -- Enchanting table side: dark wood/obsidian base with subtle purple trim at top edge
     enchantingTableSide x y =
       let n = pixHash x y 2800 `mod` 100
-          -- Purple accents along the middle band
-          accentBand = y >= 6 && y <= 9
+          -- Purple trim at top edge (rows 0-2)
+          purpleTrim = y <= 2
           border = x == 0 || x == 15 || y == 0 || y == 15
+          -- Dark wood/obsidian body with subtle variation
           streak = pixHash (x `div` 3) (y `div` 2) 2801 `mod` 10 < 2
-      in if border then (15, 8, 20, 255)
-         else if accentBand && streak then (80, 30, 120, 255)  -- purple accent
-         else if streak then (30, 15, 40, 255)                 -- subtle purple streak
-         else if n < 30 then (20, 10, 28, 255)
-         else (25, 12, 32, 255)
+          (r, g, b)
+            | purpleTrim && border = (50, 20, 70)
+            | purpleTrim           = (60 + fromIntegral (n `mod` 15), 25 + fromIntegral (n `mod` 8), 80 + fromIntegral (n `mod` 15))
+            | border               = (15, 8, 20)
+            | streak               = (30, 15, 40)
+            | n < 30               = (25, 14, 30)
+            | otherwise            = (32, 18, 36)
+      in (r, g, b, 255)
 
     -- Netherrack: dark red with brownish veins
     netherrackPattern x y =
