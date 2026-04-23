@@ -1198,6 +1198,46 @@ furnaceSpec = describe "Game.Furnace" $ do
     itemToBlock (MaterialItem IronIngot) `shouldBe` Nothing
     itemToBlock (MaterialItem GoldIngot) `shouldBe` Nothing
 
+  describe "shiftClickFurnaceOutput" $ do
+    it "moves output items into empty inventory" $ do
+      let fs = setFurnaceOutput newFurnaceState (Just (ItemStack (MaterialItem IronIngot) 5))
+          inv = emptyInventory
+          (fs', inv') = shiftClickFurnaceOutput fs inv
+      getFurnaceOutput fs' `shouldBe` Nothing
+      countItem inv' (MaterialItem IronIngot) `shouldBe` 5
+
+    it "no-op when output slot is empty" $ do
+      let fs = newFurnaceState
+          inv = emptyInventory
+          (fs', inv') = shiftClickFurnaceOutput fs inv
+      getFurnaceOutput fs' `shouldBe` Nothing
+      inv' `shouldBe` inv
+
+    it "merges output into existing inventory stacks" $ do
+      let inv0 = fst $ addItem emptyInventory (MaterialItem IronIngot) 10
+          fs = setFurnaceOutput newFurnaceState (Just (ItemStack (MaterialItem IronIngot) 3))
+          (fs', inv') = shiftClickFurnaceOutput fs inv0
+      getFurnaceOutput fs' `shouldBe` Nothing
+      countItem inv' (MaterialItem IronIngot) `shouldBe` 13
+
+    it "leaves leftover in output when inventory is full" $ do
+      -- Fill all 36 slots with dirt (different item)
+      let fillInv = foldl (\i idx -> setSlot i idx (Just (ItemStack (BlockItem Dirt) 64))) emptyInventory [0..35]
+          fs = setFurnaceOutput newFurnaceState (Just (ItemStack (MaterialItem IronIngot) 5))
+          (fs', inv') = shiftClickFurnaceOutput fs fillInv
+      -- Output should still have the items since inventory is full
+      getFurnaceOutput fs' `shouldBe` Just (ItemStack (MaterialItem IronIngot) 5)
+      countItem inv' (MaterialItem IronIngot) `shouldBe` 0
+
+    it "partially moves output when inventory has limited space" $ do
+      -- Fill 35 slots with dirt, leave one slot empty
+      let fillInv = foldl (\i idx -> setSlot i idx (Just (ItemStack (BlockItem Dirt) 64))) emptyInventory [0..34]
+          fs = setFurnaceOutput newFurnaceState (Just (ItemStack (MaterialItem IronIngot) 100))
+          (fs', inv') = shiftClickFurnaceOutput fs fillInv
+      -- Only 64 should fit (one empty slot, stack limit 64)
+      countItem inv' (MaterialItem IronIngot) `shouldBe` 64
+      getFurnaceOutput fs' `shouldBe` Just (ItemStack (MaterialItem IronIngot) 36)
+
 -- =========================================================================
 -- Void damage
 -- =========================================================================
