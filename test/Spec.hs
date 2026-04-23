@@ -345,6 +345,111 @@ inventorySpec = describe "Game.Inventory" $ do
     getSlot inv2 0 `shouldBe` Just (ItemStack tool 1)
     getSlot inv2 1 `shouldBe` Just (ItemStack tool 1)
 
+  -- sortInventory tests
+  describe "sortInventory" $ do
+    it "preserves total item count after sorting" $ do
+      let (inv1, _) = addItem emptyInventory (BlockItem Stone) 30
+          (inv2, _) = addItem inv1 (BlockItem Dirt) 20
+          (inv3, _) = addItem inv2 (BlockItem Stone) 15
+          sorted = sortInventory inv3
+          totalBefore = countItem inv3 (BlockItem Stone) + countItem inv3 (BlockItem Dirt)
+          totalAfter  = countItem sorted (BlockItem Stone) + countItem sorted (BlockItem Dirt)
+      totalAfter `shouldBe` totalBefore
+
+    it "produces no gaps between non-empty slots" $ do
+      -- Place items in non-contiguous slots
+      let inv0 = setSlot emptyInventory 5 (Just (ItemStack (BlockItem Sand) 10))
+          inv1 = setSlot inv0 15 (Just (ItemStack (BlockItem Dirt) 20))
+          inv2 = setSlot inv1 30 (Just (ItemStack (BlockItem Stone) 5))
+          sorted = sortInventory inv2
+          slots = [getSlot sorted i | i <- [0 .. inventorySlots - 1]]
+          nonEmpty = filter (/= Nothing) slots
+          -- All non-empty slots should be contiguous from the start
+          firstNSlots = take (length nonEmpty) slots
+      firstNSlots `shouldBe` nonEmpty
+
+    it "results are sorted by item Show order" $ do
+      let (inv1, _) = addItem emptyInventory (BlockItem Stone) 10
+          (inv2, _) = addItem inv1 (BlockItem Dirt) 10
+          (inv3, _) = addItem inv2 (BlockItem Sand) 10
+          sorted = sortInventory inv3
+          occupiedItems = [ show (isItem s)
+                          | i <- [0 .. inventorySlots - 1]
+                          , Just s <- [getSlot sorted i]
+                          ]
+          isSorted [] = True
+          isSorted [_] = True
+          isSorted (a:b:rest) = a <= b && isSorted (b:rest)
+      isSorted occupiedItems `shouldBe` True
+
+    it "preserves invSelected after sorting" $ do
+      let inv0 = selectHotbar emptyInventory 5
+          (inv1, _) = addItem inv0 (BlockItem Stone) 10
+          sorted = sortInventory inv1
+      invSelected sorted `shouldBe` 5
+
+    it "groups same item type and sums counts" $ do
+      -- Put same item in separate slots
+      let inv0 = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 10))
+          inv1 = setSlot inv0 5 (Just (ItemStack (BlockItem Stone) 20))
+          inv2 = setSlot inv1 10 (Just (ItemStack (BlockItem Stone) 30))
+          sorted = sortInventory inv2
+      -- 10+20+30=60 should fit in a single stack (stackLimit=64)
+      getSlot sorted 0 `shouldBe` Just (ItemStack (BlockItem Stone) 60)
+      -- No more Stone in other slots
+      countItem sorted (BlockItem Stone) `shouldBe` 60
+
+    it "splits into stacks when total exceeds stackLimit" $ do
+      -- 80 Stone total => one stack of 64 + one of 16
+      let inv0 = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 50))
+          inv1 = setSlot inv0 3 (Just (ItemStack (BlockItem Stone) 30))
+          sorted = sortInventory inv1
+      countItem sorted (BlockItem Stone) `shouldBe` 80
+      -- First stack should be full
+      case getSlot sorted 0 of
+        Just (ItemStack _ cnt) -> cnt `shouldBe` 64
+        Nothing -> expectationFailure "Expected stone in slot 0"
+      -- Second stack should have remainder
+      case getSlot sorted 1 of
+        Just (ItemStack _ cnt) -> cnt `shouldBe` 16
+        Nothing -> expectationFailure "Expected stone in slot 1"
+
+    it "sorting empty inventory stays empty" $ do
+      let sorted = sortInventory emptyInventory
+      invSlots sorted `shouldBe` invSlots emptyInventory
+
+    it "tool items (stackLimit 1) remain individual stacks" $ do
+      let tool1 = ToolItem Pickaxe Diamond 1561
+          tool2 = ToolItem Pickaxe Diamond 1561
+          inv0 = setSlot emptyInventory 10 (Just (ItemStack tool1 1))
+          inv1 = setSlot inv0 20 (Just (ItemStack tool2 1))
+          sorted = sortInventory inv1
+      -- Tools have stackLimit 1 so they should remain as separate stacks
+      getSlot sorted 0 `shouldBe` Just (ItemStack tool1 1)
+      getSlot sorted 1 `shouldBe` Just (ItemStack tool2 1)
+
+    it "mixed item types are sorted and contiguous" $ do
+      let (inv1, _) = addItem emptyInventory (MaterialItem Coal) 15
+          (inv2, _) = addItem inv1 (BlockItem Stone) 30
+          (inv3, _) = addItem inv2 (FoodItem Apple) 5
+          (inv4, _) = addItem inv3 (BlockItem Dirt) 20
+          sorted = sortInventory inv4
+          -- Verify total counts preserved
+          countCoal   = countItem sorted (MaterialItem Coal)
+          countStone  = countItem sorted (BlockItem Stone)
+          countApple  = countItem sorted (FoodItem Apple)
+          countDirt   = countItem sorted (BlockItem Dirt)
+      countCoal `shouldBe` 15
+      countStone `shouldBe` 30
+      countApple `shouldBe` 5
+      countDirt `shouldBe` 20
+      -- Verify sorted order: all non-empty slots should have Show-ordered items
+      let occupiedShows = [ show (isItem s)
+                          | i <- [0 .. inventorySlots - 1]
+                          , Just s <- [getSlot sorted i]
+                          ]
+          pairs' = zip occupiedShows (drop 1 occupiedShows)
+      all (\(a, b) -> a <= b) pairs' `shouldBe` True
   -- moveToSection tests
   it "moveToSection moves hotbar item to first empty main slot" $ do
     let inv = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 10))

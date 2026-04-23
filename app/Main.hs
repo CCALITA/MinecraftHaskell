@@ -1504,6 +1504,10 @@ main = do
           _ -> case key of  -- InventoryOpen, CraftingOpen, ChestOpen, or FurnaceOpen
             GLFW.Key'Escape -> closeUIScreen
             GLFW.Key'E      -> closeUIScreen
+            GLFW.Key'R      -> do
+              curMode <- readIORef gameModeRef
+              when (curMode == InventoryOpen) $
+                modifyIORef' inventoryRef sortInventory
             _ -> pure ()
             where
               closeUIScreen = do
