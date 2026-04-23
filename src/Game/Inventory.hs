@@ -21,6 +21,7 @@ module Game.Inventory
   , collectAll
   , splitStack
   , placeSingle
+  , swapHotbarWithInventory
   ) where
 
 import Game.Item (Item(..), itemStackLimit)
@@ -304,3 +305,17 @@ placeSingle (Just (ItemStack cItem cCnt)) (Just (ItemStack sItem sCnt))
   | otherwise =
       -- Different item or at stack limit: no-op, return unchanged
       (Just (ItemStack sItem sCnt), Just (ItemStack cItem cCnt))
+
+-- | Swap the contents of the currently selected hotbar slot with a given
+-- inventory slot index.  Used by the F-key quick-swap (hotbar <-> first main
+-- inventory slot).  Returns the updated inventory with the two slots exchanged.
+swapHotbarWithInventory :: Inventory -> Int -> Inventory
+swapHotbarWithInventory inv targetSlot
+  | targetSlot < 0 || targetSlot >= inventorySlots = inv
+  | otherwise =
+      let hotbarIdx = invSelected inv
+          hotbarContents = getSlot inv hotbarIdx
+          targetContents = getSlot inv targetSlot
+          inv'  = setSlot inv hotbarIdx targetContents
+          inv'' = setSlot inv' targetSlot hotbarContents
+      in inv''

@@ -162,6 +162,7 @@ main = hspec $ do
   cursorItemRenderSpec
   shiftClickContainerSpec
   hotbarPopupSpec
+  hotbarSwapSpec
 
 -- =========================================================================
 -- Block
@@ -8548,3 +8549,46 @@ enchantGlowSpec = describe "UI.EnchantGlow" $ do
       let verts1 = enchantGlowBorder 0.0 0.0 0.1 0.1
           verts2 = enchantGlowBorder 0.0 0.0 0.2 0.2
       verts1 `shouldNotBe` verts2
+
+hotbarSwapSpec :: Spec
+hotbarSwapSpec = describe "Game.Inventory.swapHotbarWithInventory" $ do
+  let stone3  = Just (ItemStack (BlockItem Stone) 3)
+      dirt5   = Just (ItemStack (BlockItem Dirt) 5)
+      pickaxe = Just (ItemStack (ToolItem Pickaxe Iron 250) 1)
+
+  it "swaps both occupied hotbar slot and inventory slot 9" $ do
+    let inv0 = setSlot (setSlot emptyInventory 0 stone3) 9 dirt5
+        inv' = swapHotbarWithInventory inv0 9
+    getSlot inv' 0 `shouldBe` dirt5
+    getSlot inv' 9 `shouldBe` stone3
+
+  it "moves hotbar item to empty slot 9 (hotbar occupied, target empty)" $ do
+    let inv0 = setSlot emptyInventory 0 pickaxe
+        inv' = swapHotbarWithInventory inv0 9
+    getSlot inv' 0 `shouldBe` Nothing
+    getSlot inv' 9 `shouldBe` pickaxe
+
+  it "moves slot 9 item to empty hotbar (hotbar empty, target occupied)" $ do
+    let inv0 = setSlot emptyInventory 9 stone3
+        inv' = swapHotbarWithInventory inv0 9
+    getSlot inv' 0 `shouldBe` stone3
+    getSlot inv' 9 `shouldBe` Nothing
+
+  it "both empty is a no-op" $ do
+    let inv' = swapHotbarWithInventory emptyInventory 9
+    inv' `shouldBe` emptyInventory
+
+  it "respects invSelected when non-zero" $ do
+    let inv0 = selectHotbar (setSlot (setSlot emptyInventory 3 stone3) 9 dirt5) 3
+        inv' = swapHotbarWithInventory inv0 9
+    getSlot inv' 3 `shouldBe` dirt5
+    getSlot inv' 9 `shouldBe` stone3
+    -- Slot 0 should be untouched
+    getSlot inv' 0 `shouldBe` Nothing
+
+  it "does not disturb other slots" $ do
+    let inv0 = setSlot (setSlot (setSlot emptyInventory 0 stone3) 5 pickaxe) 9 dirt5
+        inv' = swapHotbarWithInventory inv0 9
+    getSlot inv' 0 `shouldBe` dirt5
+    getSlot inv' 9 `shouldBe` stone3
+    getSlot inv' 5 `shouldBe` pickaxe
