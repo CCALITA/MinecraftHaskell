@@ -47,6 +47,7 @@ import Game.Achievement (AchievementState, checkAchievement, unlockAchievement, 
 import Game.Command (parseCommand, executeCommand, CommandResult(..), ChatState(..), ChatMessage(..), chatAddChar, chatDeleteChar, chatGetBuffer, chatClear, addChatMessage, updateChatMessages, Command(..))
 import Game.ItemDisplay (itemColor, itemMiniIcon)
 import UI.Tooltip (buildTooltip, renderTooltipVertices)
+import Game.ItemDisplay (itemColor, itemMiniIcon, armorSlotSilhouette)
 import Engine.Sound
 import Game.Particle
 import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpProgress)
@@ -2799,7 +2800,7 @@ main = do
             chatState <- readIORef chatStateRef
             mVillProf <- readIORef villagerProfRef
             villTrades <- readIORef villagerTradesRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player')
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -3342,8 +3343,8 @@ tryTriggerAchievement achRef toastRef trigger = do
 -- targetInfo: Just (blockPos, viewProjectionMatrix) for wireframe highlight
 -- sleepMsgText: Just "message" when a bed-related message should be shown
 -- achToastText: Just "name" when an achievement toast should be shown
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
@@ -3821,12 +3822,22 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
               in slotBg ++ iconVerts ++ countText
 
         armorLabels = ["H", "C", "L", "B"]
+        armorSlotTypes :: [ArmorSlot]
+        armorSlotTypes = [Helmet, Chestplate, Leggings, Boots]
         renderArmorSlot idx =
           let x = -0.53; y = -0.78 + fromIntegral idx * 0.10
               sw = 0.08; sh = 0.08
               slotBg = quad x y (x + sw) (y + sh) (0.15, 0.15, 0.15, 0.8)
-              label = renderText (x + 0.02) (y + 0.02) 0.4 (0.5, 0.5, 0.5, 0.5) (armorLabels !! idx)
-          in slotBg ++ label
+              mEquipped = if idx < length armorSlots then armorSlots !! idx else Nothing
+              slotType = armorSlotTypes !! idx
+              iconPixels = case mEquipped of
+                Just (ItemStack item _) -> itemMiniIcon item
+                Nothing                 -> armorSlotSilhouette slotType
+              pixW = sw / 3; pixH = sh / 3
+              iconVerts = concatMap (\(r, c, clr) ->
+                quad (x + fromIntegral c * pixW) (y + fromIntegral r * pixH)
+                     (x + fromIntegral (c+1) * pixW) (y + fromIntegral (r+1) * pixH) clr) iconPixels
+          in slotBg ++ iconVerts
 
     -- Crafting screen: grid + output + inventory below
     craftScreenVerts =

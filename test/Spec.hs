@@ -38,6 +38,7 @@ import Game.Command
 import Game.Achievement
 import Game.Config
 import Game.Event
+import Game.ItemDisplay (armorSlotSilhouette, itemMiniIcon)
 import UI.Tooltip
 import UI.Screen
 
@@ -7933,3 +7934,51 @@ stackSplittingSpec = describe "Game.Inventory stack splitting" $ do
       let inv = setSlot emptyInventory 0 (Just (ItemStack (MaterialItem Coal) 1))
           result = creativeRefillSlot inv 0
       getSlot result 0 `shouldBe` Just (ItemStack (MaterialItem Coal) 64)
+
+  describe "armorSlotSilhouette" $ do
+    it "returns non-empty pixel list for Helmet" $
+      armorSlotSilhouette Helmet `shouldSatisfy` (not . null)
+
+    it "returns non-empty pixel list for Chestplate" $
+      armorSlotSilhouette Chestplate `shouldSatisfy` (not . null)
+
+    it "returns non-empty pixel list for Leggings" $
+      armorSlotSilhouette Leggings `shouldSatisfy` (not . null)
+
+    it "returns non-empty pixel list for Boots" $
+      armorSlotSilhouette Boots `shouldSatisfy` (not . null)
+
+    it "helmet silhouette has same shape as helmet mini-icon" $ do
+      let silhouette = map (\(r, c, _) -> (r, c)) (armorSlotSilhouette Helmet)
+          icon = map (\(r, c, _) -> (r, c)) (itemMiniIcon (ArmorItem Helmet IronArmor 100))
+      silhouette `shouldBe` icon
+
+    it "chestplate silhouette has same shape as chestplate mini-icon" $ do
+      let silhouette = map (\(r, c, _) -> (r, c)) (armorSlotSilhouette Chestplate)
+          icon = map (\(r, c, _) -> (r, c)) (itemMiniIcon (ArmorItem Chestplate IronArmor 100))
+      silhouette `shouldBe` icon
+
+    it "leggings silhouette has same shape as leggings mini-icon" $ do
+      let silhouette = map (\(r, c, _) -> (r, c)) (armorSlotSilhouette Leggings)
+          icon = map (\(r, c, _) -> (r, c)) (itemMiniIcon (ArmorItem Leggings IronArmor 100))
+      silhouette `shouldBe` icon
+
+    it "boots silhouette has same shape as boots mini-icon" $ do
+      let silhouette = map (\(r, c, _) -> (r, c)) (armorSlotSilhouette Boots)
+          icon = map (\(r, c, _) -> (r, c)) (itemMiniIcon (ArmorItem Boots IronArmor 100))
+      silhouette `shouldBe` icon
+
+    it "silhouette uses gray color with 0.5 alpha" $ do
+      let pixels = armorSlotSilhouette Helmet
+          allGray = all (\(_, _, (r, g, b, a)) -> r == 0.35 && g == 0.35 && b == 0.35 && a == 0.5) pixels
+      allGray `shouldBe` True
+
+    it "silhouette colors differ from equipped item colors" $ do
+      let silColors = map (\(_, _, c) -> c) (armorSlotSilhouette Helmet)
+          itemColors = map (\(_, _, c) -> c) (itemMiniIcon (ArmorItem Helmet DiamondArmor 100))
+      silColors `shouldSatisfy` (/= itemColors)
+
+    it "all four armor slot silhouettes have valid pixel coordinates" $ do
+      let allPixels = concatMap armorSlotSilhouette [Helmet, Chestplate, Leggings, Boots]
+          validCoords = all (\(r, c, _) -> r >= 0 && r <= 2 && c >= 0 && c <= 2) allPixels
+      validCoords `shouldBe` True
