@@ -60,6 +60,10 @@ pixHash x y s =
     xor = Data.Bits.xor
     shiftR = Data.Bits.shiftR
 
+-- | Clamp an Int to valid Word8 range and convert
+clampByte :: Int -> Word8
+clampByte n = fromIntegral (max 0 (min 255 n))
+
 -- | Generate a pixel for a tile with patterns
 tilePixel :: Int -> Int -> Int -> Int -> Word8
 tilePixel tileIdx lx ly channel =
@@ -281,13 +285,36 @@ tileFull tileIdx lx ly = case tileIdx of
          else if ring <= 3 then (160, 130, 70, 255) -- light wood
          else (100, 75, 40, 255)                 -- bark edge
 
-    -- Brick pattern: red bricks with gray mortar
+    -- Brick pattern: proper brick grid with alternating offset and per-brick color variation
     brickPattern x y =
       let row = y `div` 4
           offset = if row `mod` 2 == 0 then 0 else 8
           bx = (x + offset) `mod` 16
+          -- Mortar lines: horizontal every 4 rows, vertical at brick boundaries
           isMortar = y `mod` 4 == 0 || bx `mod` 8 == 0
-      in if isMortar then (160, 160, 160, 255) else (170, 80, 60, 255)
+          -- Mortar color: gray with slight variation
+          mortarN = pixHash x y 1300 `mod` 10
+          mortarV = fromIntegral (155 + mortarN) :: Word8
+          -- Brick identity for per-brick hash variation
+          brickCol = (x + offset) `div` 8
+          brickHash = pixHash brickCol row 1301
+          -- Base red tone with per-brick variation (±15 per channel)
+          baseR = 150 + brickHash `mod` 41           -- 150-190
+          baseG = 50 + (brickHash `div` 41) `mod` 21 -- 50-70
+          baseB = 40 + (brickHash `div` 861) `mod` 11 -- 40-50
+          -- Per-brick variation offset (±15)
+          varSeed = pixHash brickCol row 1302
+          varR = (varSeed `mod` 31) - 15
+          varG = ((varSeed `div` 31) `mod` 31) - 15
+          varB = ((varSeed `div` 961) `mod` 31) - 15
+          -- Subtle per-pixel noise within each brick (±5)
+          pixN = pixHash x y 1303 `mod` 11 - 5
+          r = clampByte (baseR + varR + pixN)
+          g = clampByte (baseG + varG + pixN)
+          b = clampByte (baseB + varB + pixN)
+      in if isMortar
+         then (mortarV, mortarV, mortarV, 255)
+         else (fromIntegral r, fromIntegral g, fromIntegral b, 255)
 
     -- TNT side: red with white band
     tntSide x y =
@@ -312,12 +339,30 @@ tileFull tileIdx lx ly = case tileIdx of
 
     furnaceTop = stonePattern
 
-    -- Stone brick: cut stone blocks with mortar lines
+    -- Stone brick: clean 8x8 grid with mortar lines and chisel mark texture
     stoneBrickPattern x y =
-      let isMortar = y `mod` 8 == 0 || (x + (if (y `div` 8) `mod` 2 == 0 then 0 else 4)) `mod` 8 == 0
-          n = pixHash x y 1500 `mod` 20
-          v = if isMortar then 100 else fromIntegral (130 + n)
-      in (v, v, v, 255)
+      let offset = if (y `div` 8) `mod` 2 == 0 then 0 else 4
+          bx = (x + offset) `mod` 8
+          -- 1px gray mortar lines at boundaries
+          isMortar = y `mod` 8 == 0 || bx == 0
+          mortarN = pixHash x y 1500 `mod` 11
+          mortarV = fromIntegral (100 + mortarN) :: Word8  -- 100-110
+          -- Brick identity for per-brick base tone
+          brickCol = (x + offset) `div` 8
+          brickRow = y `div` 8
+          brickHash = pixHash brickCol brickRow 1501
+          baseV = 130 + brickHash `mod` 21  -- 130-150 smooth gray
+          -- Subtle chisel marks: occasional darker diagonal pixels
+          chiselSeed = pixHash x y 1502
+          isDiag = (x + y) `mod` 5 == 0 || (x - y + 16) `mod` 7 == 0
+          isChisel = isDiag && chiselSeed `mod` 8 < 2
+          chiselDark = -15
+          -- Per-pixel subtle noise (±3)
+          pixN = pixHash x y 1503 `mod` 7 - 3
+          v = clampByte (baseV + pixN + if isChisel then chiselDark else 0)
+      in if isMortar
+         then (mortarV, mortarV, mortarV, 255)
+         else (fromIntegral v, fromIntegral v, fromIntegral v, 255)
 
     -- Crafting table top: wooden grid pattern
     craftingTop x y =
