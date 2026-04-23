@@ -1198,6 +1198,57 @@ furnaceSpec = describe "Game.Furnace" $ do
     itemToBlock (MaterialItem IronIngot) `shouldBe` Nothing
     itemToBlock (MaterialItem GoldIngot) `shouldBe` Nothing
 
+  it "furnaceFuelFraction returns 0 for new furnace" $ do
+    furnaceFuelFraction newFurnaceState `shouldBe` 0
+
+  it "furnaceFuelFraction returns correct ratio when burning" $ do
+    let fs = newFurnaceState { fsFuelTime = 40, fsMaxFuelTime = 80 }
+    furnaceFuelFraction fs `shouldBe` 0.5
+
+  it "furnaceFuelFraction clamps to 1 when fuel exceeds max" $ do
+    let fs = newFurnaceState { fsFuelTime = 100, fsMaxFuelTime = 80 }
+    furnaceFuelFraction fs `shouldBe` 1.0
+
+  it "furnaceFuelFraction returns 0 when maxFuelTime is 0" $ do
+    let fs = newFurnaceState { fsFuelTime = 10, fsMaxFuelTime = 0 }
+    furnaceFuelFraction fs `shouldBe` 0
+
+  it "furnaceSmeltFraction returns 0 for new furnace" $ do
+    furnaceSmeltFraction newFurnaceState `shouldBe` 0
+
+  it "furnaceSmeltFraction returns correct ratio mid-smelt" $ do
+    let fs = newFurnaceState
+          { fsInput = Just (ItemStack (BlockItem IronOre) 1)
+          , fsSmeltTime = 5.0
+          }
+    -- IronOre recipe time is 10.0, so fraction = 5/10 = 0.5
+    furnaceSmeltFraction fs `shouldBe` 0.5
+
+  it "furnaceSmeltFraction returns 0 with no input" $ do
+    let fs = newFurnaceState { fsSmeltTime = 5.0 }
+    furnaceSmeltFraction fs `shouldBe` 0
+
+  it "furnaceSmeltFraction returns 0 for non-smeltable input" $ do
+    let fs = newFurnaceState
+          { fsInput = Just (ItemStack (BlockItem Dirt) 1)
+          , fsSmeltTime = 5.0
+          }
+    furnaceSmeltFraction fs `shouldBe` 0
+
+  it "furnaceSmeltFraction clamps to 1 when progress exceeds recipe time" $ do
+    let fs = newFurnaceState
+          { fsInput = Just (ItemStack (BlockItem IronOre) 1)
+          , fsSmeltTime = 15.0
+          }
+    furnaceSmeltFraction fs `shouldBe` 1.0
+
+  it "furnaceSmeltFraction returns 0 when smeltTime is 0" $ do
+    let fs = newFurnaceState
+          { fsInput = Just (ItemStack (BlockItem IronOre) 1)
+          , fsSmeltTime = 0
+          }
+    furnaceSmeltFraction fs `shouldBe` 0
+
 -- =========================================================================
 -- Void damage
 -- =========================================================================
