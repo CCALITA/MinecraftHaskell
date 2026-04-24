@@ -70,6 +70,7 @@ import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.List (nub, isPrefixOf, isInfixOf)
 import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted, glowColor, glowThickness)
 import Game.ViewBob (bobOffset, bobSpeed, bobAmplitude, bobDecayRate, bobMovementThreshold)
+import UI.CompassBar (compassBarVerts, yawToDirection, directionMarkers, markerNdcOffset, compassBarHeight, compassBarY)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -8878,3 +8879,64 @@ attackCooldownSpec = describe "Game.State attack cooldown" $ do
 
     it "bobMovementThreshold is positive" $ do
       bobMovementThreshold `shouldSatisfy` (> 0)
+
+  describe "CompassBar" $ do
+    describe "yawToDirection" $ do
+      it "yaw 0 is North" $
+        yawToDirection 0 `shouldBe` "N"
+
+      it "yaw 90 is East" $
+        yawToDirection 90 `shouldBe` "E"
+
+      it "yaw 180 is South" $
+        yawToDirection 180 `shouldBe` "S"
+
+      it "yaw 270 is West" $
+        yawToDirection 270 `shouldBe` "W"
+
+      it "yaw 45 is NE" $
+        yawToDirection 45 `shouldBe` "NE"
+
+      it "yaw 360 wraps to North" $
+        yawToDirection 360 `shouldBe` "N"
+
+      it "negative yaw wraps correctly" $
+        yawToDirection (-90) `shouldBe` "W"
+
+      it "yaw 135 is SE" $
+        yawToDirection 135 `shouldBe` "SE"
+
+    describe "markerNdcOffset" $ do
+      it "marker at player yaw has zero offset" $
+        markerNdcOffset 90 90 `shouldBe` 0.0
+
+      it "marker 90 degrees right has positive offset" $
+        markerNdcOffset 0 90 `shouldSatisfy` (> 0)
+
+      it "marker 90 degrees left has negative offset" $
+        markerNdcOffset 0 270 `shouldSatisfy` (< 0)
+
+      it "offset wraps across 360/0 boundary" $ do
+        let offset = markerNdcOffset 350 10
+        offset `shouldSatisfy` (> 0)
+
+    describe "compassBarVerts" $ do
+      it "produces non-empty vertex data" $
+        compassBarVerts 0 800 `shouldSatisfy` (not . null)
+
+      it "vertex count is a multiple of 6 (pos2 + color4)" $
+        length (compassBarVerts 0 800) `mod` 6 `shouldBe` 0
+
+    describe "directionMarkers" $ do
+      it "contains 8 markers" $
+        length directionMarkers `shouldBe` 8
+
+      it "all marker yaw values are in [0, 360)" $
+        all (\(_, y) -> y >= 0 && y < 360) directionMarkers `shouldBe` True
+
+    describe "compass bar constants" $ do
+      it "compassBarHeight is positive" $
+        compassBarHeight `shouldSatisfy` (> 0)
+
+      it "compassBarY is near top of screen (negative in Vulkan NDC)" $
+        compassBarY `shouldSatisfy` (< -0.5)
