@@ -111,6 +111,7 @@ library
     UI.Tooltip
     UI.Screen
     UI.EnchantGlow
+    UI.Minimap
   build-depends:
     , base             >= 4.17  && < 5
     , vulkan           >= 3.26
