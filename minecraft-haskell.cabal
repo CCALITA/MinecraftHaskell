@@ -95,6 +95,7 @@ library
     Game.ViewBob
     Game.XP
     Game.Explosion
+    Game.RedstoneAction
     Entity.ECS
     Entity.Component
     Entity.Mob
