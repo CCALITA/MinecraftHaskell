@@ -94,6 +94,7 @@ library
     Game.Particle
     Game.ViewBob
     Game.XP
+    Game.Explosion
     Entity.ECS
     Entity.Component
     Entity.Mob

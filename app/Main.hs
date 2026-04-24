@@ -54,6 +54,7 @@ import Game.Save
 import Game.SaveV3 (SaveDataV3(..), savev3Version, savePlayerV3, loadPlayerV3)
 import Game.SaveIO (buildSaveDataV3, playerFromSaveDataV3, restoreFromSaveV3)
 import Game.DroppedItem
+import Game.Explosion (explodeAt)
 import Game.BlockEntity
 import Game.State (GameState(..), GameMode(..), PlayMode(..), Projectile(..), newGameState, stepAttackCooldown, applyAttackCooldown)
 import Game.State (GameState(..), GameMode(..), PlayMode(..), CameraMode(..), cycleCameraMode, Projectile(..), newGameState)
@@ -3131,28 +3132,6 @@ hitCraftingSlot nx ny
   -- Inventory slots below
   | otherwise = fmap CraftInvSlot (hitInventorySlot nx (ny - 0.6))
 
--- | Explode blocks in a sphere around a position, with a chance to drop items.
-explodeAt :: World -> V3 Float -> Int -> DroppedItems -> IO ()
-explodeAt world (V3 centerX centerY centerZ) radius droppedItemsRef = do
-  let cx = floor centerX :: Int
-      cy = floor centerY :: Int
-      cz = floor centerZ :: Int
-      r  = fromIntegral radius :: Float
-  forM_ [cx - radius .. cx + radius] $ \x ->
-    forM_ [cy - radius .. cy + radius] $ \y ->
-      forM_ [cz - radius .. cz + radius] $ \z -> do
-        let dist = sqrt (fromIntegral ((x - cx) ^ (2 :: Int) + (y - cy) ^ (2 :: Int) + (z - cz) ^ (2 :: Int))) :: Float
-        when (dist <= r) $ do
-          bt <- worldGetBlock world (V3 x y z)
-          when (bt /= Air && bt /= Bedrock && bt /= Water && bt /= Lava) $ do
-            worldSetBlock world (V3 x y z) Air
-            -- 30% chance to drop the block's items
-            roll <- randomRIO (0.0, 1.0 :: Float)
-            when (roll < 0.3) $ do
-              let drops = blockDrops bt
-              forM_ drops $ \(item, count) ->
-                spawnDrop droppedItemsRef item count
-                  (V3 (fromIntegral x + 0.5) (fromIntegral y + 0.5) (fromIntegral z + 0.5))
 -- | Chest slot types
 data ChestSlotType = ChestSlot !Int | ChestInvSlot !Int
   deriving stock (Show, Eq)
