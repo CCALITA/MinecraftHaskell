@@ -111,7 +111,12 @@ library
     UI.Tooltip
     UI.Screen
     UI.EnchantGlow
+<<<<<<< HEAD
+    UI.CompassBar
+||||||| fec67a4
+=======
     UI.Minimap
+>>>>>>> origin/main
   build-depends:
     , base             >= 4.17  && < 5
     , vulkan           >= 3.26
