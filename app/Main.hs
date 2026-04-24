@@ -70,6 +70,7 @@ import Engine.Sound
 import Game.Particle
 import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpProgress)
 import Game.ViewBob (bobOffset, bobSpeed, bobDecayRate, bobMovementThreshold)
+import UI.Minimap (minimapVerts, chunkGridForPlayer, minimapSize)
 
 import World.Dimension (DimensionType(..), dimensionSkyColor, detectPortalFrame, netherCoords, overworldCoords, portalTransitTime)
 
@@ -120,6 +121,7 @@ data DebugInfo = DebugInfo
   , dbgHunger      :: !Int
   , dbgTimeOfDay   :: !String
   , dbgDayTime     :: !Float
+  , dbgLoadedChunks :: ![V2 Int]
   }
 
 -- | Game configuration
@@ -2922,6 +2924,7 @@ main = do
                       , dbgHunger      = plHunger player'
                       , dbgTimeOfDay   = todStr
                       , dbgDayTime     = dayTime
+                      , dbgLoadedChunks = HM.keys chunks
                       }
                   else pure Nothing
             -- Get chest inventory if a chest is open
@@ -3493,7 +3496,12 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
             textVerts = concatMap (\(i, line) ->
               renderText (x0 + 0.01) (y0 + 0.01 + fromIntegral i * lh) sc dc line
               ) (zip [0 :: Int ..] lines')
-        in bg ++ textVerts
+            -- Chunk minimap: 7x7 grid in top-right corner
+            loadedSet = dbgLoadedChunks di
+            chunkStates = map (\(cp, _, _) -> (cp, cp `elem` loadedSet))
+                              (chunkGridForPlayer (dbgPos di))
+            mapVerts = minimapVerts (dbgPos di) chunkStates
+        in bg ++ textVerts ++ mapVerts
 
     -- Block target highlight: project 3D block edges to 2D NDC and render wireframe
     highlightVerts = case targetInfo of

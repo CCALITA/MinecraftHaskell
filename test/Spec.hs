@@ -70,6 +70,7 @@ import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.List (nub, isPrefixOf, isInfixOf)
 import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted, glowColor, glowThickness)
 import Game.ViewBob (bobOffset, bobSpeed, bobAmplitude, bobDecayRate, bobMovementThreshold)
+import UI.Minimap (minimapVerts, minimapSize, chunkGridForPlayer, chunkColor, playerDotColor)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -171,6 +172,7 @@ main = hspec $ do
   sprintToggleSpec
   hotbarSwapSpec
   attackCooldownSpec
+  minimapSpec
 
 -- =========================================================================
 -- Block
@@ -8881,6 +8883,68 @@ attackCooldownSpec = describe "Game.State attack cooldown" $ do
       bobMovementThreshold `shouldSatisfy` (> 0)
 
 -- =========================================================================
+-- Chunk Minimap
+-- =========================================================================
+minimapSpec :: Spec
+minimapSpec = describe "UI.Minimap" $ do
+  it "chunkGridForPlayer returns minimapSize^2 cells" $ do
+    let grid = chunkGridForPlayer (V3 0 64 0)
+    length grid `shouldBe` minimapSize * minimapSize
+
+  it "chunkGridForPlayer centers on player chunk" $ do
+    -- Player at (32, 64, 48) is in chunk (2, 3)
+    let grid = chunkGridForPlayer (V3 32 64 48)
+        half = minimapSize `div` 2
+        -- The center cell (half, half) should correspond to chunk (2, 3)
+        centerCells = [ cp | (cp, gx, gz) <- grid, gx == half, gz == half ]
+    centerCells `shouldBe` [V2 2 3]
+
+  it "chunkGridForPlayer handles negative coordinates" $ do
+    -- Player at (-20, 64, -20) is in chunk (-2, -2) since floor(-20)/16 = -2
+    let grid = chunkGridForPlayer (V3 (-20) 64 (-20))
+        half = minimapSize `div` 2
+        centerCells = [ cp | (cp, gx, gz) <- grid, gx == half, gz == half ]
+    centerCells `shouldBe` [V2 (-2) (-2)]
+
+  it "minimapVerts produces correct vertex count" $ do
+    -- With no chunks loaded, we get:
+    --   1 background quad + 49 cell quads + 1 player dot = 51 quads
+    --   Each quad = 6 verts * 6 floats = 36 floats
+    let verts = minimapVerts (V3 0 64 0) []
+        numQuads = length verts `div` 36
+    numQuads `shouldBe` (1 + minimapSize * minimapSize + 1)
+
+  it "minimapVerts includes green for loaded chunks" $ do
+    -- Mark chunk (0, 0) as loaded; player at origin is in chunk (0, 0)
+    let verts = minimapVerts (V3 8 64 8) [(V2 0 0, True)]
+    -- Loaded color green channel = 0.7; should appear somewhere in the output
+    -- (after bg quad, the cell quads follow; look for the green value)
+    any (\v -> abs (v - 0.7) < 0.01) verts `shouldBe` True
+
+  it "chunkColor returns green for loaded, gray for unloaded" $ do
+    let (_, gLoaded, _, _) = chunkColor True
+        (rUnloaded, _, _, _) = chunkColor False
+    gLoaded `shouldSatisfy` (> 0.5)
+    rUnloaded `shouldSatisfy` (< 0.5)
+
+  it "playerDotColor is white" $ do
+    let (r, g, b, a) = playerDotColor
+    r `shouldBe` 1.0
+    g `shouldBe` 1.0
+    b `shouldBe` 1.0
+    a `shouldBe` 1.0
+
+  it "minimapVerts all coordinates are within Vulkan NDC range" $ do
+    let verts = minimapVerts (V3 100 64 (-200)) [(V2 6 (-13), True), (V2 7 (-13), True)]
+        -- Extract x,y pairs (every 6 floats, first two are x,y)
+        xyPairs = extractXY verts
+    -- All coordinates should be within [-1.5, 1.5] (some padding tolerance)
+    all (\(x, y) -> x >= -1.1 && x <= 1.1 && y >= -1.1 && y <= 1.1) xyPairs `shouldBe` True
+
+-- | Extract (x, y) pairs from flat vertex data (6 floats per vertex)
+extractXY :: [Float] -> [(Float, Float)]
+extractXY (x:y:_:_:_:_:rest) = (x, y) : extractXY rest
+extractXY _ = []
 -- Sprint Particles
 -- =========================================================================
 sprintParticleSpec :: Spec
