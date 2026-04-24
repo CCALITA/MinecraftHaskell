@@ -47,7 +47,7 @@ import Engine.BitmapFont (renderText, charSpacing)
 import Engine.Camera (Camera(..), defaultCamera, cameraViewMatrix, thirdPersonOffset, thirdPersonViewMatrix)
 
 import Game.PotionEffect
-import Game.Particle (WeatherParticle(..), WeatherParticleType(..), spawnWeatherParticles, tickWeatherParticles, renderWeatherParticles, weatherParticleRadius, weatherParticleHeight, weatherParticleCount, rainFallSpeed, snowFallSpeed, isSnowBiome, clampParticleXZ, clampParticleY, spawnBlockBreakParticles)
+import Game.Particle (WeatherParticle(..), WeatherParticleType(..), spawnWeatherParticles, tickWeatherParticles, renderWeatherParticles, weatherParticleRadius, weatherParticleHeight, weatherParticleCount, rainFallSpeed, snowFallSpeed, isSnowBiome, clampParticleXZ, clampParticleY, spawnBlockBreakParticles, spawnSprintParticles)
 
 import Game.Bucket (BucketAction(..), determineBucketAction, bucketTypeToFluidBlock, fluidBlockToBucketType)
 import World.Fluid (FluidState, FluidType(..), newFluidState, addFluidSource, removeFluid, getFluid, FluidBlock(..))
@@ -166,6 +166,7 @@ main = hspec $ do
   shiftClickContainerSpec
   hotbarPopupSpec
   blockBreakParticleSpec
+  sprintParticleSpec
   sneakModeSpec
   sprintToggleSpec
   hotbarSwapSpec
@@ -8878,3 +8879,47 @@ attackCooldownSpec = describe "Game.State attack cooldown" $ do
 
     it "bobMovementThreshold is positive" $ do
       bobMovementThreshold `shouldSatisfy` (> 0)
+
+-- =========================================================================
+-- Sprint Particles
+-- =========================================================================
+sprintParticleSpec :: Spec
+sprintParticleSpec = describe "Game.Particle sprint" $ do
+  it "produces exactly 3 particles" $ do
+    let particles = spawnSprintParticles (V3 5 64 5) 0
+    length particles `shouldBe` 3
+
+  it "uses brown dirt color (0.4, 0.25, 0.1)" $ do
+    let particles = spawnSprintParticles (V3 0 0 0) 90
+        allBrown = all (\(_, _, _, r, g, b) -> r == 0.4 && g == 0.25 && b == 0.1) particles
+    allBrown `shouldBe` True
+
+  it "particle size is 0.02" $ do
+    let particles = spawnSprintParticles (V3 0 0 0) 0
+        allCorrectSize = all (\(_, _, sz, _, _, _) -> sz == 0.02) particles
+    allCorrectSize `shouldBe` True
+
+  it "particles spawn at player foot Y position" $ do
+    let footY = 72.0
+        particles = spawnSprintParticles (V3 10 footY 20) 45
+        allAtFeetY = all (\(V3 _ py _, _, _, _, _, _) -> py == footY) particles
+    allAtFeetY `shouldBe` True
+
+  it "particles have upward velocity component" $ do
+    let particles = spawnSprintParticles (V3 0 0 0) 0
+        allUpward = all (\(_, V3 _ vy _, _, _, _, _) -> vy > 0) particles
+    allUpward `shouldBe` True
+
+  it "different yaw angles produce different velocity directions" $ do
+    let ps0   = spawnSprintParticles (V3 0 0 0) 0
+        ps90  = spawnSprintParticles (V3 0 0 0) 90
+        vel0  = map (\(_, v, _, _, _, _) -> v) ps0
+        vel90 = map (\(_, v, _, _, _, _) -> v) ps90
+    vel0 `shouldNotBe` vel90
+
+  it "particles are spread near the player position" $ do
+    let pos = V3 50 80 50
+        particles = spawnSprintParticles pos 180
+        allNear = all (\(V3 px _ pz, _, _, _, _, _) ->
+          abs (px - 50) < 0.5 && abs (pz - 50) < 0.5) particles
+    allNear `shouldBe` True
