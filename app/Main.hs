@@ -2404,6 +2404,10 @@ main = do
 
             -- Update particle effects
             tickParticles dt particleSystemRef
+            -- Spawn sprint particles when player is sprinting on ground
+            do player' <- readIORef playerRef
+               when (plSprinting player' && plOnGround player' && not (plFlying player')) $
+                 spawnSprintParticlesIO particleSystemRef (plPos player') (plYaw player')
             do player' <- readIORef playerRef
                collected <- collectNearby droppedItems (plPos player') 1.5
                unless (null collected) $ do
