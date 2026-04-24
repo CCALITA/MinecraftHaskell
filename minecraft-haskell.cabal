@@ -42,6 +42,7 @@ library
     Engine.Window
     Engine.Camera
     Engine.Mesh
+    Engine.ChunkMesh
     Engine.BitmapFont
     Engine.EntityRender
     Engine.Sound
