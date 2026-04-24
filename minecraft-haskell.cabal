@@ -93,6 +93,7 @@ library
     Game.PotionEffect
     Game.Particle
     Game.ViewBob
+    Game.ScreenShake
     Game.XP
     Game.Explosion
     Game.RedstoneAction

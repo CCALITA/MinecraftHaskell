@@ -29,6 +29,7 @@ import Game.PotionEffect (ActiveEffect)
 import Game.Event (EventBus, newEventBus)
 import Game.Command (ChatState, emptyChatState)
 import Game.DayNight (DayNightCycle, newDayNightCycle)
+import Game.ScreenShake (ScreenShake, noShake)
 import World.Weather (WeatherState, newWeatherState)
 import World.Redstone (RedstoneState, newRedstoneState)
 import Game.BlockEntity (BlockEntityMap, newBlockEntityMap)
@@ -152,6 +153,8 @@ data GameState = GameState
   , gsAttackCooldown   :: !(IORef Float)
     -- Camera perspective mode
   , gsCameraMode       :: !(IORef CameraMode)
+    -- Screen shake (triggered on fall damage)
+  , gsScreenShake      :: !(IORef ScreenShake)
   }
 
 -- | Create a fresh GameState with default initial values.
@@ -241,6 +244,7 @@ newGameState spawnPos = do
 
     <*> newIORef 1.0     -- gsAttackCooldown (fully recharged)
     <*> newIORef FirstPerson  -- gsCameraMode
+    <*> newIORef noShake      -- gsScreenShake
 
 -- | The cooldown recharge period in seconds (0.5s = Minecraft default).
 attackCooldownPeriod :: Float

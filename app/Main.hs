@@ -70,6 +70,7 @@ import Engine.Sound
 import Game.Particle
 import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpProgress)
 import Game.ViewBob (bobOffset, bobSpeed, bobDecayRate, bobMovementThreshold)
+import Game.ScreenShake (ScreenShake(..), noShake, triggerShake, tickShake, shakeOffset)
 
 import World.Dimension (DimensionType(..), dimensionSkyColor, detectPortalFrame, netherCoords, overworldCoords, portalTransitTime)
 
@@ -1989,6 +1990,7 @@ main = do
             accum <- readIORef accumRef
             let accum' = accum + dt
             healthBefore <- plHealth <$> readIORef playerRef
+            fallDistBefore <- plFallDist <$> readIORef playerRef
             when (gameMode == Playing) $ do
               -- Apply speed buff: force sprint when speed potion is active
               speedBuff <- readIORef speedBuffTimerRef
@@ -1997,6 +1999,15 @@ main = do
                             else input
               playerLoop tickRate input' blockQuery waterQuery ladderQuery accumRef accum' playerRef
             healthAfter <- plHealth <$> readIORef playerRef
+            playerAfter <- readIORef playerRef
+            -- Detect fall damage: health decreased AND player had accumulated fall distance > 3
+            -- (the threshold used in updatePlayer to apply fall damage)
+            let tookFallDamage = healthAfter < healthBefore
+                              && fallDistBefore > 3.0
+                              && plOnGround playerAfter
+                fallDamageAmount = fromIntegral (healthBefore - healthAfter) :: Float
+            when tookFallDamage $
+              writeIORef (gsScreenShake gs) (triggerShake fallDamageAmount)
 
             -- Boat riding: move boat and snap player to boat position
             when (gameMode == Playing) $ do
@@ -2792,8 +2803,12 @@ main = do
                      | otherwise = min 0 (oldBobTime + dt * bobDecayRate)
                writeIORef (gsBobTime gs) newBobTime
             bobTime <- readIORef (gsBobTime gs)
+            -- Tick screen shake and get camera offset
+            oldShake <- readIORef (gsScreenShake gs)
+            let (newShake, shakeOff) = tickShake dt oldShake
+            writeIORef (gsScreenShake gs) newShake
             let cam0 = cameraFromPlayer player
-                cam = cam0 { camPosition = camPosition cam0 + V3 0 (bobOffset bobTime) 0 }
+                cam = cam0 { camPosition = camPosition cam0 + V3 0 (bobOffset bobTime) 0 + shakeOff }
                 aspect = fromIntegral extW / fromIntegral extH
                 V3 sx sy sz = getSunDirection dayNightVal
                 -- Compute sky color from day/night cycle, adjusted for weather and dimension
