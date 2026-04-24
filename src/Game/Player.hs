@@ -25,6 +25,13 @@ module Game.Player
   , eyeHeight
   , applySprintToggle
   , playerLoop
+  , applyWaterDrag
+  , smoothBuoyancy
+  , surfaceBob
+  , waterDragFactor
+  , buoyancyLerpRate
+  , surfaceBobAmplitude
+  , surfaceBobFrequency
   ) where
 
 import Game.Physics
