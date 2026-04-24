@@ -4,6 +4,8 @@ module Game.Particle
   , newParticleSystem
   , spawnBlockBreakParticles
   , spawnBlockBreakParticlesIO
+  , spawnSprintParticles
+  , spawnSprintParticlesIO
   , tickParticles
   , renderParticles
   , WeatherParticle(..)
@@ -86,6 +88,54 @@ spawnBlockBreakParticlesIO psRef bt center = do
         , partLife     = life
         , partMaxLife  = life
         }
+-- | Pure function producing 2-3 dirt-colored particles at the player's feet,
+--   spread behind the player based on yaw. Used when sprinting on ground.
+--   Each tuple: (position, velocity, size, r, g, b)
+--   Short lifetime (0.3s), small size (0.02), brown color (0.4, 0.25, 0.1).
+spawnSprintParticles :: V3 Float -> Float -> [(V3 Float, V3 Float, Float, Float, Float, Float)]
+spawnSprintParticles (V3 px py pz) yawDeg =
+  let yawRad = yawDeg * pi / 180
+      -- Direction player is facing
+      fwdX = sin yawRad
+      fwdZ = cos yawRad
+      -- Particles spawn behind player (opposite of facing direction)
+      backX = -fwdX
+      backZ = -fwdZ
+      -- Brown dirt color
+      cr = 0.4
+      cg = 0.25
+      cb = 0.1
+      sz = 0.02
+      -- 3 particles with slight spread
+      mkParticle i =
+        let angle = fromIntegral i * 2.094395  -- 2*pi/3 spacing
+            spreadX = 0.15 * cos angle
+            spreadZ = 0.15 * sin angle
+            pos = V3 (px + spreadX) py (pz + spreadZ)
+            -- Velocity: slightly upward + behind player with spread
+            vx = backX * 1.5 + spreadX * 0.5
+            vy = 1.0 + 0.3 * sin (fromIntegral i * 1.7)
+            vz = backZ * 1.5 + spreadZ * 0.5
+            vel = V3 vx vy vz
+        in (pos, vel, sz, cr, cg, cb)
+  in map mkParticle [0 :: Int, 1, 2]
+
+-- | IO version: spawns sprint particles into the particle system.
+spawnSprintParticlesIO :: ParticleSystem -> V3 Float -> Float -> IO ()
+spawnSprintParticlesIO psRef footPos yawDeg = do
+  let pureParticles = spawnSprintParticles footPos yawDeg
+  newParticles <- mapM toParticle pureParticles
+  modifyIORef' psRef (newParticles ++)
+  where
+    toParticle (pos, vel, _sz, cr, cg, cb) =
+      pure Particle
+        { partPos      = pos
+        , partVelocity = vel
+        , partColor    = V4 cr cg cb 1.0
+        , partLife     = 0.3
+        , partMaxLife  = 0.3
+        }
+
 tickParticles :: Float -> ParticleSystem -> IO ()
 tickParticles dt psRef = modifyIORef' psRef (map step . filter alive)
   where

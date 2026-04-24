@@ -47,7 +47,7 @@ import Engine.BitmapFont (renderText, charSpacing)
 import Engine.Camera (Camera(..), defaultCamera, cameraViewMatrix, thirdPersonOffset, thirdPersonViewMatrix)
 
 import Game.PotionEffect
-import Game.Particle (WeatherParticle(..), WeatherParticleType(..), spawnWeatherParticles, tickWeatherParticles, renderWeatherParticles, weatherParticleRadius, weatherParticleHeight, weatherParticleCount, rainFallSpeed, snowFallSpeed, isSnowBiome, clampParticleXZ, clampParticleY, spawnBlockBreakParticles)
+import Game.Particle (WeatherParticle(..), WeatherParticleType(..), spawnWeatherParticles, tickWeatherParticles, renderWeatherParticles, weatherParticleRadius, weatherParticleHeight, weatherParticleCount, rainFallSpeed, snowFallSpeed, isSnowBiome, clampParticleXZ, clampParticleY, spawnBlockBreakParticles, spawnSprintParticles)
 
 import Game.Bucket (BucketAction(..), determineBucketAction, bucketTypeToFluidBlock, fluidBlockToBucketType)
 import World.Fluid (FluidState, FluidType(..), newFluidState, addFluidSource, removeFluid, getFluid, FluidBlock(..))
@@ -71,6 +71,7 @@ import Data.List (nub, isPrefixOf, isInfixOf)
 import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted, glowColor, glowThickness)
 import Game.ViewBob (bobOffset, bobSpeed, bobAmplitude, bobDecayRate, bobMovementThreshold)
 import UI.CompassBar (compassBarVerts, yawToDirection, directionMarkers, markerNdcOffset, compassBarHeight, compassBarY)
+import UI.Minimap (minimapVerts, minimapSize, chunkGridForPlayer, chunkColor, playerDotColor)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -167,10 +168,12 @@ main = hspec $ do
   shiftClickContainerSpec
   hotbarPopupSpec
   blockBreakParticleSpec
+  sprintParticleSpec
   sneakModeSpec
   sprintToggleSpec
   hotbarSwapSpec
   attackCooldownSpec
+  minimapSpec
 
 -- =========================================================================
 -- Block
@@ -8940,3 +8943,108 @@ attackCooldownSpec = describe "Game.State attack cooldown" $ do
 
       it "compassBarY is near top of screen (negative in Vulkan NDC)" $
         compassBarY `shouldSatisfy` (< -0.5)
+-- =========================================================================
+-- Chunk Minimap
+-- =========================================================================
+minimapSpec :: Spec
+minimapSpec = describe "UI.Minimap" $ do
+  it "chunkGridForPlayer returns minimapSize^2 cells" $ do
+    let grid = chunkGridForPlayer (V3 0 64 0)
+    length grid `shouldBe` minimapSize * minimapSize
+
+  it "chunkGridForPlayer centers on player chunk" $ do
+    -- Player at (32, 64, 48) is in chunk (2, 3)
+    let grid = chunkGridForPlayer (V3 32 64 48)
+        half = minimapSize `div` 2
+        -- The center cell (half, half) should correspond to chunk (2, 3)
+        centerCells = [ cp | (cp, gx, gz) <- grid, gx == half, gz == half ]
+    centerCells `shouldBe` [V2 2 3]
+
+  it "chunkGridForPlayer handles negative coordinates" $ do
+    -- Player at (-20, 64, -20) is in chunk (-2, -2) since floor(-20)/16 = -2
+    let grid = chunkGridForPlayer (V3 (-20) 64 (-20))
+        half = minimapSize `div` 2
+        centerCells = [ cp | (cp, gx, gz) <- grid, gx == half, gz == half ]
+    centerCells `shouldBe` [V2 (-2) (-2)]
+
+  it "minimapVerts produces correct vertex count" $ do
+    -- With no chunks loaded, we get:
+    --   1 background quad + 49 cell quads + 1 player dot = 51 quads
+    --   Each quad = 6 verts * 6 floats = 36 floats
+    let verts = minimapVerts (V3 0 64 0) []
+        numQuads = length verts `div` 36
+    numQuads `shouldBe` (1 + minimapSize * minimapSize + 1)
+
+  it "minimapVerts includes green for loaded chunks" $ do
+    -- Mark chunk (0, 0) as loaded; player at origin is in chunk (0, 0)
+    let verts = minimapVerts (V3 8 64 8) [(V2 0 0, True)]
+    -- Loaded color green channel = 0.7; should appear somewhere in the output
+    -- (after bg quad, the cell quads follow; look for the green value)
+    any (\v -> abs (v - 0.7) < 0.01) verts `shouldBe` True
+
+  it "chunkColor returns green for loaded, gray for unloaded" $ do
+    let (_, gLoaded, _, _) = chunkColor True
+        (rUnloaded, _, _, _) = chunkColor False
+    gLoaded `shouldSatisfy` (> 0.5)
+    rUnloaded `shouldSatisfy` (< 0.5)
+
+  it "playerDotColor is white" $ do
+    let (r, g, b, a) = playerDotColor
+    r `shouldBe` 1.0
+    g `shouldBe` 1.0
+    b `shouldBe` 1.0
+    a `shouldBe` 1.0
+
+  it "minimapVerts all coordinates are within Vulkan NDC range" $ do
+    let verts = minimapVerts (V3 100 64 (-200)) [(V2 6 (-13), True), (V2 7 (-13), True)]
+        -- Extract x,y pairs (every 6 floats, first two are x,y)
+        xyPairs = extractXY verts
+    -- All coordinates should be within [-1.5, 1.5] (some padding tolerance)
+    all (\(x, y) -> x >= -1.1 && x <= 1.1 && y >= -1.1 && y <= 1.1) xyPairs `shouldBe` True
+
+-- | Extract (x, y) pairs from flat vertex data (6 floats per vertex)
+extractXY :: [Float] -> [(Float, Float)]
+extractXY (x:y:_:_:_:_:rest) = (x, y) : extractXY rest
+extractXY _ = []
+-- Sprint Particles
+-- =========================================================================
+sprintParticleSpec :: Spec
+sprintParticleSpec = describe "Game.Particle sprint" $ do
+  it "produces exactly 3 particles" $ do
+    let particles = spawnSprintParticles (V3 5 64 5) 0
+    length particles `shouldBe` 3
+
+  it "uses brown dirt color (0.4, 0.25, 0.1)" $ do
+    let particles = spawnSprintParticles (V3 0 0 0) 90
+        allBrown = all (\(_, _, _, r, g, b) -> r == 0.4 && g == 0.25 && b == 0.1) particles
+    allBrown `shouldBe` True
+
+  it "particle size is 0.02" $ do
+    let particles = spawnSprintParticles (V3 0 0 0) 0
+        allCorrectSize = all (\(_, _, sz, _, _, _) -> sz == 0.02) particles
+    allCorrectSize `shouldBe` True
+
+  it "particles spawn at player foot Y position" $ do
+    let footY = 72.0
+        particles = spawnSprintParticles (V3 10 footY 20) 45
+        allAtFeetY = all (\(V3 _ py _, _, _, _, _, _) -> py == footY) particles
+    allAtFeetY `shouldBe` True
+
+  it "particles have upward velocity component" $ do
+    let particles = spawnSprintParticles (V3 0 0 0) 0
+        allUpward = all (\(_, V3 _ vy _, _, _, _, _) -> vy > 0) particles
+    allUpward `shouldBe` True
+
+  it "different yaw angles produce different velocity directions" $ do
+    let ps0   = spawnSprintParticles (V3 0 0 0) 0
+        ps90  = spawnSprintParticles (V3 0 0 0) 90
+        vel0  = map (\(_, v, _, _, _, _) -> v) ps0
+        vel90 = map (\(_, v, _, _, _, _) -> v) ps90
+    vel0 `shouldNotBe` vel90
+
+  it "particles are spread near the player position" $ do
+    let pos = V3 50 80 50
+        particles = spawnSprintParticles pos 180
+        allNear = all (\(V3 px _ pz, _, _, _, _, _) ->
+          abs (px - 50) < 0.5 && abs (pz - 50) < 0.5) particles
+    allNear `shouldBe` True
