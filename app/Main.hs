@@ -28,7 +28,7 @@ import Engine.Vulkan.Command
 import Engine.Vulkan.Memory
 import Engine.Vulkan.Descriptor
 import Engine.Vulkan.Texture
-import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid, isGravityAffected, isLeafBlock, isWheatCropBlock, blockCollisionHeight, isPistonBlock, pistonDirection, isPistonHeadBlock, pistonHeadForPiston, isFlammable)
+import World.Block (BlockType(..), BlockProperties(..), blockProperties, isSolid, isGravityAffected, isLeafBlock, isWheatCropBlock, blockCollisionHeight, isFlammable)
 import World.Chunk
 import World.Generation
 import World.World
@@ -76,6 +76,7 @@ import Game.Config (GameConfig(..), defaultConfig)
 import Game.Event (emit, GameEvent(..))
 
 import World.Redstone (RedstoneState, newRedstoneState, setPower, getPower, propagateRedstone)
+import Game.RedstoneAction (updateIronDoors, updatePistons, dispenseFromDispensers)
 
 import Control.Monad (unless, when, forM_, forM, void)
 import Control.Concurrent.STM (readTVarIO, atomically, writeTVar)
@@ -3250,8 +3251,8 @@ tryTriggerAchievement achRef toastRef trigger = do
 -- achToastText: Just "name" when an achievement toast should be shown
 -- hotbarPopupText: Just "item name" when a hotbar item name popup should be shown
 -- attackCooldown: 0.0 = just attacked, 1.0 = fully recharged
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> Maybe String -> Float -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots hotbarPopupText attackCooldown = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> Map.Map Int [Enchantment] -> Maybe String -> Float -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots enchantSnap hotbarPopupText attackCooldown = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
