@@ -73,6 +73,7 @@ import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted, glowColor, glowThickn
 import Game.ViewBob (bobOffset, bobSpeed, bobAmplitude, bobDecayRate, bobMovementThreshold)
 import UI.CompassBar (compassBarVerts, yawToDirection, directionMarkers, markerNdcOffset, compassBarHeight, compassBarY)
 import UI.Minimap (minimapVerts, minimapSize, chunkGridForPlayer, chunkColor, playerDotColor)
+import Game.PickupToast (PickupToast(..), addPickupToast, tickPickupToasts, formatToast, maxToasts, toastDuration, mergeToasts, emptyToasts)
 import UI.CelestialBody (sunScreenPos, moonScreenPos, celestialDiscVerts)
 import UI.CrosshairColor (crosshairColor)
 import qualified Data.ByteString.Lazy as BL
@@ -178,6 +179,7 @@ main = hspec $ do
   hotbarSwapSpec
   attackCooldownSpec
   minimapSpec
+  pickupToastSpec
   celestialBodySpec
   crosshairColorSpec
 
@@ -9104,6 +9106,101 @@ sprintParticleSpec = describe "Game.Particle sprint" $ do
     allNear `shouldBe` True
 
 -- =========================================================================
+-- PickupToast
+-- =========================================================================
+pickupToastSpec :: Spec
+pickupToastSpec = describe "Game.PickupToast" $ do
+  it "emptyToasts is an empty list" $ do
+    emptyToasts `shouldBe` []
+
+  it "addPickupToast creates a new toast" $ do
+    let ts = addPickupToast (BlockItem Dirt) 3 emptyToasts
+    length ts `shouldBe` 1
+    ptItem (head ts) `shouldBe` BlockItem Dirt
+    ptCount (head ts) `shouldBe` 3
+    ptTimer (head ts) `shouldBe` toastDuration
+
+  it "addPickupToast merges duplicate items" $ do
+    let ts0 = addPickupToast (BlockItem Dirt) 2 emptyToasts
+        ts1 = addPickupToast (BlockItem Dirt) 5 ts0
+    length ts1 `shouldBe` 1
+    ptCount (head ts1) `shouldBe` 7
+
+  it "addPickupToast keeps different items separate" $ do
+    let ts0 = addPickupToast (BlockItem Dirt) 1 emptyToasts
+        ts1 = addPickupToast (BlockItem Stone) 2 ts0
+    length ts1 `shouldBe` 2
+
+  it "tickPickupToasts removes expired toasts" $ do
+    let ts = addPickupToast (BlockItem Dirt) 1 emptyToasts
+        ts' = tickPickupToasts (toastDuration + 1.0) ts
+    ts' `shouldBe` []
+
+  it "tickPickupToasts decrements timer" $ do
+    let ts = addPickupToast (BlockItem Dirt) 1 emptyToasts
+        ts' = tickPickupToasts 1.0 ts
+    length ts' `shouldBe` 1
+    ptTimer (head ts') `shouldBe` (toastDuration - 1.0)
+
+  it "formatToast single item" $ do
+    let t = PickupToast (BlockItem Dirt) 1 5.0
+    formatToast t `shouldBe` "Picked up Dirt"
+
+  it "formatToast multiple items shows count" $ do
+    let t = PickupToast (BlockItem Dirt) 3 5.0
+    formatToast t `shouldBe` "Picked up 3x Dirt"
+
+  it "formatToast zero count returns empty string" $ do
+    let t = PickupToast (BlockItem Dirt) 0 5.0
+    formatToast t `shouldBe` ""
+
+  it "max toast stacking enforced" $ do
+    let items = [ BlockItem Dirt, BlockItem Stone, BlockItem Sand
+                , BlockItem Grass, BlockItem Cobblestone, BlockItem OakLog ]
+        ts = foldr (\i acc -> addPickupToast i 1 acc) emptyToasts items
+    length ts `shouldBe` maxToasts
+
+  it "timer reset on re-pickup of same item" $ do
+    let ts0 = addPickupToast (BlockItem Dirt) 1 emptyToasts
+        ts1 = tickPickupToasts 3.0 ts0
+        ts2 = addPickupToast (BlockItem Dirt) 1 ts1
+    ptTimer (head ts2) `shouldBe` toastDuration
+    ptCount (head ts2) `shouldBe` 2
+
+  it "zero count addPickupToast is a no-op" $ do
+    let ts = addPickupToast (BlockItem Dirt) 0 emptyToasts
+    ts `shouldBe` []
+
+  it "mergeToasts combines duplicate entries" $ do
+    let ts = [ PickupToast (BlockItem Dirt) 3 4.0
+             , PickupToast (BlockItem Stone) 1 3.0
+             , PickupToast (BlockItem Dirt) 2 2.0
+             ]
+        merged = mergeToasts ts
+    length merged `shouldBe` 2
+    let dirtToast = head $ filter (\t -> ptItem t == BlockItem Dirt) merged
+    ptCount dirtToast `shouldBe` 5
+    ptTimer dirtToast `shouldBe` 4.0
+
+  it "mergeToasts on empty list returns empty" $ do
+    mergeToasts [] `shouldBe` []
+
+  it "formatToast for tool item" $ do
+    let t = PickupToast (ToolItem Pickaxe Iron 250) 1 5.0
+    formatToast t `shouldBe` "Picked up Pickaxe"
+
+  it "formatToast for material item with count" $ do
+    let t = PickupToast (MaterialItem Coal) 4 5.0
+    formatToast t `shouldBe` "Picked up 4x Coal"
+
+  it "multiple ticks gradually expire toasts" $ do
+    let ts0 = addPickupToast (BlockItem Dirt) 1 emptyToasts
+        ts1 = tickPickupToasts 2.0 ts0
+        ts2 = tickPickupToasts 2.0 ts1
+    length ts1 `shouldBe` 1
+    length ts2 `shouldBe` 1
+    let ts3 = tickPickupToasts 2.0 ts2
+    ts3 `shouldBe` []
 -- Celestial Body
 -- =========================================================================
 celestialBodySpec :: Spec
