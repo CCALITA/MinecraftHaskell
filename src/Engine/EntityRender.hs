@@ -1,9 +1,24 @@
 module Engine.EntityRender
   ( entityColor
+  , entitySize
   , buildEntityQuad
   ) where
 
 import Linear (V3(..), (^*))
+
+-- | Get scale factor for an entity based on its tag
+entitySize :: String -> Float
+entitySize "Chicken"  = 0.5
+entitySize "Pig"      = 0.8
+entitySize "Sheep"    = 0.8
+entitySize "Wolf"     = 0.8
+entitySize "Cow"      = 1.0
+entitySize "Zombie"   = 1.0
+entitySize "Skeleton" = 1.0
+entitySize "Spider"   = 1.0
+entitySize "Creeper"  = 1.2
+entitySize "Villager" = 1.0
+entitySize _          = 1.0
 
 -- | Get RGBA color for an entity based on its tag
 entityColor :: String -> (Float, Float, Float, Float)
