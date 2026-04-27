@@ -73,6 +73,7 @@ import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted, glowColor, glowThickn
 import Game.ViewBob (bobOffset, bobSpeed, bobAmplitude, bobDecayRate, bobMovementThreshold)
 import UI.CompassBar (compassBarVerts, yawToDirection, directionMarkers, markerNdcOffset, compassBarHeight, compassBarY)
 import UI.Minimap (minimapVerts, minimapSize, chunkGridForPlayer, chunkColor, playerDotColor)
+import UI.CrosshairColor (crosshairColor)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -176,6 +177,7 @@ main = hspec $ do
   hotbarSwapSpec
   attackCooldownSpec
   minimapSpec
+  crosshairColorSpec
 
 -- =========================================================================
 -- Block
@@ -9099,6 +9101,31 @@ sprintParticleSpec = describe "Game.Particle sprint" $ do
           abs (px - 50) < 0.5 && abs (pz - 50) < 0.5) particles
     allNear `shouldBe` True
 
+-- =========================================================================
+-- Crosshair Color
+-- =========================================================================
+crosshairColorSpec :: Spec
+crosshairColorSpec = describe "UI.CrosshairColor" $ do
+
+  it "returns white when no entity targeted" $
+    crosshairColor False False `shouldBe` (1.0, 1.0, 1.0, 1.0)
+
+  it "returns white when no entity even if hostile flag is True" $
+    crosshairColor False True `shouldBe` (1.0, 1.0, 1.0, 1.0)
+
+  it "returns green for passive entity" $
+    crosshairColor True False `shouldBe` (0.2, 1.0, 0.2, 1.0)
+
+  it "returns red for hostile entity" $
+    crosshairColor True True `shouldBe` (1.0, 0.2, 0.2, 1.0)
+
+  it "all returned colors have full opacity (alpha = 1.0)" $ do
+    let (_, _, _, a1) = crosshairColor False False
+        (_, _, _, a2) = crosshairColor True  False
+        (_, _, _, a3) = crosshairColor True  True
+    a1 `shouldBe` 1.0
+    a2 `shouldBe` 1.0
+    a3 `shouldBe` 1.0
   describe "EntityRender.entitySize" $ do
     it "chicken is small (0.5)" $
       entitySize "Chicken" `shouldBe` 0.5
