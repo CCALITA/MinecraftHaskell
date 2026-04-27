@@ -113,6 +113,7 @@ library
     UI.EnchantGlow
     UI.CompassBar
     UI.Minimap
+    UI.CelestialBody
   build-depends:
     , base             >= 4.17  && < 5
     , vulkan           >= 3.26

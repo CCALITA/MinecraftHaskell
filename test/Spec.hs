@@ -72,6 +72,7 @@ import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted, glowColor, glowThickn
 import Game.ViewBob (bobOffset, bobSpeed, bobAmplitude, bobDecayRate, bobMovementThreshold)
 import UI.CompassBar (compassBarVerts, yawToDirection, directionMarkers, markerNdcOffset, compassBarHeight, compassBarY)
 import UI.Minimap (minimapVerts, minimapSize, chunkGridForPlayer, chunkColor, playerDotColor)
+import UI.CelestialBody (sunScreenPos, moonScreenPos, celestialDiscVerts)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -175,6 +176,7 @@ main = hspec $ do
   hotbarSwapSpec
   attackCooldownSpec
   minimapSpec
+  celestialBodySpec
 
 -- =========================================================================
 -- Block
@@ -9097,3 +9099,47 @@ sprintParticleSpec = describe "Game.Particle sprint" $ do
         allNear = all (\(V3 px _ pz, _, _, _, _, _) ->
           abs (px - 50) < 0.5 && abs (pz - 50) < 0.5) particles
     allNear `shouldBe` True
+
+-- =========================================================================
+-- Celestial Body
+-- =========================================================================
+celestialBodySpec :: Spec
+celestialBodySpec = describe "UI.CelestialBody" $ do
+  it "sunScreenPos returns Just for a direction in front of the camera" $ do
+    -- Use a VP matrix where the w row has a positive z component
+    -- so that a forward direction (0,0,1) yields positive w.
+    let vp = V4 (V4 1 0 0 0) (V4 0 1 0 0) (V4 0 0 1 0) (V4 0 0 1 0)
+    sunScreenPos (V3 0 0 1) vp `shouldSatisfy` \case
+      Just _ -> True
+      Nothing -> False
+
+  it "sunScreenPos returns Nothing for a direction behind the camera" $ do
+    let vp = V4 (V4 1 0 0 0) (V4 0 1 0 0) (V4 0 0 1 0) (V4 0 0 1 0)
+    sunScreenPos (V3 0 0 (-1)) vp `shouldBe` Nothing
+
+  it "moonScreenPos is opposite to sunScreenPos" $ do
+    let vp = V4 (V4 1 0 0 0) (V4 0 1 0 0) (V4 0 0 1 0) (V4 0 0 1 0)
+        sunDir = V3 0 1 1
+    moonScreenPos sunDir vp `shouldBe` Nothing
+
+  it "celestialDiscVerts produces 36 floats (6 verts * 6 components)" $ do
+    let verts = celestialDiscVerts 0 0 0.1 (1, 1, 0.5, 1)
+    length verts `shouldBe` 36
+
+  it "celestialDiscVerts quad is centered on the given position" $ do
+    let cx = 0.3
+        cy = -0.2
+        sz = 0.05
+        verts = celestialDiscVerts cx cy sz (1, 1, 1, 1)
+        xs = [verts !! (i * 6) | i <- [0..5]]
+        ys = [verts !! (i * 6 + 1) | i <- [0..5]]
+        avgX = sum xs / fromIntegral (length xs)
+        avgY = sum ys / fromIntegral (length ys)
+    abs (avgX - cx) `shouldSatisfy` (< 0.001)
+    abs (avgY - cy) `shouldSatisfy` (< 0.001)
+
+  it "celestialDiscVerts embeds the given color in every vertex" $ do
+    let color = (0.9, 0.8, 0.2, 1.0)
+        verts = celestialDiscVerts 0 0 0.1 color
+        colors = [(verts !! (i*6+2), verts !! (i*6+3), verts !! (i*6+4), verts !! (i*6+5)) | i <- [0..5]]
+    all (== color) colors `shouldBe` True
