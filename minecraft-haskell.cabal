@@ -114,12 +114,8 @@ library
     UI.EnchantGlow
     UI.CompassBar
     UI.Minimap
-<<<<<<< HEAD
     UI.CelestialBody
-||||||| 8371ef9
-=======
     UI.CrosshairColor
->>>>>>> origin/main
   build-depends:
     , base             >= 4.17  && < 5
     , vulkan           >= 3.26
