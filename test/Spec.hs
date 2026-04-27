@@ -45,6 +45,7 @@ import UI.Screen
 import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts, cursorIconSize)
 import Engine.BitmapFont (renderText, charSpacing)
 import Engine.Camera (Camera(..), defaultCamera, cameraViewMatrix, thirdPersonOffset, thirdPersonViewMatrix)
+import Engine.EntityRender (entitySize)
 
 import Game.PotionEffect
 import Game.Particle (WeatherParticle(..), WeatherParticleType(..), spawnWeatherParticles, tickWeatherParticles, renderWeatherParticles, weatherParticleRadius, weatherParticleHeight, weatherParticleCount, rainFallSpeed, snowFallSpeed, isSnowBiome, clampParticleXZ, clampParticleY, spawnBlockBreakParticles, spawnSprintParticles)
@@ -9097,3 +9098,34 @@ sprintParticleSpec = describe "Game.Particle sprint" $ do
         allNear = all (\(V3 px _ pz, _, _, _, _, _) ->
           abs (px - 50) < 0.5 && abs (pz - 50) < 0.5) particles
     allNear `shouldBe` True
+
+  describe "EntityRender.entitySize" $ do
+    it "chicken is small (0.5)" $
+      entitySize "Chicken" `shouldBe` 0.5
+
+    it "pig is medium (0.8)" $
+      entitySize "Pig" `shouldBe` 0.8
+
+    it "sheep is medium (0.8)" $
+      entitySize "Sheep" `shouldBe` 0.8
+
+    it "wolf is medium (0.8)" $
+      entitySize "Wolf" `shouldBe` 0.8
+
+    it "cow is standard (1.0)" $
+      entitySize "Cow" `shouldBe` 1.0
+
+    it "zombie is standard (1.0)" $
+      entitySize "Zombie" `shouldBe` 1.0
+
+    it "creeper is large (1.2)" $
+      entitySize "Creeper" `shouldBe` 1.2
+
+    it "unknown entity defaults to 1.0" $
+      entitySize "UnknownMob" `shouldBe` 1.0
+
+    it "skeleton is standard (1.0)" $
+      entitySize "Skeleton" `shouldBe` 1.0
+
+    it "spider is standard (1.0)" $
+      entitySize "Spider" `shouldBe` 1.0
