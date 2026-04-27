@@ -156,6 +156,7 @@ main = hspec $ do
   meshAOSpec
   directionalPistonSpec
   sunsetSunriseSpec
+  sinusoidalAmbientSpec
   craftingPreviewSpec
   dropFromSlotSpec
   hotbarNumberKeySpec
@@ -6890,6 +6891,54 @@ sunsetSunriseSpec = describe "Sunset and sunrise sky colors" $ do
       abs (r1 - r2) `shouldSatisfy` (< 0.05)
       abs (g1 - g2) `shouldSatisfy` (< 0.05)
       abs (b1 - b2) `shouldSatisfy` (< 0.05)
+
+-- =========================================================================
+-- Sinusoidal ambient light curve
+-- =========================================================================
+sinusoidalAmbientSpec :: Spec
+sinusoidalAmbientSpec = describe "Sinusoidal ambient light" $ do
+  let lightAt t = getAmbientLight (newDayNightCycle { dncTime = t })
+
+  it "noon (t=0.5) is 1.0" $ do
+    lightAt 0.5 `shouldSatisfy` (\v -> abs (v - 1.0) < 1e-5)
+
+  it "midnight (t=0.0) is 0.15" $ do
+    lightAt 0.0 `shouldSatisfy` (\v -> abs (v - 0.15) < 1e-5)
+
+  it "quarter day (t=0.25) equals mean 0.575" $ do
+    lightAt 0.25 `shouldSatisfy` (\v -> abs (v - 0.575) < 1e-5)
+
+  it "three-quarter day (t=0.75) equals mean 0.575" $ do
+    lightAt 0.75 `shouldSatisfy` (\v -> abs (v - 0.575) < 1e-5)
+
+  it "symmetric around noon: light(0.5-d) == light(0.5+d)" $ do
+    let d = 0.13
+    abs (lightAt (0.5 - d) - lightAt (0.5 + d)) `shouldSatisfy` (< 1e-5)
+
+  it "all values in [0.15, 1.0] for 100 samples" $ do
+    let samples = [fromIntegral i / 100.0 :: Float | i <- [0 :: Int .. 99]]
+    mapM_ (\t -> lightAt t `shouldSatisfy` (\v -> v >= 0.15 - 1e-5 && v <= 1.0 + 1e-5)) samples
+
+  it "monotonically increasing from midnight to noon" $ do
+    let ts = [fromIntegral i / 100.0 :: Float | i <- [0 :: Int .. 50]]
+        vals = map lightAt ts
+        pairs = zip vals (tail vals)
+    mapM_ (\(a, b) -> b `shouldSatisfy` (>= a - 1e-5)) pairs
+
+  it "monotonically decreasing from noon to midnight" $ do
+    let ts = [fromIntegral i / 100.0 :: Float | i <- [50 :: Int .. 99]]
+        vals = map lightAt ts
+        pairs = zip vals (tail vals)
+    mapM_ (\(a, b) -> b `shouldSatisfy` (<= a + 1e-5)) pairs
+
+  it "continuous: adjacent samples differ by less than 0.07" $ do
+    let ts = [fromIntegral i / 1000.0 :: Float | i <- [0 :: Int .. 999]]
+        vals = map lightAt ts
+        pairs = zip vals (tail vals)
+    mapM_ (\(a, b) -> abs (a - b) `shouldSatisfy` (< 0.07)) pairs
+
+  it "dawn region (t=0.25) brighter than deep night (t=0.05)" $ do
+    lightAt 0.25 `shouldSatisfy` (> lightAt 0.05)
 
 -- =========================================================================
 -- Crafting Preview

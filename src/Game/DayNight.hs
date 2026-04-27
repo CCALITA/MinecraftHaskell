@@ -124,12 +124,13 @@ getSkyColor cycle = case getTimeOfDay cycle of
     duskDeepOrange = V4 0.60 0.25 0.15 1.0   -- deep orange-red
 
 -- | Ambient light level (0.0 to 1.0)
+--
+-- Sinusoidal curve: 0.575 + 0.425 * cos(2*pi*(t - 0.5))
+-- Noon (t=0.5) -> 1.0, Midnight (t=0.0) -> 0.15
 getAmbientLight :: DayNightCycle -> Float
-getAmbientLight cycle = case getTimeOfDay cycle of
-  Day   -> 1.0
-  Night -> 0.15
-  Dawn  -> lerp1 ((dncTime cycle - 0.20) / 0.10) 0.15 1.0
-  Dusk  -> lerp1 ((dncTime cycle - 0.70) / 0.10) 1.0 0.15
+getAmbientLight cycle =
+  let t = dncTime cycle
+  in 0.575 + 0.425 * cos (2.0 * pi * (t - 0.5))
 
 -- | Linear interpolation helpers
 lerp1 :: Float -> Float -> Float -> Float
