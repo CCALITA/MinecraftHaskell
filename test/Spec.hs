@@ -9607,6 +9607,28 @@ saveToastSpec = describe "UI.SaveToast" $ do
     let toast = newSaveToast "Auto-saved"
         Just ticked = tickSaveToast 1.0 (Just toast)
     stMessage ticked `shouldBe` "Auto-saved"
+
+  it "GameState gsSaveToast initializes to Nothing" $ do
+    gs <- newGameState (V3 0 60 0)
+    val <- readIORef (gsSaveToast gs)
+    val `shouldBe` Nothing
+
+  it "gsSaveToast can be set and read back" $ do
+    gs <- newGameState (V3 0 60 0)
+    let toast = newSaveToast "Game Saved"
+    writeIORef (gsSaveToast gs) (Just toast)
+    val <- readIORef (gsSaveToast gs)
+    fmap stMessage val `shouldBe` Just "Game Saved"
+
+  it "gsSaveToast ticks down and expires via IORef" $ do
+    gs <- newGameState (V3 0 60 0)
+    writeIORef (gsSaveToast gs) (Just (newSaveToast "Game Loaded"))
+    val <- readIORef (gsSaveToast gs)
+    let ticked = tickSaveToast 3.0 val
+    writeIORef (gsSaveToast gs) ticked
+    result <- readIORef (gsSaveToast gs)
+    result `shouldBe` Nothing
+
   describe "InteractionCooldown" $ do
     it "canInteract returns True when elapsed >= cooldown" $
       canInteract 1.0 0.2 1.3 `shouldBe` True
