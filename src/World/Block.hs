@@ -136,7 +136,10 @@ blockToWord8 :: BlockType -> Word8
 blockToWord8 = fromIntegral . fromEnum
 
 word8ToBlock :: Word8 -> BlockType
-word8ToBlock = toEnum . fromIntegral
+word8ToBlock w
+  | i >= 0 && i <= fromEnum (maxBound :: BlockType) = toEnum i
+  | otherwise = Air
+  where i = fromIntegral w
 
 -- | Six faces of a cube
 data BlockFace
