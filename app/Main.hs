@@ -40,6 +40,7 @@ import Game.Bucket (BucketAction(..), determineBucketAction)
 import Game.Crafting
 import Game.Enchanting
 import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted)
+import UI.CrosshairColor (crosshairColor)
 import Game.DayNight
 import World.Biome (biomeAt)
 import World.Weather (WeatherState(..), WeatherType(..), newWeatherState, updateWeather, isRaining, weatherSkyMultiplier, weatherAmbientMultiplier)
@@ -2966,7 +2967,17 @@ main = do
             mVillProf <- readIORef villagerProfRef
             villTrades <- readIORef villagerTradesRef
             enchantSnap <- readIORef enchantMapRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') (plSaturation player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player') enchantSnap hotbarPopupText attackCooldown (plYaw player')
+            -- Detect entity on crosshair for dynamic crosshair color
+            nearbyEntsForCrosshair <- entitiesInRange entityWorld (plPos player' + V3 0 1.62 0) maxReach
+            let lookDir = dirFromPlayer player'
+                eyePos' = plPos player' + V3 0 1.62 0
+                -- Entity is "on crosshair" if within a cone of ~0.98 dot product
+                onCrosshair = filter (\e ->
+                  let toEnt = normalize (entPosition e - eyePos')
+                  in dot toEnt lookDir > 0.98) nearbyEntsForCrosshair
+                entityOnCrosshair = not (null onCrosshair)
+                entityIsHostile   = any (\e -> isHostile (readMobType (entTag e))) onCrosshair
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') (plSaturation player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player') enchantSnap hotbarPopupText attackCooldown (plYaw player') entityOnCrosshair entityIsHostile
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -3240,8 +3251,10 @@ tryTriggerAchievement achRef toastRef trigger = do
 -- hotbarPopupText: Just "item name" when a hotbar item name popup should be shown
 -- attackCooldown: 0.0 = just attacked, 1.0 = fully recharged
 -- playerYaw: player yaw in degrees for compass bar
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> Map.Map Int [Enchantment] -> Maybe String -> Float -> Float -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply saturation mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots enchantSnap hotbarPopupText attackCooldown playerYaw = VS.fromList $
+-- entityOnCrosshair: True when an entity is in the player's crosshair
+-- entityIsHostile: True when that entity is hostile (used for crosshair color)
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> Map.Map Int [Enchantment] -> Maybe String -> Float -> Float -> Bool -> Bool -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply saturation mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots enchantSnap hotbarPopupText attackCooldown playerYaw entityOnCrosshair entityIsHostile = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
@@ -3259,7 +3272,7 @@ buildHudVertices inv miningProgress health hunger airSupply saturation mode curs
     -- Crosshair: white + at center
     cs = 0.015 :: Float  -- size
     ct = 0.003 :: Float  -- thickness
-    w = (1.0, 1.0, 1.0, 0.8 :: Float)
+    w = crosshairColor entityOnCrosshair entityIsHostile
     quad x0 y0 x1 y1 (r, g, b, a) =
       [x0, y0, r, g, b, a,  x1, y0, r, g, b, a,  x1, y1, r, g, b, a
       ,x0, y0, r, g, b, a,  x1, y1, r, g, b, a,  x0, y1, r, g, b, a]
