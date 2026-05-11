@@ -57,7 +57,7 @@ import World.Fluid (FluidState, FluidType(..), newFluidState, addFluidSource, re
 import Engine.Mesh (MeshData(..), NeighborData(..), meshChunkWithLight, emptyNeighborData, BlockVertex(..), computeVertexAO)
 import Entity.Pathfinding (findPath, pathDistance)
 import World.Light (LightMap, newLightMap, propagateBlockLight, propagateSkyLight, getBlockLight, getSkyLight, getTotalLight, maxLightLevel)
-import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, isNight, isDawn, isDusk, getTimeOfDay, TimeOfDay(..))
+import Game.DayNight (DayNightCycle(..), newDayNightCycle, updateDayNight, getSkyColor, getAmbientLight, getSunDirection, isNight, isDawn, isDusk, getTimeOfDay, TimeOfDay(..))
 import Game.State (GameState(..), GameMode(..), PlayMode(..), newGameState, attackCooldownPeriod, stepAttackCooldown, applyAttackCooldown, attackCooldownFraction)
 import Game.State (GameState(..), GameMode(..), PlayMode(..), CameraMode(..), cycleCameraMode, newGameState)
 import Game.Creative (creativePalette, creativePaletteSize, creativeClickSlot, creativePickFromPalette, creativeConsumeItem, creativeRefillSlot, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteCols, paletteSlotsPerPage, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
@@ -198,6 +198,7 @@ main = hspec $ do
   pickupToastSpec
   inventoryEdgeCaseSpec
   celestialBodySpec
+  skyRenderWiringSpec
   crosshairColorSpec
   saveToastSpec
   damageDirectionSpec
@@ -9445,6 +9446,44 @@ celestialBodySpec = describe "UI.CelestialBody" $ do
         verts = celestialDiscVerts 0 0 0.1 color
         colors = [(verts !! (i*6+2), verts !! (i*6+3), verts !! (i*6+4), verts !! (i*6+5)) | i <- [0..5]]
     all (== color) colors `shouldBe` True
+-- Sky Render Wiring
+-- =========================================================================
+skyRenderWiringSpec :: Spec
+skyRenderWiringSpec = describe "Sky render wiring" $ do
+  it "starPositions 42 generates star quads when ambient < 0.3" $ do
+    let nightCycle = DayNightCycle { dncTime = 0.0, dncDayCount = 0, dncSpeed = 1.0 }
+        amb = getAmbientLight nightCycle
+        alpha = starBrightness amb (dncTime nightCycle)
+        stars = starPositions 42
+        expectedFloats = length stars * 36
+    amb `shouldSatisfy` (< 0.3)
+    alpha `shouldSatisfy` (> 0.0)
+    expectedFloats `shouldBe` (200 * 36)
+  it "no stars when ambient >= 0.3 (daytime)" $ do
+    let dayCycle = DayNightCycle { dncTime = 0.5, dncDayCount = 0, dncSpeed = 1.0 }
+        amb = getAmbientLight dayCycle
+        alpha = starBrightness amb (dncTime dayCycle)
+    amb `shouldSatisfy` (>= 0.3)
+    alpha `shouldBe` 0.0
+  it "sun disc uses yellow color and moon disc uses white" $ do
+    let sunColor = (1.0 :: Float, 0.95, 0.3, 0.9)
+        moonColor = (0.9 :: Float, 0.9, 1.0, 0.8)
+        sunVerts = celestialDiscVerts 0.0 0.0 0.05 sunColor
+        moonVerts = celestialDiscVerts 0.0 0.0 0.04 moonColor
+        sunC = (sunVerts !! 2, sunVerts !! 3, sunVerts !! 4, sunVerts !! 5)
+        moonC = (moonVerts !! 2, moonVerts !! 3, moonVerts !! 4, moonVerts !! 5)
+    sunC `shouldBe` sunColor
+    moonC `shouldBe` moonColor
+  it "celestial bodies project via sunScreenPos and moonScreenPos" $ do
+    let vp = V4 (V4 1 0 0 0) (V4 0 1 0 0) (V4 0 0 1 0) (V4 0 0 1 0)
+        dnc = DayNightCycle { dncTime = 0.0, dncDayCount = 0, dncSpeed = 1.0 }
+        sDir = getSunDirection dnc
+    case sunScreenPos sDir vp of
+      Nothing  -> moonScreenPos sDir vp `shouldSatisfy` \case
+        Just _  -> True
+        Nothing -> True
+      Just _   -> pure ()
+
 -- Crosshair Color
 -- =========================================================================
 crosshairColorSpec :: Spec

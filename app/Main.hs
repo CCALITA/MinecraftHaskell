@@ -74,6 +74,8 @@ import Game.ViewBob (bobOffset, bobSpeed, bobDecayRate, bobMovementThreshold)
 import UI.CompassBar (compassBarVerts)
 import UI.Minimap (minimapVerts, chunkGridForPlayer, minimapSize)
 import UI.SaturationBar (saturationBarVerts)
+import UI.StarField (starPositions, starBrightness)
+import UI.CelestialBody (sunScreenPos, moonScreenPos, celestialDiscVerts)
 import UI.BlockOutline (blockOutlineVerts)
 import UI.SaveToast (SaveToast(..), newSaveToast, tickSaveToast)
 import UI.Vignette (vignetteGrid)
@@ -3268,7 +3270,7 @@ buildHudVertices inv miningProgress health hunger airSupply saturation mode curs
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
-    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ cooldownBarVerts ++ healthVerts ++ satBarVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ compassDirBarVerts ++ achToastVerts ++ chatMessageVerts ++ hotbarPopupVerts ++ saveToastVerts
+    Playing  -> starVerts ++ celestialVerts ++ crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ cooldownBarVerts ++ healthVerts ++ satBarVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ compassDirBarVerts ++ achToastVerts ++ chatMessageVerts ++ hotbarPopupVerts ++ saveToastVerts
     ChatInput -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ healthVerts ++ satBarVerts ++ hungerVerts ++ chatInputVerts ++ chatMessageVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts ++ invTooltipVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts ++ craftTooltipVerts
@@ -3614,6 +3616,30 @@ buildHudVertices inv miningProgress health hunger airSupply saturation mode curs
 
     -- Compass direction bar at top of HUD: N/S/E/W markers that scroll with yaw
     compassDirBarVerts = compassBarVerts playerYaw 0
+
+    -- Stars: small quads when ambient light < 0.3 (nighttime)
+    ambient = getAmbientLight dayNight
+    starVerts
+      | ambient >= 0.3 = []
+      | otherwise =
+          let alpha = starBrightness ambient (dncTime dayNight)
+              starSize = 0.004 :: Float
+              makeStarQuad (sx, sy) =
+                quad (sx - starSize) (sy - starSize)
+                     (sx + starSize) (sy + starSize)
+                     (1.0, 1.0, 1.0, alpha)
+          in concatMap makeStarQuad (starPositions 42)
+
+    -- Celestial bodies: sun (yellow disc, day) and moon (white disc, night)
+    sunDir = getSunDirection dayNight
+    celestialVerts =
+      let sunVerts' = case sunScreenPos sunDir vpMatrix of
+            Just (sx, sy) -> celestialDiscVerts sx sy 0.05 (1.0, 0.95, 0.3, 0.9)
+            Nothing       -> []
+          moonVerts' = case moonScreenPos sunDir vpMatrix of
+            Just (mx, my) -> celestialDiscVerts mx my 0.04 (0.9, 0.9, 1.0, 0.8)
+            Nothing       -> []
+      in sunVerts' ++ moonVerts'
 
     -- Achievement toast: gold text notification near top of screen
     achToastVerts = case achToastText of
