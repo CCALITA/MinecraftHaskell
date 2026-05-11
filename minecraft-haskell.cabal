@@ -124,6 +124,7 @@ library
     UI.Vignette
     UI.BlockOutline
     UI.BreathBar
+    UI.HudLayout
   build-depends:
     , base             >= 4.17  && < 5
     , vulkan           >= 3.26

@@ -83,6 +83,7 @@ import UI.StarField (starPositions, starBrightness)
 import UI.Vignette (vignetteAlpha, vignetteGrid)
 import UI.BreathBar (bubbleColor)
 import UI.DamageDirection (damageAngle, damageArcVerts)
+import UI.HudLayout (hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hungerBarX, xpBarY, crosshairSize)
 import UI.BlockOutline (blockOutlineVerts)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
@@ -9533,6 +9534,24 @@ damageDirectionSpec = describe "UI.DamageDirection" $ do
         alphas = [verts !! i | i <- [5, 11 .. length verts - 1]]
     all (\a -> abs (a - 0.7) < 0.001) alphas `shouldBe` True
 
+  describe "UI.HudLayout" $ do
+    it "all constants are within NDC range [-1,1]" $ do
+      let vals = [hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hungerBarX, xpBarY, crosshairSize]
+      all (\v -> v >= -1.0 && v <= 1.0) vals `shouldBe` True
+
+    it "hotbar right edge stays within NDC" $ do
+      let rightEdge = hotbarX0 + 9 * slotSize
+      rightEdge `shouldSatisfy` (<= 1.0)
+
+    it "hotbarX0 is negative (left of center)" $ do
+      hotbarX0 `shouldSatisfy` (< 0)
+
+    it "crosshairSize is positive and small" $ do
+      crosshairSize `shouldSatisfy` (> 0)
+      crosshairSize `shouldSatisfy` (< 0.1)
+
+    it "healthBarY is above xpBarY (smaller Y = higher on screen in Vulkan NDC)" $ do
+      healthBarY `shouldSatisfy` (< hotbarY)
 -- =========================================================================
 -- Block Outline
 -- =========================================================================
