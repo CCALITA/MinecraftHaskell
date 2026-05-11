@@ -41,6 +41,7 @@ import Game.Event
 import Game.ItemDisplay (armorSlotSilhouette, itemMiniIcon)
 import UI.Tooltip
 import UI.Screen
+import UI.SaveToast
 
 import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts, cursorIconSize)
 import Engine.BitmapFont (renderText, charSpacing)
@@ -185,6 +186,7 @@ main = hspec $ do
   pickupToastSpec
   celestialBodySpec
   crosshairColorSpec
+  saveToastSpec
 
 -- =========================================================================
 -- Block
@@ -9301,6 +9303,43 @@ crosshairColorSpec = describe "UI.CrosshairColor" $ do
     it "spider is standard (1.0)" $
       entitySize "Spider" `shouldBe` 1.0
 
+-- =========================================================================
+-- SaveToast
+-- =========================================================================
+saveToastSpec :: Spec
+saveToastSpec = describe "UI.SaveToast" $ do
+  it "newSaveToast sets message and default duration" $ do
+    let toast = newSaveToast "World saved"
+    stMessage toast `shouldBe` "World saved"
+    stTimeLeft toast `shouldBe` saveToastDuration
+
+  it "saveToastDuration is 3.0" $
+    saveToastDuration `shouldBe` 3.0
+
+  it "tickSaveToast decrements timer" $ do
+    let toast = newSaveToast "Saved"
+        result = tickSaveToast 1.0 (Just toast)
+    case result of
+      Just t  -> stTimeLeft t `shouldSatisfy` (\v -> abs (v - 2.0) < 0.001)
+      Nothing -> expectationFailure "toast expired too early"
+
+  it "tickSaveToast returns Nothing when timer expires" $ do
+    let toast = newSaveToast "Saved"
+        result = tickSaveToast 3.0 (Just toast)
+    result `shouldBe` Nothing
+
+  it "tickSaveToast returns Nothing when dt exceeds remaining" $ do
+    let toast = newSaveToast "Saved"
+        result = tickSaveToast 5.0 (Just toast)
+    result `shouldBe` Nothing
+
+  it "tickSaveToast on Nothing returns Nothing" $
+    tickSaveToast 1.0 Nothing `shouldBe` Nothing
+
+  it "tickSaveToast preserves message across ticks" $ do
+    let toast = newSaveToast "Auto-saved"
+        Just ticked = tickSaveToast 1.0 (Just toast)
+    stMessage ticked `shouldBe` "Auto-saved"
   describe "InteractionCooldown" $ do
     it "canInteract returns True when elapsed >= cooldown" $
       canInteract 1.0 0.2 1.3 `shouldBe` True
