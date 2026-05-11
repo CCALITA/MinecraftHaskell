@@ -20,7 +20,7 @@ import Game.Furnace
 import World.Weather
 import Entity.ECS
 import Entity.Component
-import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), AIState(..), mobInfo, isPassive, isHostile)
+import Entity.Mob (MobType(..), MobInfo(..), MobBehavior(..), AIState(..), mobInfo, isPassive, isHostile, readMobType)
 import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpForNextLevel, xpProgress)
 import World.Redstone
 import World.BlockRegistry
@@ -4845,22 +4845,22 @@ bedSleepSpec = describe "Bed sleep logic" $ do
       length nearby `shouldBe` 0
 
     it "hostile tag check identifies Zombie as hostile" $ do
-      let hostileTags = ["Zombie", "Skeleton", "Creeper", "Spider"] :: [String]
+      let hostileTags = ["Zombie", "Skeleton", "Creeper"] :: [String]
       ("Zombie" `elem` hostileTags) `shouldBe` True
 
     it "hostile tag check identifies Skeleton as hostile" $ do
-      let hostileTags = ["Zombie", "Skeleton", "Creeper", "Spider"] :: [String]
+      let hostileTags = ["Zombie", "Skeleton", "Creeper"] :: [String]
       ("Skeleton" `elem` hostileTags) `shouldBe` True
 
     it "hostile tag check does not match Pig" $ do
-      let hostileTags = ["Zombie", "Skeleton", "Creeper", "Spider"] :: [String]
+      let hostileTags = ["Zombie", "Skeleton", "Creeper"] :: [String]
       ("Pig" `elem` hostileTags) `shouldBe` False
 
     it "nearby hostile blocks sleep" $ do
       ew <- newEntityWorld
       _ <- spawnEntity ew (V3 10 65 10) 20 "Zombie"
       nearby <- entitiesInRange ew (V3 12 65 10) 8.0
-      let hostileTags = ["Zombie", "Skeleton", "Creeper", "Spider"] :: [String]
+      let hostileTags = ["Zombie", "Skeleton", "Creeper"] :: [String]
           hasHostile = any (\e -> entTag e `elem` hostileTags) nearby
       hasHostile `shouldBe` True
 
@@ -4868,14 +4868,14 @@ bedSleepSpec = describe "Bed sleep logic" $ do
       ew <- newEntityWorld
       _ <- spawnEntity ew (V3 10 65 10) 10 "Pig"
       nearby <- entitiesInRange ew (V3 12 65 10) 8.0
-      let hostileTags = ["Zombie", "Skeleton", "Creeper", "Spider"] :: [String]
+      let hostileTags = ["Zombie", "Skeleton", "Creeper"] :: [String]
           hasHostile = any (\e -> entTag e `elem` hostileTags) nearby
       hasHostile `shouldBe` False
 
     it "no entities means sleep is allowed" $ do
       ew <- newEntityWorld
       nearby <- entitiesInRange ew (V3 10 65 10) 8.0
-      let hostileTags = ["Zombie", "Skeleton", "Creeper", "Spider"] :: [String]
+      let hostileTags = ["Zombie", "Skeleton", "Creeper"] :: [String]
           hasHostile = any (\e -> entTag e `elem` hostileTags) nearby
       hasHostile `shouldBe` False
 
@@ -9465,6 +9465,33 @@ crosshairColorSpec = describe "UI.CrosshairColor" $ do
     a1 `shouldBe` 1.0
     a2 `shouldBe` 1.0
     a3 `shouldBe` 1.0
+
+  describe "crosshairColor wired with readMobType + isHostile" $ do
+    it "produces red for Zombie entity tag" $ do
+      let tag = "Zombie"
+          onCrosshair = True
+          hostile = isHostile (readMobType tag)
+      crosshairColor onCrosshair hostile `shouldBe` (1.0, 0.2, 0.2, 1.0)
+
+    it "produces green for Pig entity tag" $ do
+      let tag = "Pig"
+          onCrosshair = True
+          hostile = isHostile (readMobType tag)
+      crosshairColor onCrosshair hostile `shouldBe` (0.2, 1.0, 0.2, 1.0)
+
+    it "produces white when no entity is targeted" $
+      crosshairColor False (isHostile (readMobType "Zombie")) `shouldBe` (1.0, 1.0, 1.0, 1.0)
+
+    it "produces red for all hostile mob types" $ do
+      let hostileTags = ["Zombie", "Skeleton", "Creeper"]
+          colors = map (\t -> crosshairColor True (isHostile (readMobType t))) hostileTags
+      all (== (1.0, 0.2, 0.2, 1.0)) colors `shouldBe` True
+
+    it "produces green for all passive mob types" $ do
+      let passiveTags = ["Pig", "Cow", "Sheep", "Chicken"]
+          colors = map (\t -> crosshairColor True (isHostile (readMobType t))) passiveTags
+      all (== (0.2, 1.0, 0.2, 1.0)) colors `shouldBe` True
+
   describe "EntityRender.entitySize" $ do
     it "chicken is small (0.5)" $
       entitySize "Chicken" `shouldBe` 0.5
