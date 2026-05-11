@@ -44,7 +44,7 @@ import UI.Screen
 
 import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts, cursorIconSize)
 import Engine.BitmapFont (renderText, charSpacing)
-import Engine.Camera (Camera(..), defaultCamera, cameraViewMatrix, thirdPersonOffset, thirdPersonViewMatrix)
+import Engine.Camera (Camera(..), defaultCamera, cameraViewMatrix, thirdPersonOffset, thirdPersonViewMatrix, smoothFOV, baseFOV, sprintFOV, damageFOV)
 import Engine.EntityRender (entitySize)
 
 import Game.PotionEffect
@@ -77,6 +77,7 @@ import Game.PickupToast (PickupToast(..), addPickupToast, tickPickupToasts, form
 import UI.CelestialBody (sunScreenPos, moonScreenPos, celestialDiscVerts)
 import UI.CrosshairColor (crosshairColor)
 import UI.StarField (starPositions, starBrightness)
+import UI.Vignette (vignetteAlpha, vignetteGrid)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -9318,3 +9319,51 @@ crosshairColorSpec = describe "UI.CrosshairColor" $ do
 
     it "starBrightness is positive when ambient < 0.3 at peak twinkle" $
       starBrightness 0.0 0.25 `shouldSatisfy` (> 0.0)
+  describe "UI.Vignette" $ do
+    it "vignetteAlpha at origin is zero" $
+      vignetteAlpha 1.0 0.0 0.0 `shouldBe` 0.0
+
+    it "vignetteAlpha at corner (1,1) equals flash * 2" $
+      vignetteAlpha 0.5 1.0 1.0 `shouldBe` 1.0
+
+    it "vignetteAlpha with zero flash is always zero" $
+      vignetteAlpha 0.0 0.8 0.6 `shouldBe` 0.0
+
+    it "vignetteAlpha clamps to 1.0 for large values" $
+      vignetteAlpha 2.0 1.0 1.0 `shouldBe` 1.0
+
+    it "vignetteAlpha clamps negative flash to 0.0" $
+      vignetteAlpha (-1.0) 0.5 0.5 `shouldBe` 0.0
+
+    it "vignetteGrid returns 16 elements" $
+      length (vignetteGrid 1.0) `shouldBe` 16
+
+    it "vignetteGrid with zero flash is all zeros" $
+      vignetteGrid 0.0 `shouldBe` replicate 16 0.0
+  describe "Smooth FOV helpers" $ do
+    it "smoothFOV returns target when t=1" $
+      smoothFOV 45.0 55.0 1.0 `shouldBe` 55.0
+
+    it "smoothFOV returns current when t=0" $
+      smoothFOV 45.0 55.0 0.0 `shouldBe` 45.0
+
+    it "smoothFOV interpolates at t=0.5" $
+      smoothFOV 40.0 60.0 0.5 `shouldBe` 50.0
+
+    it "smoothFOV clamps t above 1 to 1" $
+      smoothFOV 45.0 55.0 2.0 `shouldBe` 55.0
+
+    it "smoothFOV clamps t below 0 to 0" $
+      smoothFOV 45.0 55.0 (-1.0) `shouldBe` 45.0
+
+    it "smoothFOV works when target < current" $
+      smoothFOV 55.0 45.0 0.5 `shouldBe` 50.0
+
+    it "baseFOV is 45" $
+      baseFOV `shouldBe` 45.0
+
+    it "sprintFOV is 55" $
+      sprintFOV `shouldBe` 55.0
+
+    it "damageFOV is 40" $
+      damageFOV `shouldBe` 40.0
