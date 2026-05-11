@@ -76,6 +76,7 @@ import UI.Minimap (minimapVerts, minimapSize, chunkGridForPlayer, chunkColor, pl
 import Game.PickupToast (PickupToast(..), addPickupToast, tickPickupToasts, formatToast, maxToasts, toastDuration, mergeToasts, emptyToasts)
 import UI.CelestialBody (sunScreenPos, moonScreenPos, celestialDiscVerts)
 import UI.CrosshairColor (crosshairColor)
+import UI.Vignette (vignetteAlpha, vignetteGrid)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -9297,3 +9298,25 @@ crosshairColorSpec = describe "UI.CrosshairColor" $ do
 
     it "spider is standard (1.0)" $
       entitySize "Spider" `shouldBe` 1.0
+
+  describe "UI.Vignette" $ do
+    it "vignetteAlpha at origin is zero" $
+      vignetteAlpha 1.0 0.0 0.0 `shouldBe` 0.0
+
+    it "vignetteAlpha at corner (1,1) equals flash * 2" $
+      vignetteAlpha 0.5 1.0 1.0 `shouldBe` 1.0
+
+    it "vignetteAlpha with zero flash is always zero" $
+      vignetteAlpha 0.0 0.8 0.6 `shouldBe` 0.0
+
+    it "vignetteAlpha clamps to 1.0 for large values" $
+      vignetteAlpha 2.0 1.0 1.0 `shouldBe` 1.0
+
+    it "vignetteAlpha clamps negative flash to 0.0" $
+      vignetteAlpha (-1.0) 0.5 0.5 `shouldBe` 0.0
+
+    it "vignetteGrid returns 16 elements" $
+      length (vignetteGrid 1.0) `shouldBe` 16
+
+    it "vignetteGrid with zero flash is all zeros" $
+      vignetteGrid 0.0 `shouldBe` replicate 16 0.0
