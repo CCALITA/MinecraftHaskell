@@ -28,6 +28,7 @@ import Game.Enchanting (EnchantmentType, EnchantmentMap, newEnchantmentMap)
 import Game.PotionEffect (ActiveEffect)
 import Game.Event (EventBus, newEventBus)
 import Game.Command (ChatState, emptyChatState)
+import UI.SaveToast (SaveToast)
 import Game.DayNight (DayNightCycle, newDayNightCycle)
 import World.Weather (WeatherState, newWeatherState)
 import World.Redstone (RedstoneState, newRedstoneState)
@@ -152,6 +153,8 @@ data GameState = GameState
   , gsAttackCooldown   :: !(IORef Float)
     -- Camera perspective mode
   , gsCameraMode       :: !(IORef CameraMode)
+    -- Save/load toast notification
+  , gsSaveToast        :: !(IORef (Maybe SaveToast))
   }
 
 -- | Create a fresh GameState with default initial values.
@@ -241,6 +244,7 @@ newGameState spawnPos = do
 
     <*> newIORef 1.0     -- gsAttackCooldown (fully recharged)
     <*> newIORef FirstPerson  -- gsCameraMode
+    <*> newIORef Nothing      -- gsSaveToast
 
 -- | The cooldown recharge period in seconds (0.5s = Minecraft default).
 attackCooldownPeriod :: Float
