@@ -127,6 +127,7 @@ library
     UI.Vignette
     UI.BlockOutline
     UI.BreathBar
+    UI.BiomeDisplay
     UI.HudLayout
   build-depends:
     , base             >= 4.17  && < 5
