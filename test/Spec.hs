@@ -9666,6 +9666,23 @@ saveToastSpec = describe "UI.SaveToast" $ do
 
     it "vignetteGrid with zero flash is all zeros" $
       vignetteGrid 0.0 `shouldBe` replicate 16 0.0
+
+    it "vignetteGrid has non-zero edge alphas when damageFlash > 0" $
+      let alphas = vignetteGrid 0.5
+      in  any (> 0) alphas `shouldBe` True
+
+    it "vignetteGrid corner cells have larger alpha than inner cells" $
+      let alphas = vignetteGrid 1.0
+          cornerAlpha = head alphas
+          innerAlpha  = alphas !! 5
+      in  cornerAlpha > innerAlpha `shouldBe` True
+
+    it "vignetteGrid all four corners exceed all four inner cells" $
+      let alphas = vignetteGrid 0.3
+          corners = [alphas !! 0, alphas !! 3, alphas !! 12, alphas !! 15]
+          inner   = [alphas !! 5, alphas !! 6, alphas !! 9, alphas !! 10]
+      in  minimum corners > maximum inner `shouldBe` True
+
   describe "Smooth FOV helpers" $ do
     it "smoothFOV returns target when t=1" $
       smoothFOV 45.0 55.0 1.0 `shouldBe` 55.0
