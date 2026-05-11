@@ -85,6 +85,7 @@ import UI.BreathBar (bubbleColor)
 import UI.DamageDirection (damageAngle, damageArcVerts)
 import UI.HudLayout (hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hungerBarX, xpBarY, crosshairSize)
 import UI.BlockOutline (blockOutlineVerts)
+import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -195,6 +196,7 @@ main = hspec $ do
   saveToastSpec
   damageDirectionSpec
   blockOutlineSpec
+  knockbackSpec
 
 -- =========================================================================
 -- Block
@@ -9762,3 +9764,38 @@ blockOutlineSpec = describe "UI.BlockOutline" $ do
   it "vertex count is always a multiple of 36 (6 floats * 6 verts per edge)" $ do
     let verts = blockOutlineVerts (V3 5 5 5) identity
     (length verts `mod` 36) `shouldBe` 0
+
+-- =========================================================================
+-- Knockback
+-- =========================================================================
+knockbackSpec :: Spec
+knockbackSpec = describe "Game.Knockback" $ do
+  it "defaultKnockback is 0.4" $ do
+    defaultKnockback `shouldBe` 0.4
+
+  it "sprintKnockback is 0.6" $ do
+    sprintKnockback `shouldBe` 0.6
+
+  it "upward component is always 0.4" $ do
+    let V3 _ vy _ = knockbackVelocity (V3 0 0 0) (V3 5 0 5) defaultKnockback
+    vy `shouldBe` 0.4
+
+  it "pushes target away from attacker horizontally" $ do
+    let V3 vx _ vz = knockbackVelocity (V3 0 0 0) (V3 10 0 0) defaultKnockback
+    vx `shouldSatisfy` (> 0)
+    abs vz `shouldSatisfy` (< 0.001)
+
+  it "strength scales horizontal magnitude" $ do
+    let V3 vx1 _ _ = knockbackVelocity (V3 0 0 0) (V3 5 0 0) defaultKnockback
+        V3 vx2 _ _ = knockbackVelocity (V3 0 0 0) (V3 5 0 0) sprintKnockback
+    abs vx2 `shouldSatisfy` (> abs vx1)
+
+  it "same position defaults to +Z push" $ do
+    let V3 vx _ vz = knockbackVelocity (V3 5 0 5) (V3 5 0 5) defaultKnockback
+    abs vx `shouldSatisfy` (< 0.001)
+    vz `shouldSatisfy` (> 0)
+
+  it "Y positions of attacker and target do not affect result" $ do
+    let vel1 = knockbackVelocity (V3 0 0 0) (V3 3 0 4) defaultKnockback
+        vel2 = knockbackVelocity (V3 0 100 0) (V3 3 200 4) defaultKnockback
+    vel1 `shouldBe` vel2
