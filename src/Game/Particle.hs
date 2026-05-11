@@ -156,8 +156,8 @@ weatherParticleRadius :: Float
 weatherParticleRadius = 16.0
 weatherParticleHeight :: Float
 weatherParticleHeight = 20.0
-weatherParticleCount :: Int
-weatherParticleCount = 200
+weatherParticleCount :: Float -> Int
+weatherParticleCount intensity = round (intensity * 200)
 rainFallSpeed :: Float
 rainFallSpeed = 15.0
 snowFallSpeed :: Float
