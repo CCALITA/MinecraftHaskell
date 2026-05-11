@@ -125,6 +125,7 @@ library
     UI.BlockOutline
     UI.BreathBar
     UI.HudLayout
+    UI.MiningSpeed
   build-depends:
     , base             >= 4.17  && < 5
     , vulkan           >= 3.26

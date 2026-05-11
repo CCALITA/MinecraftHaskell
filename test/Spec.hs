@@ -85,6 +85,7 @@ import UI.BreathBar (bubbleColor)
 import UI.DamageDirection (damageAngle, damageArcVerts)
 import UI.HudLayout (hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hungerBarX, xpBarY, crosshairSize)
 import UI.BlockOutline (blockOutlineVerts)
+import UI.MiningSpeed (miningTimeText, miningProgressVerts)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -195,6 +196,7 @@ main = hspec $ do
   saveToastSpec
   damageDirectionSpec
   blockOutlineSpec
+  miningSpeedSpec
 
 -- =========================================================================
 -- Block
@@ -9762,3 +9764,57 @@ blockOutlineSpec = describe "UI.BlockOutline" $ do
   it "vertex count is always a multiple of 36 (6 floats * 6 verts per edge)" $ do
     let verts = blockOutlineVerts (V3 5 5 5) identity
     (length verts `mod` 36) `shouldBe` 0
+
+-- =========================================================================
+-- Mining Speed Display
+-- =========================================================================
+miningSpeedSpec :: Spec
+miningSpeedSpec = describe "UI.MiningSpeed" $ do
+  describe "miningTimeText" $ do
+    it "formats seconds with one decimal place and 's' suffix" $
+      miningTimeText 2.53 `shouldBe` "2.5s"
+
+    it "formats zero as 0.0s" $
+      miningTimeText 0 `shouldBe` "0.0s"
+
+    it "clamps negative values to 0.0s" $
+      miningTimeText (-3.7) `shouldBe` "0.0s"
+
+    it "formats whole seconds with .0" $
+      miningTimeText 5.0 `shouldBe` "5.0s"
+
+    it "rounds down fractional part (truncates to 1 decimal)" $
+      miningTimeText 1.99 `shouldBe` "2.0s"
+
+  describe "miningProgressVerts" $ do
+    it "returns empty list when progress is 0" $
+      miningProgressVerts 0 0 0 `shouldBe` []
+
+    it "returns empty list when progress is negative" $
+      miningProgressVerts (-0.5) 0.1 0.2 `shouldBe` []
+
+    it "produces 6 vertices (36 floats) for a non-zero progress" $
+      length (miningProgressVerts 0.5 0 0) `shouldBe` 36
+
+    it "clamps progress above 1.0 to 1.0" $
+      length (miningProgressVerts 1.5 0 0) `shouldBe` 36
+
+    it "bar width scales with progress" $ do
+      let verts50 = miningProgressVerts 0.5 0 0
+          verts100 = miningProgressVerts 1.0 0 0
+          -- x1 is at index 6 (second vertex x coord)
+          x1_50 = verts50 !! 6
+          x1_100 = verts100 !! 6
+      x1_100 `shouldSatisfy` (> x1_50)
+
+    it "respects x and y position offsets" $ do
+      let verts = miningProgressVerts 0.5 0.4 0.3
+          x0 = head verts
+          y0 = verts !! 1
+      x0 `shouldBe` 0.4
+      y0 `shouldBe` 0.3
+
+    it "alpha is 0.8 for all vertices" $ do
+      let verts = miningProgressVerts 1.0 0 0
+          alphas = [verts !! i | i <- [5, 11, 17, 23, 29, 35]]
+      all (\a -> abs (a - 0.8) < 0.001) alphas `shouldBe` True
