@@ -116,6 +116,7 @@ library
     UI.Minimap
     UI.CelestialBody
     UI.CrosshairColor
+    UI.StarField
   build-depends:
     , base             >= 4.17  && < 5
     , vulkan           >= 3.26

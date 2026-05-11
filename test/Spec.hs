@@ -76,6 +76,7 @@ import UI.Minimap (minimapVerts, minimapSize, chunkGridForPlayer, chunkColor, pl
 import Game.PickupToast (PickupToast(..), addPickupToast, tickPickupToasts, formatToast, maxToasts, toastDuration, mergeToasts, emptyToasts)
 import UI.CelestialBody (sunScreenPos, moonScreenPos, celestialDiscVerts)
 import UI.CrosshairColor (crosshairColor)
+import UI.StarField (starPositions, starBrightness)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -9297,3 +9298,23 @@ crosshairColorSpec = describe "UI.CrosshairColor" $ do
 
     it "spider is standard (1.0)" $
       entitySize "Spider" `shouldBe` 1.0
+
+  describe "UI.StarField" $ do
+    it "starPositions returns 200 stars" $
+      length (starPositions 42) `shouldBe` 200
+
+    it "starPositions is deterministic (same seed → same result)" $
+      starPositions 123 `shouldBe` starPositions 123
+
+    it "starPositions different seeds give different results" $
+      starPositions 1 `shouldNotBe` starPositions 2
+
+    it "all star positions are within NDC range [-1,1]" $
+      let ps = starPositions 99
+      in all (\(x, y) -> x >= -1 && x <= 1 && y >= -1 && y <= 1) ps `shouldBe` True
+
+    it "starBrightness is 0 when ambient >= 0.3" $
+      starBrightness 0.3 0.5 `shouldBe` 0.0
+
+    it "starBrightness is positive when ambient < 0.3 at peak twinkle" $
+      starBrightness 0.0 0.25 `shouldSatisfy` (> 0.0)
