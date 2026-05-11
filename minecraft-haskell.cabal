@@ -114,6 +114,7 @@ library
     UI.Screen
     UI.EnchantGlow
     UI.CompassBar
+    UI.DamageDirection
     UI.Minimap
     UI.CelestialBody
     UI.CrosshairColor
