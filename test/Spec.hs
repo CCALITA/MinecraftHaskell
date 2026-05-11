@@ -73,6 +73,7 @@ import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.List (nub, isPrefixOf, isInfixOf)
 import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted, glowColor, glowThickness)
 import Game.ViewBob (bobOffset, bobSpeed, bobAmplitude, bobDecayRate, bobMovementThreshold)
+import Game.Swimming (swimmingSpeed, isSwimming, swimBobFrequency, swimBobAmplitude)
 import UI.CompassBar (compassBarVerts, yawToDirection, directionMarkers, markerNdcOffset, compassBarHeight, compassBarY)
 import UI.SaturationBar (saturationBarVerts)
 import UI.Minimap (minimapVerts, minimapSize, chunkGridForPlayer, chunkColor, playerDotColor)
@@ -86,6 +87,8 @@ import UI.DamageDirection (damageAngle, damageArcVerts)
 import UI.HudLayout (hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hungerBarX, xpBarY, crosshairSize)
 import UI.BlockOutline (blockOutlineVerts)
 import UI.BiomeDisplay (biomeDisplayName, biomeNameFadeAlpha)
+import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
+import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -197,6 +200,7 @@ main = hspec $ do
   damageDirectionSpec
   blockOutlineSpec
   biomeDisplaySpec
+  knockbackSpec
 
 -- =========================================================================
 -- Block
@@ -9810,3 +9814,89 @@ biomeDisplaySpec = describe "UI.BiomeDisplay" $ do
     property $ \t ->
       let alpha = biomeNameFadeAlpha (t :: Float)
       in alpha >= 0.0 && alpha <= 1.0
+-- Knockback
+-- =========================================================================
+knockbackSpec :: Spec
+knockbackSpec = describe "Game.Knockback" $ do
+  it "defaultKnockback is 0.4" $ do
+    defaultKnockback `shouldBe` 0.4
+
+  it "sprintKnockback is 0.6" $ do
+    sprintKnockback `shouldBe` 0.6
+
+  it "upward component is always 0.4" $ do
+    let V3 _ vy _ = knockbackVelocity (V3 0 0 0) (V3 5 0 5) defaultKnockback
+    vy `shouldBe` 0.4
+
+  it "pushes target away from attacker horizontally" $ do
+    let V3 vx _ vz = knockbackVelocity (V3 0 0 0) (V3 10 0 0) defaultKnockback
+    vx `shouldSatisfy` (> 0)
+    abs vz `shouldSatisfy` (< 0.001)
+
+  it "strength scales horizontal magnitude" $ do
+    let V3 vx1 _ _ = knockbackVelocity (V3 0 0 0) (V3 5 0 0) defaultKnockback
+        V3 vx2 _ _ = knockbackVelocity (V3 0 0 0) (V3 5 0 0) sprintKnockback
+    abs vx2 `shouldSatisfy` (> abs vx1)
+
+  it "same position defaults to +Z push" $ do
+    let V3 vx _ vz = knockbackVelocity (V3 5 0 5) (V3 5 0 5) defaultKnockback
+    abs vx `shouldSatisfy` (< 0.001)
+    vz `shouldSatisfy` (> 0)
+
+  it "Y positions of attacker and target do not affect result" $ do
+    let vel1 = knockbackVelocity (V3 0 0 0) (V3 3 0 4) defaultKnockback
+        vel2 = knockbackVelocity (V3 0 100 0) (V3 3 200 4) defaultKnockback
+    vel1 `shouldBe` vel2
+  describe "EatingAnimation" $ do
+    it "eatingProgress returns 0 at start and 1 at end" $ do
+      eatingProgress 0 1.6 `shouldBe` 0.0
+      abs (eatingProgress 1.6 1.6 - 1.0) < 0.001 `shouldBe` True
+
+    it "eatingProgress clamps to [0,1]" $ do
+      eatingProgress (-1) 1.0 `shouldBe` 0.0
+      eatingProgress 5.0 1.0 `shouldBe` 1.0
+
+    it "eatingProgress with zero duration returns 1.0" $ do
+      eatingProgress 0 0 `shouldBe` 1.0
+      eatingProgress 0.5 0 `shouldBe` 1.0
+
+    it "eatingParticleCount returns 0-6 particles" $ do
+      eatingParticleCount 0.0 `shouldBe` 0
+      eatingParticleCount 1.0 `shouldSatisfy` (\n -> n >= 1 && n <= 6)
+      eatingParticleCount 0.5 `shouldSatisfy` (\n -> n >= 1 && n <= 6)
+
+    it "eatingBarVerts returns 36 floats for positive progress" $ do
+      let verts = eatingBarVerts 0.5 (-0.1) (-0.9)
+      length verts `shouldBe` 36
+
+    it "eatingBarVerts returns empty list for zero progress" $ do
+      eatingBarVerts 0.0 0.0 0.0 `shouldBe` []
+
+    it "eatingBarVerts green channel is dominant color" $ do
+      let verts = eatingBarVerts 1.0 0.0 0.0
+          -- Each vertex has 6 floats: x,y,r,g,b,a; green is index 3 of each
+          greens = [verts !! i | i <- [3, 9, 15, 21, 27, 33]]
+          reds   = [verts !! i | i <- [2, 8, 14, 20, 26, 32]]
+      all (\g -> g > 0.5) greens `shouldBe` True
+      all (\r -> r < 0.5) reds `shouldBe` True
+  describe "Game.Swimming" $ do
+    it "swimmingSpeed is 1.5" $
+      swimmingSpeed `shouldBe` 1.5
+
+    it "isSwimming returns True when in water and moving" $
+      isSwimming True True `shouldBe` True
+
+    it "isSwimming returns False when not in water" $
+      isSwimming False True `shouldBe` False
+
+    it "isSwimming returns False when not moving" $
+      isSwimming True False `shouldBe` False
+
+    it "isSwimming returns False when neither in water nor moving" $
+      isSwimming False False `shouldBe` False
+
+    it "swimBobFrequency is 6.0" $
+      swimBobFrequency `shouldBe` 6.0
+
+    it "swimBobAmplitude is 0.03" $
+      swimBobAmplitude `shouldBe` 0.03

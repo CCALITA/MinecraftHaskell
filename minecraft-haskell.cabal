@@ -93,10 +93,13 @@ library
     Game.PotionEffect
     Game.Particle
     Game.PickupToast
+    Game.Swimming
     Game.ViewBob
     Game.XP
     Game.Explosion
+    Game.Knockback
     Game.InteractionCooldown
+    Game.EatingAnimation
     Game.RedstoneAction
     Entity.ECS
     Entity.Component
