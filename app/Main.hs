@@ -74,6 +74,7 @@ import Game.ViewBob (bobOffset, bobSpeed, bobDecayRate, bobMovementThreshold)
 import UI.CompassBar (compassBarVerts)
 import UI.Minimap (minimapVerts, chunkGridForPlayer, minimapSize)
 import UI.SaturationBar (saturationBarVerts)
+import UI.Vignette (vignetteGrid)
 
 import World.Dimension (DimensionType(..), dimensionSkyColor, detectPortalFrame, netherCoords, overworldCoords, portalTransitTime)
 
@@ -3594,9 +3595,21 @@ buildHudVertices inv miningProgress health hunger airSupply saturation mode curs
           in msgBg ++ msgText
       Nothing -> []
 
-    -- Damage flash: red overlay that fades out
+    -- Damage flash: vignette red overlay that fades out (stronger at edges)
     damageFlashVerts
-      | damageFlash > 0 = quad (-1) (-1) 1 1 (0.8, 0.0, 0.0, damageFlash * 0.5)
+      | damageFlash > 0 =
+          let alphas = vignetteGrid damageFlash
+              cellW  = 0.5 :: Float   -- 2.0 / 4 cells
+              cellH  = 0.5 :: Float
+          in  concatMap (\(idx, a) ->
+                  let col = idx `mod` 4
+                      row = idx `div` 4
+                      cx0 = -1.0 + fromIntegral col * cellW
+                      cy0 = -1.0 + fromIntegral row * cellH
+                  in  if a > 0
+                      then quad cx0 cy0 (cx0 + cellW) (cy0 + cellH) (0.8, 0.0, 0.0, a * 0.5)
+                      else []
+                ) (zip [0 :: Int ..] alphas)
       | otherwise = []
 
     -- Chat input bar: shown when ChatInput mode is active
