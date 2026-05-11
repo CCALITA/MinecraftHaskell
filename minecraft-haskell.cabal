@@ -117,6 +117,7 @@ library
     UI.Minimap
     UI.CelestialBody
     UI.CrosshairColor
+    UI.SaturationBar
     UI.SaveToast
     UI.StarField
     UI.Vignette
