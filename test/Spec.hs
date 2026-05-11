@@ -62,6 +62,7 @@ import Game.State (GameState(..), GameMode(..), PlayMode(..), CameraMode(..), cy
 import Game.Creative (creativePalette, creativePaletteSize, creativeClickSlot, creativePickFromPalette, creativeConsumeItem, creativeRefillSlot, palettePageCount, palettePageItems, hitPaletteSlot, paletteRows, paletteCols, paletteSlotsPerPage, paletteX0, paletteY0, paletteSlotW, paletteSlotH)
 import Game.ItemDisplay (durabilityFraction, durabilityBarColor)
 import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
+import Game.InteractionCooldown (canInteract, placeCooldown, doorCooldown)
 
 import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
 
@@ -9300,6 +9301,27 @@ crosshairColorSpec = describe "UI.CrosshairColor" $ do
     it "spider is standard (1.0)" $
       entitySize "Spider" `shouldBe` 1.0
 
+  describe "InteractionCooldown" $ do
+    it "canInteract returns True when elapsed >= cooldown" $
+      canInteract 1.0 0.2 1.3 `shouldBe` True
+
+    it "canInteract returns False when elapsed < cooldown" $
+      canInteract 1.0 0.2 1.1 `shouldBe` False
+
+    it "canInteract returns True at exact cooldown boundary" $
+      canInteract 0.0 0.5 0.5 `shouldBe` True
+
+    it "placeCooldown is 0.2 seconds" $
+      placeCooldown `shouldBe` 0.2
+
+    it "doorCooldown is 0.3 seconds" $
+      doorCooldown `shouldBe` 0.3
+
+    it "canInteract with zero cooldown always succeeds" $
+      canInteract 5.0 0.0 5.0 `shouldBe` True
+
+    it "canInteract fails when now equals lastTime with nonzero cooldown" $
+      canInteract 2.0 0.1 2.0 `shouldBe` False
   describe "UI.StarField" $ do
     it "starPositions returns 200 stars" $
       length (starPositions 42) `shouldBe` 200
