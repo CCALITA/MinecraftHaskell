@@ -74,6 +74,7 @@ import Game.ViewBob (bobOffset, bobSpeed, bobDecayRate, bobMovementThreshold)
 import UI.CompassBar (compassBarVerts)
 import UI.Minimap (minimapVerts, chunkGridForPlayer, minimapSize)
 import UI.SaturationBar (saturationBarVerts)
+import UI.BlockOutline (blockOutlineVerts)
 import UI.SaveToast (SaveToast(..), newSaveToast, tickSaveToast)
 import UI.Vignette (vignetteGrid)
 
@@ -3535,65 +3536,10 @@ buildHudVertices inv miningProgress health hunger airSupply saturation mode curs
             mapVerts = minimapVerts (dbgPos di) chunkStates
         in bg ++ textVerts ++ mapVerts
 
-    -- Block target highlight: project 3D block edges to 2D NDC and render wireframe
+    -- Block target highlight: delegate to UI.BlockOutline
     highlightVerts = case targetInfo of
       Nothing -> []
-      Just (V3 bx by bz, vpMat) ->
-        let -- Block corners in world space (slightly expanded to avoid z-fighting)
-            e = 0.002 :: Float  -- expansion
-            x0 = fromIntegral bx - e
-            y0 = fromIntegral by - e
-            z0 = fromIntegral bz - e
-            x1 = fromIntegral bx + 1 + e
-            y1 = fromIntegral by + 1 + e
-            z1 = fromIntegral bz + 1 + e
-            -- Project a 3D point to 2D NDC via the VP matrix
-            -- Vulkan clip correction: Y-flip is in the projection matrix,
-            -- so projected Y is already in Vulkan NDC (-1=top, +1=bottom)
-            projectPt (V3 wx wy wz) =
-              let V4 cx cy cz cw = vpMat !* V4 wx wy wz 1
-              in if cw > 0.01
-                 then Just (cx / cw, cy / cw, cz / cw)
-                 else Nothing  -- behind camera
-            -- 8 corners of the block
-            corners =
-              [ V3 x0 y0 z0, V3 x1 y0 z0, V3 x1 y0 z1, V3 x0 y0 z1  -- bottom
-              , V3 x0 y1 z0, V3 x1 y1 z0, V3 x1 y1 z1, V3 x0 y1 z1  -- top
-              ]
-            projected = map projectPt corners
-            -- 12 edges of a cube (index pairs)
-            edges = [ (0,1),(1,2),(2,3),(3,0)   -- bottom face
-                    , (4,5),(5,6),(6,7),(7,4)   -- top face
-                    , (0,4),(1,5),(2,6),(3,7)   -- vertical edges
-                    ]
-            -- Draw a thin quad between two NDC points (line thickness in NDC)
-            lineColor = (0.1, 0.1, 0.1, 0.6)
-            lineT = 0.003 :: Float  -- line thickness in NDC
-            drawEdge (i, j) =
-              case (projected !! i, projected !! j) of
-                (Just (ax, ay, _), Just (bx', by', _)) ->
-                  -- Only draw if both points are in front of camera and on-screen
-                  if abs ax < 1.5 && abs ay < 1.5 && abs bx' < 1.5 && abs by' < 1.5
-                  then
-                    let dx = bx' - ax
-                        dy = by' - ay
-                        len = sqrt (dx * dx + dy * dy)
-                        -- Perpendicular direction for thickness
-                        (nx, ny) = if len > 0.001
-                                   then (-dy * lineT / len, dx * lineT / len)
-                                   else (lineT, 0)
-                        -- Four corners of the line quad
-                        (r, g, b, a) = lineColor
-                    in [ ax + nx, ay + ny, r, g, b, a
-                       , bx' + nx, by' + ny, r, g, b, a
-                       , bx' - nx, by' - ny, r, g, b, a
-                       , ax + nx, ay + ny, r, g, b, a
-                       , bx' - nx, by' - ny, r, g, b, a
-                       , ax - nx, ay - ny, r, g, b, a
-                       ]
-                  else []
-                _ -> []
-        in concatMap drawEdge edges
+      Just (blockPos, vpMat) -> blockOutlineVerts blockPos vpMat
 
     -- Bed-related message (sleep at night / monsters nearby)
     sleepMsgVerts = case sleepMsgText of
