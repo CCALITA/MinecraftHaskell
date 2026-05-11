@@ -44,7 +44,7 @@ import UI.Screen
 
 import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts, cursorIconSize)
 import Engine.BitmapFont (renderText, charSpacing)
-import Engine.Camera (Camera(..), defaultCamera, cameraViewMatrix, thirdPersonOffset, thirdPersonViewMatrix)
+import Engine.Camera (Camera(..), defaultCamera, cameraViewMatrix, thirdPersonOffset, thirdPersonViewMatrix, smoothFOV, baseFOV, sprintFOV, damageFOV)
 import Engine.EntityRender (entitySize)
 
 import Game.PotionEffect
@@ -9320,3 +9320,30 @@ crosshairColorSpec = describe "UI.CrosshairColor" $ do
 
     it "vignetteGrid with zero flash is all zeros" $
       vignetteGrid 0.0 `shouldBe` replicate 16 0.0
+  describe "Smooth FOV helpers" $ do
+    it "smoothFOV returns target when t=1" $
+      smoothFOV 45.0 55.0 1.0 `shouldBe` 55.0
+
+    it "smoothFOV returns current when t=0" $
+      smoothFOV 45.0 55.0 0.0 `shouldBe` 45.0
+
+    it "smoothFOV interpolates at t=0.5" $
+      smoothFOV 40.0 60.0 0.5 `shouldBe` 50.0
+
+    it "smoothFOV clamps t above 1 to 1" $
+      smoothFOV 45.0 55.0 2.0 `shouldBe` 55.0
+
+    it "smoothFOV clamps t below 0 to 0" $
+      smoothFOV 45.0 55.0 (-1.0) `shouldBe` 45.0
+
+    it "smoothFOV works when target < current" $
+      smoothFOV 55.0 45.0 0.5 `shouldBe` 50.0
+
+    it "baseFOV is 45" $
+      baseFOV `shouldBe` 45.0
+
+    it "sprintFOV is 55" $
+      sprintFOV `shouldBe` 55.0
+
+    it "damageFOV is 40" $
+      damageFOV `shouldBe` 40.0

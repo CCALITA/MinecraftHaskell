@@ -11,6 +11,10 @@ module Engine.Camera
   , thirdPersonViewMatrix
   , cameraFromPlayer
   , dirFromPlayer
+  , smoothFOV
+  , baseFOV
+  , sprintFOV
+  , damageFOV
   ) where
 
 import Linear
@@ -143,6 +147,27 @@ cameraFromPlayer player =
     , camPitch    = plPitch player
     , camFov      = fov
     }
+
+-- | Linearly interpolate current FOV toward target FOV.
+--   @smoothFOV current target (rate * dt)@ moves @current@ toward @target@
+--   by at most @rate * dt@ fraction of the remaining difference.
+--   The result is clamped so it never overshoots the target.
+smoothFOV :: Float -> Float -> Float -> Float
+smoothFOV current target t =
+  let clamped = max 0 (min 1 t)
+  in current + (target - current) * clamped
+
+-- | Default field of view in degrees.
+baseFOV :: Float
+baseFOV = 45.0
+
+-- | FOV used while sprinting in degrees.
+sprintFOV :: Float
+sprintFOV = 55.0
+
+-- | FOV used during damage effect in degrees.
+damageFOV :: Float
+damageFOV = 40.0
 
 -- | Get look direction from player
 dirFromPlayer :: Player -> V3 Float
