@@ -84,6 +84,7 @@ import UI.Vignette (vignetteAlpha, vignetteGrid)
 import UI.BreathBar (bubbleColor)
 import UI.DamageDirection (damageAngle, damageArcVerts)
 import UI.HudLayout (hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hungerBarX, xpBarY, crosshairSize)
+import UI.BlockOutline (blockOutlineVerts)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -192,6 +193,7 @@ main = hspec $ do
   crosshairColorSpec
   saveToastSpec
   damageDirectionSpec
+  blockOutlineSpec
 
 -- =========================================================================
 -- Block
@@ -9550,3 +9552,39 @@ damageDirectionSpec = describe "UI.DamageDirection" $ do
 
     it "healthBarY is above xpBarY (smaller Y = higher on screen in Vulkan NDC)" $ do
       healthBarY `shouldSatisfy` (< hotbarY)
+-- =========================================================================
+-- Block Outline
+-- =========================================================================
+blockOutlineSpec :: Spec
+blockOutlineSpec = describe "UI.BlockOutline" $ do
+  it "identity VP at origin produces 12 edges * 36 floats = 432 floats" $ do
+    let verts = blockOutlineVerts (V3 0 0 0) identity
+    -- 12 edges, each edge = 6 verts * 6 floats = 36 floats
+    length verts `shouldBe` (12 * 6 * 6)
+
+  it "all alpha values are 0.8" $ do
+    let verts = blockOutlineVerts (V3 0 0 0) identity
+        -- every 6th float starting at index 5 is alpha
+        alphas = [verts !! i | i <- [5, 11 .. length verts - 1]]
+    all (\a -> abs (a - 0.8) < 0.001) alphas `shouldBe` True
+
+  it "all RGB values are 0 (black)" $ do
+    let verts = blockOutlineVerts (V3 0 0 0) identity
+        -- indices 2,3,4 in each 6-float vertex are r,g,b
+        rgbs = [verts !! i | i <- concatMap (\base -> [base+2, base+3, base+4]) [0, 6 .. length verts - 6]]
+    all (\c -> abs c < 0.001) rgbs `shouldBe` True
+
+  it "works at non-origin position" $ do
+    let verts = blockOutlineVerts (V3 10 20 30) identity
+    length verts `shouldBe` (12 * 6 * 6)
+
+  it "returns empty list when all corners behind camera" $ do
+    -- A VP matrix that puts everything behind the camera (w <= 0)
+    -- Translate block far behind: use a matrix that negates z
+    let behindVP = V4 (V4 1 0 0 0) (V4 0 1 0 0) (V4 0 0 (-1) (-100)) (V4 0 0 (-1) 0)
+        verts = blockOutlineVerts (V3 0 0 0) behindVP
+    length verts `shouldBe` 0
+
+  it "vertex count is always a multiple of 36 (6 floats * 6 verts per edge)" $ do
+    let verts = blockOutlineVerts (V3 5 5 5) identity
+    (length verts `mod` 36) `shouldBe` 0
