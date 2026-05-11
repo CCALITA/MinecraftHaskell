@@ -96,6 +96,7 @@ library
     Game.ViewBob
     Game.XP
     Game.Explosion
+    Game.InteractionCooldown
     Game.RedstoneAction
     Entity.ECS
     Entity.Component
