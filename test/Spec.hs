@@ -76,6 +76,7 @@ import UI.Minimap (minimapVerts, minimapSize, chunkGridForPlayer, chunkColor, pl
 import Game.PickupToast (PickupToast(..), addPickupToast, tickPickupToasts, formatToast, maxToasts, toastDuration, mergeToasts, emptyToasts)
 import UI.CelestialBody (sunScreenPos, moonScreenPos, celestialDiscVerts)
 import UI.CrosshairColor (crosshairColor)
+import UI.HudLayout
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -9297,3 +9298,25 @@ crosshairColorSpec = describe "UI.CrosshairColor" $ do
 
     it "spider is standard (1.0)" $
       entitySize "Spider" `shouldBe` 1.0
+
+  describe "UI.HudLayout" $ do
+    it "hotbarX0 is within NDC range [-1,1]" $
+      hotbarX0 `shouldSatisfy` (\x -> x >= -1.0 && x <= 1.0)
+
+    it "hotbarY is within NDC range [-1,1]" $
+      hotbarY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+
+    it "healthBarX is within NDC range [-1,1]" $
+      healthBarX `shouldSatisfy` (\x -> x >= -1.0 && x <= 1.0)
+
+    it "healthBarY is within NDC range [-1,1]" $
+      healthBarY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+
+    it "crosshairSize is positive and small" $
+      crosshairSize `shouldSatisfy` (\s -> s > 0 && s < 0.1)
+
+    it "slotSize is positive and fits within NDC width" $
+      slotSize `shouldSatisfy` (\s -> s > 0 && s < 1.0)
+
+    it "hotbar right edge stays within NDC" $
+      (hotbarX0 + 9 * slotSize) `shouldSatisfy` (<= 1.0)
