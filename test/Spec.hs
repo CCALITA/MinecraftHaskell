@@ -6365,7 +6365,11 @@ weatherParticleSpec = describe "Game.Particle weather" $ do
   describe "constants" $ do
     it "weatherParticleRadius is 16" $ weatherParticleRadius `shouldBe` 16.0
     it "weatherParticleHeight is 20" $ weatherParticleHeight `shouldBe` 20.0
-    it "weatherParticleCount is 200" $ weatherParticleCount `shouldBe` 200
+    it "weatherParticleCount 0 is 0" $ weatherParticleCount 0 `shouldBe` 0
+    it "weatherParticleCount 0.5 is 100" $ weatherParticleCount 0.5 `shouldBe` 100
+    it "weatherParticleCount 1.0 is 200" $ weatherParticleCount 1.0 `shouldBe` 200
+    it "weatherParticleCount 0.25 is 50" $ weatherParticleCount 0.25 `shouldBe` 50
+    it "weatherParticleCount 0.75 is 150" $ weatherParticleCount 0.75 `shouldBe` 150
     it "rainFallSpeed is 15" $ rainFallSpeed `shouldBe` 15.0
     it "snowFallSpeed is 3" $ snowFallSpeed `shouldBe` 3.0
   describe "isSnowBiome" $ do
@@ -6390,8 +6394,8 @@ weatherParticleSpec = describe "Game.Particle weather" $ do
       ps <- spawnWeatherParticles (V3 100 80 100) Plains 50
       length ps `shouldBe` 50
     it "spawns weatherParticleCount particles" $ do
-      ps <- spawnWeatherParticles (V3 0 64 0) Forest weatherParticleCount
-      length ps `shouldBe` weatherParticleCount
+      ps <- spawnWeatherParticles (V3 0 64 0) Forest (weatherParticleCount 1.0)
+      length ps `shouldBe` weatherParticleCount 1.0
     it "rain particles are RainDrop in Plains" $ do
       ps <- spawnWeatherParticles (V3 0 64 0) Plains 10
       all (\p -> wpType p == RainDrop) ps `shouldBe` True
