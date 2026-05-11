@@ -72,6 +72,7 @@ import Data.List (nub, isPrefixOf, isInfixOf)
 import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted, glowColor, glowThickness)
 import Game.ViewBob (bobOffset, bobSpeed, bobAmplitude, bobDecayRate, bobMovementThreshold)
 import UI.CompassBar (compassBarVerts, yawToDirection, directionMarkers, markerNdcOffset, compassBarHeight, compassBarY)
+import UI.SaturationBar (saturationBarVerts)
 import UI.Minimap (minimapVerts, minimapSize, chunkGridForPlayer, chunkColor, playerDotColor)
 import Game.PickupToast (PickupToast(..), addPickupToast, tickPickupToasts, formatToast, maxToasts, toastDuration, mergeToasts, emptyToasts)
 import UI.CelestialBody (sunScreenPos, moonScreenPos, celestialDiscVerts)
@@ -9297,3 +9298,35 @@ crosshairColorSpec = describe "UI.CrosshairColor" $ do
 
     it "spider is standard (1.0)" $
       entitySize "Spider" `shouldBe` 1.0
+
+  describe "SaturationBar" $ do
+    it "returns empty list when saturation is 0" $
+      saturationBarVerts 0 0 0 `shouldBe` []
+
+    it "returns empty list when saturation is negative" $
+      saturationBarVerts (-5) 0.1 0.2 `shouldBe` []
+
+    it "produces 6 vertices (36 floats) per unit of saturation" $
+      length (saturationBarVerts 3 0 0) `shouldBe` 3 * 6 * 6
+
+    it "clamps saturation to maximum of 20 units" $
+      length (saturationBarVerts 25 0 0) `shouldBe` 20 * 6 * 6
+
+    it "uses yellow color (1.0, 0.9, 0.2, 0.6) for quads" $ do
+      let verts = saturationBarVerts 1 0 0
+          -- First vertex color starts at index 2 (after x,y)
+          r = verts !! 2
+          g = verts !! 3
+          b = verts !! 4
+          a = verts !! 5
+      r `shouldBe` 1.0
+      g `shouldBe` 0.9
+      b `shouldBe` 0.2
+      a `shouldBe` 0.6
+
+    it "respects x and y position offsets" $ do
+      let verts = saturationBarVerts 1 0.5 0.3
+          x0 = head verts
+          y0 = verts !! 1
+      x0 `shouldBe` 0.5
+      y0 `shouldBe` 0.3
