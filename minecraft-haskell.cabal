@@ -96,6 +96,7 @@ library
     Game.ViewBob
     Game.XP
     Game.Explosion
+    Game.InteractionCooldown
     Game.RedstoneAction
     Entity.ECS
     Entity.Component
@@ -117,6 +118,8 @@ library
     UI.CelestialBody
     UI.CrosshairColor
     UI.SaveToast
+    UI.StarField
+    UI.Vignette
   build-depends:
     , base             >= 4.17  && < 5
     , vulkan           >= 3.26
