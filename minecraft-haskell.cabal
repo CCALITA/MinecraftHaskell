@@ -122,6 +122,7 @@ library
     UI.SaveToast
     UI.StarField
     UI.Vignette
+    UI.BlockOutline
     UI.BreathBar
   build-depends:
     , base             >= 4.17  && < 5
