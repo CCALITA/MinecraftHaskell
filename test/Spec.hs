@@ -81,6 +81,7 @@ import UI.CelestialBody (sunScreenPos, moonScreenPos, celestialDiscVerts)
 import UI.CrosshairColor (crosshairColor)
 import UI.StarField (starPositions, starBrightness)
 import UI.Vignette (vignetteAlpha, vignetteGrid)
+import UI.DamageDirection (damageAngle, damageArcVerts)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -188,6 +189,7 @@ main = hspec $ do
   celestialBodySpec
   crosshairColorSpec
   saveToastSpec
+  damageDirectionSpec
 
 -- =========================================================================
 -- Block
@@ -9460,3 +9462,39 @@ saveToastSpec = describe "UI.SaveToast" $ do
 
     it "damageFOV is 40" $
       damageFOV `shouldBe` 40.0
+
+-- =========================================================================
+-- Damage Direction
+-- =========================================================================
+damageDirectionSpec :: Spec
+damageDirectionSpec = describe "UI.DamageDirection" $ do
+  it "damageAngle is 0 when source is directly ahead" $ do
+    -- Player at origin facing +Z (yaw=0), source at (0,0,5)
+    let a = damageAngle (V3 0 0 0) 0 (V3 0 0 5)
+    abs a `shouldSatisfy` (< 0.01)
+
+  it "damageAngle is ~pi/2 when source is to the right" $ do
+    -- Player at origin facing +Z (yaw=0), source at (5,0,0)
+    let a = damageAngle (V3 0 0 0) 0 (V3 5 0 0)
+    abs (a - pi / 2) `shouldSatisfy` (< 0.01)
+
+  it "damageAngle is ~-pi/2 when source is to the left" $ do
+    let a = damageAngle (V3 0 0 0) 0 (V3 (-5) 0 0)
+    abs (a + pi / 2) `shouldSatisfy` (< 0.01)
+
+  it "damageAngle accounts for player yaw" $ do
+    -- Player facing right (yaw=pi/2), source directly ahead in world +X
+    let a = damageAngle (V3 0 0 0) (pi / 2) (V3 5 0 0)
+    abs a `shouldSatisfy` (< 0.01)
+
+  it "damageAngle is ~pi when source is directly behind" $ do
+    let a = damageAngle (V3 0 0 0) 0 (V3 0 0 (-5))
+    abs (abs a - pi) `shouldSatisfy` (< 0.01)
+
+  it "damageArcVerts produces 180 floats (5 segments * 6 verts * 6 components)" $ do
+    length (damageArcVerts 0 1.0) `shouldBe` 180
+
+  it "damageArcVerts alpha is embedded in every vertex" $ do
+    let verts = damageArcVerts 0 0.7
+        alphas = [verts !! i | i <- [5, 11 .. length verts - 1]]
+    all (\a -> abs (a - 0.7) < 0.001) alphas `shouldBe` True
