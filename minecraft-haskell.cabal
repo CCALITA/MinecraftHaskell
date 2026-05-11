@@ -131,6 +131,7 @@ library
     UI.BiomeDisplay
     UI.HudLayout
     UI.MiningSpeed
+    UI.DeathScreen
   build-depends:
     , base             >= 4.17  && < 5
     , vulkan           >= 3.26

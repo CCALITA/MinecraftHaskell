@@ -91,6 +91,7 @@ import UI.BiomeDisplay (biomeDisplayName, biomeNameFadeAlpha)
 import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
 import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
 import Game.ScreenShake (shakeOffset, shakeFromFallDamage, shakeDuration)
+import qualified UI.DeathScreen as DS
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -205,6 +206,7 @@ main = hspec $ do
   biomeDisplaySpec
   knockbackSpec
   screenShakeSpec
+  deathScreenSpec
 
 -- =========================================================================
 -- Block
@@ -10048,3 +10050,43 @@ screenShakeSpec = describe "Game.ScreenShake" $ do
 
   it "shakeDuration is 0.3 seconds" $ do
     shakeDuration `shouldBe` 0.3
+
+-- =========================================================================
+-- Death Screen
+-- =========================================================================
+deathScreenSpec :: Spec
+deathScreenSpec = describe "UI.DeathScreen" $ do
+  it "produces non-empty vertex data" $ do
+    let verts = DS.deathScreenVerts 100 5 0 0
+    length verts `shouldSatisfy` (> 0)
+
+  it "vertex count is always a multiple of 6 (vec2 pos + vec4 color per vertex)" $ do
+    let verts = DS.deathScreenVerts 50 10 0.1 0.1
+    (length verts `mod` 6) `shouldBe` 0
+
+  it "overlay contributes at least 36 floats (2 triangles * 3 verts * 6 floats)" $ do
+    let verts = DS.deathScreenVerts 0 0 0 0
+    length verts `shouldSatisfy` (>= 36)
+
+  it "hover changes vertex data (button highlight differs)" $ do
+    let vertsNoHover  = DS.deathScreenVerts 10 1 (-0.9) (-0.9)
+        vertsHover    = DS.deathScreenVerts 10 1 0.0 (DS.buttonY + 0.01)
+    vertsNoHover /= vertsHover `shouldBe` True
+
+  it "isInsideButton detects center of button as inside" $ do
+    DS.isInsideButton 0.0 (DS.buttonY + DS.buttonHeight / 2) `shouldBe` True
+
+  it "isInsideButton rejects point far outside button" $ do
+    DS.isInsideButton (-0.9) (-0.9) `shouldBe` False
+
+  it "score changes with different xp values" $ do
+    let verts1 = DS.deathScreenVerts 0 0 0 0
+        verts2 = DS.deathScreenVerts 100 0 0 0
+    verts1 /= verts2 `shouldBe` True
+
+  it "constants are within NDC range" $ do
+    DS.titleY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    DS.scoreY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    DS.buttonY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    DS.buttonWidth `shouldSatisfy` (> 0)
+    DS.buttonHeight `shouldSatisfy` (> 0)
