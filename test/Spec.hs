@@ -85,6 +85,7 @@ import UI.BreathBar (bubbleColor)
 import UI.DamageDirection (damageAngle, damageArcVerts)
 import UI.HudLayout (hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hungerBarX, xpBarY, crosshairSize)
 import UI.BlockOutline (blockOutlineVerts)
+import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -9762,3 +9763,36 @@ blockOutlineSpec = describe "UI.BlockOutline" $ do
   it "vertex count is always a multiple of 36 (6 floats * 6 verts per edge)" $ do
     let verts = blockOutlineVerts (V3 5 5 5) identity
     (length verts `mod` 36) `shouldBe` 0
+
+  describe "EatingAnimation" $ do
+    it "eatingProgress returns 0 at start and 1 at end" $ do
+      eatingProgress 0 1.6 `shouldBe` 0.0
+      abs (eatingProgress 1.6 1.6 - 1.0) < 0.001 `shouldBe` True
+
+    it "eatingProgress clamps to [0,1]" $ do
+      eatingProgress (-1) 1.0 `shouldBe` 0.0
+      eatingProgress 5.0 1.0 `shouldBe` 1.0
+
+    it "eatingProgress with zero duration returns 1.0" $ do
+      eatingProgress 0 0 `shouldBe` 1.0
+      eatingProgress 0.5 0 `shouldBe` 1.0
+
+    it "eatingParticleCount returns 0-6 particles" $ do
+      eatingParticleCount 0.0 `shouldBe` 0
+      eatingParticleCount 1.0 `shouldSatisfy` (\n -> n >= 1 && n <= 6)
+      eatingParticleCount 0.5 `shouldSatisfy` (\n -> n >= 1 && n <= 6)
+
+    it "eatingBarVerts returns 36 floats for positive progress" $ do
+      let verts = eatingBarVerts 0.5 (-0.1) (-0.9)
+      length verts `shouldBe` 36
+
+    it "eatingBarVerts returns empty list for zero progress" $ do
+      eatingBarVerts 0.0 0.0 0.0 `shouldBe` []
+
+    it "eatingBarVerts green channel is dominant color" $ do
+      let verts = eatingBarVerts 1.0 0.0 0.0
+          -- Each vertex has 6 floats: x,y,r,g,b,a; green is index 3 of each
+          greens = [verts !! i | i <- [3, 9, 15, 21, 27, 33]]
+          reds   = [verts !! i | i <- [2, 8, 14, 20, 26, 32]]
+      all (\g -> g > 0.5) greens `shouldBe` True
+      all (\r -> r < 0.5) reds `shouldBe` True
