@@ -81,6 +81,7 @@ import UI.CelestialBody (sunScreenPos, moonScreenPos, celestialDiscVerts)
 import UI.CrosshairColor (crosshairColor)
 import UI.StarField (starPositions, starBrightness)
 import UI.Vignette (vignetteAlpha, vignetteGrid)
+import UI.BreathBar (bubbleColor)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -9460,3 +9461,31 @@ saveToastSpec = describe "UI.SaveToast" $ do
 
     it "damageFOV is 40" $
       damageFOV `shouldBe` 40.0
+
+  describe "BreathBar" $ do
+    it "full air returns blue color" $ do
+      let (r, g, b, a) = bubbleColor 15.0 0.0 0
+      r `shouldBe` 0.2
+      g `shouldBe` 0.5
+      b `shouldBe` 1.0
+      a `shouldBe` 0.8
+
+    it "air >= 3 returns blue regardless of index" $ do
+      let (r, _, b, _) = bubbleColor 5.0 1.0 3
+      r `shouldBe` 0.2
+      b `shouldBe` 1.0
+
+    it "air < 3 returns red channel" $ do
+      let (r, g, _, _) = bubbleColor 2.0 0.0 0
+      r `shouldBe` 1.0
+      g `shouldBe` 0.1
+
+    it "air < 3 alpha is in valid range" $ do
+      let (_, _, _, a) = bubbleColor 1.0 0.5 2
+      a >= 0.1 `shouldBe` True
+      a <= 0.9 `shouldBe` True
+
+    it "zero air supply gives red pulsing" $ do
+      let (r, _, b, _) = bubbleColor 0.0 3.0 0
+      r `shouldBe` 1.0
+      b `shouldBe` 0.1
