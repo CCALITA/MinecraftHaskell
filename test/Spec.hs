@@ -9527,6 +9527,18 @@ crosshairColorSpec = describe "UI.CrosshairColor" $ do
           y0 = verts !! 1
       x0 `shouldBe` 0.5
       y0 `shouldBe` 0.3
+
+  describe "SaturationBar wiring" $ do
+    it "saturation bar produces vertices for positive saturation" $
+      saturationBarVerts 10.0 0.0 0.0 `shouldNotBe` []
+
+    it "saturation bar produces no vertices when saturation is zero" $
+      saturationBarVerts 0.0 0.0 0.0 `shouldBe` []
+
+    it "saturation bar vertex count scales with saturation level" $ do
+      let verts5  = saturationBarVerts 5.0 0.0 0.0
+          verts10 = saturationBarVerts 10.0 0.0 0.0
+      length verts10 `shouldBe` 2 * length verts5
 -- =========================================================================
 -- SaveToast
 -- =========================================================================
