@@ -97,6 +97,7 @@ library
     Game.ViewBob
     Game.XP
     Game.Explosion
+    Game.Knockback
     Game.InteractionCooldown
     Game.EatingAnimation
     Game.RedstoneAction
