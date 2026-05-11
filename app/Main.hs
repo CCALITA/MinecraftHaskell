@@ -72,6 +72,7 @@ import Game.XP (xpForBlock, xpForMobKill, xpLevel, xpProgress)
 import Game.ViewBob (bobOffset, bobSpeed, bobDecayRate, bobMovementThreshold)
 import UI.CompassBar (compassBarVerts)
 import UI.Minimap (minimapVerts, chunkGridForPlayer, minimapSize)
+import UI.SaturationBar (saturationBarVerts)
 
 import World.Dimension (DimensionType(..), dimensionSkyColor, detectPortalFrame, netherCoords, overworldCoords, portalTransitTime)
 
@@ -2965,7 +2966,7 @@ main = do
             mVillProf <- readIORef villagerProfRef
             villTrades <- readIORef villagerTradesRef
             enchantSnap <- readIORef enchantMapRef
-            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player') enchantSnap hotbarPopupText attackCooldown (plYaw player')
+            let hudVerts = buildHudVertices inv miningProgress (plHealth player') (plHunger player') (plAirSupply player') (plSaturation player') mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo (fmap (\tb -> (tb, vp)) targetBlock) sleepMsgText damageFlash mouseNdcX mouseNdcY (plPos player') spawnPos dayNightVal playerXP achToastText chatState mVillProf villTrades (plArmorSlots player') enchantSnap hotbarPopupText attackCooldown (plYaw player')
                     VS.++ VS.fromList particleVerts
                 hudVC = VS.length hudVerts `div` 6
             writeIORef hudVertCountRef hudVC
@@ -3239,13 +3240,13 @@ tryTriggerAchievement achRef toastRef trigger = do
 -- hotbarPopupText: Just "item name" when a hotbar item name popup should be shown
 -- attackCooldown: 0.0 = just attacked, 1.0 = fully recharged
 -- playerYaw: player yaw in degrees for compass bar
-buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> Map.Map Int [Enchantment] -> Maybe String -> Float -> Float -> VS.Vector Float
-buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots enchantSnap hotbarPopupText attackCooldown playerYaw = VS.fromList $
+buildHudVertices :: Inventory -> Float -> Int -> Int -> Float -> Float -> GameMode -> Maybe ItemStack -> CraftingGrid -> Maybe Inventory -> Maybe Inventory -> FurnaceState -> Maybe DebugInfo -> Maybe (V3 Int, M44 Float) -> Maybe String -> Float -> Float -> Float -> V3 Float -> V3 Float -> DayNightCycle -> Int -> Maybe String -> ChatState -> Maybe VillagerProfession -> [TradeOffer] -> [Maybe ItemStack] -> Map.Map Int [Enchantment] -> Maybe String -> Float -> Float -> VS.Vector Float
+buildHudVertices inv miningProgress health hunger airSupply saturation mode cursorItem craftGrid mChestInv mDispInv furnaceState debugInfo targetInfo sleepMsgText damageFlash mouseX mouseY playerPos spawnPos dayNight playerXP achToastText chatState mVillProf villTrades armorSlots enchantSnap hotbarPopupText attackCooldown playerYaw = VS.fromList $
   case mode of
     MainMenu -> menuVerts
     Paused   -> pauseVerts
-    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ cooldownBarVerts ++ healthVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ compassDirBarVerts ++ achToastVerts ++ chatMessageVerts ++ hotbarPopupVerts
-    ChatInput -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ healthVerts ++ hungerVerts ++ chatInputVerts ++ chatMessageVerts
+    Playing  -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ miningBarVerts ++ cooldownBarVerts ++ healthVerts ++ satBarVerts ++ hungerVerts ++ bubbleVerts ++ xpBarVerts ++ xpLevelVerts ++ handVerts ++ debugVerts ++ highlightVerts ++ sleepMsgVerts ++ damageFlashVerts ++ compassClockVerts ++ compassDirBarVerts ++ achToastVerts ++ chatMessageVerts ++ hotbarPopupVerts
+    ChatInput -> crosshairVerts ++ hotbarBgVerts ++ slotVerts ++ selectorVerts ++ healthVerts ++ satBarVerts ++ hungerVerts ++ chatInputVerts ++ chatMessageVerts
     InventoryOpen -> invScreenVerts ++ cursorVerts ++ invTooltipVerts
     CraftingOpen  -> craftScreenVerts ++ cursorVerts ++ craftTooltipVerts
     ChestOpen     -> chestScreenVerts ++ cursorVerts ++ chestTooltipVerts
@@ -3382,6 +3383,13 @@ buildHudVertices inv miningProgress health hunger airSupply mode cursorItem craf
             | halfHeart = (0.8, 0.1, 0.1, 0.5)
             | otherwise = (0.3, 0.05, 0.05, 0.6)
       in quad heartX heartY (heartX + heartW) (heartY + heartH) color
+
+    -- Saturation bar: yellow quads behind hunger drumsticks (same Y row)
+    satBarVerts =
+      let dh = 0.035 :: Float
+          satY = hotbarY - dh - 0.01
+          satX = hotbarX0 + 9 * slotW - 10 * (0.035 + 0.005) + 0.005
+      in saturationBarVerts saturation satX satY
 
     -- Hunger drumsticks: brown squares on the right side above hotbar
     hungerVerts = concatMap makeDrumstick [0..9]
