@@ -85,6 +85,7 @@ import UI.BreathBar (bubbleColor)
 import UI.DamageDirection (damageAngle, damageArcVerts)
 import UI.HudLayout (hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hungerBarX, xpBarY, crosshairSize)
 import UI.BlockOutline (blockOutlineVerts)
+import UI.BiomeDisplay (biomeDisplayName, biomeNameFadeAlpha)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -195,6 +196,7 @@ main = hspec $ do
   saveToastSpec
   damageDirectionSpec
   blockOutlineSpec
+  biomeDisplaySpec
 
 -- =========================================================================
 -- Block
@@ -9762,3 +9764,49 @@ blockOutlineSpec = describe "UI.BlockOutline" $ do
   it "vertex count is always a multiple of 36 (6 floats * 6 verts per edge)" $ do
     let verts = blockOutlineVerts (V3 5 5 5) identity
     (length verts `mod` 36) `shouldBe` 0
+
+-- =========================================================================
+-- BiomeDisplay
+-- =========================================================================
+biomeDisplaySpec :: Spec
+biomeDisplaySpec = describe "UI.BiomeDisplay" $ do
+  it "biomeDisplayName returns correct name for each biome" $ do
+    biomeDisplayName Plains    `shouldBe` "Plains"
+    biomeDisplayName Forest    `shouldBe` "Forest"
+    biomeDisplayName Desert    `shouldBe` "Desert"
+    biomeDisplayName Mountains `shouldBe` "Mountains"
+    biomeDisplayName Ocean     `shouldBe` "Ocean"
+    biomeDisplayName Tundra    `shouldBe` "Tundra"
+    biomeDisplayName Savanna   `shouldBe` "Savanna"
+    biomeDisplayName Swamp     `shouldBe` "Swamp"
+    biomeDisplayName Taiga     `shouldBe` "Taiga"
+
+  it "biomeDisplayName covers all BiomeType constructors" $ do
+    let allBiomes = [minBound .. maxBound] :: [BiomeType]
+        names = map biomeDisplayName allBiomes
+    length names `shouldBe` 9
+    all (not . null) names `shouldBe` True
+
+  it "biomeNameFadeAlpha returns 0 for non-positive timers" $ do
+    biomeNameFadeAlpha 0.0    `shouldBe` 0.0
+    biomeNameFadeAlpha (-1.0) `shouldBe` 0.0
+    biomeNameFadeAlpha (-100) `shouldBe` 0.0
+
+  it "biomeNameFadeAlpha returns 1 for timers >= 3 seconds" $ do
+    biomeNameFadeAlpha 3.0  `shouldBe` 1.0
+    biomeNameFadeAlpha 5.0  `shouldBe` 1.0
+    biomeNameFadeAlpha 10.0 `shouldBe` 1.0
+
+  it "biomeNameFadeAlpha returns 0.5 at half duration" $ do
+    biomeNameFadeAlpha 1.5 `shouldBe` 0.5
+
+  it "biomeNameFadeAlpha is monotonically non-decreasing with timer" $
+    property $ \t1 t2 ->
+      let a = abs t1 :: Float
+          b = abs t2 :: Float
+      in (a <= b) ==> (biomeNameFadeAlpha a <= biomeNameFadeAlpha b)
+
+  it "biomeNameFadeAlpha stays in [0, 1]" $
+    property $ \t ->
+      let alpha = biomeNameFadeAlpha (t :: Float)
+      in alpha >= 0.0 && alpha <= 1.0
