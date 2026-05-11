@@ -13,7 +13,7 @@ module World.Chunk
   , freezeBlocks
   ) where
 
-import World.Block (BlockType(..))
+import World.Block (word8ToBlock, BlockType(..))
 
 import Data.Word (Word8)
 import qualified Data.Vector.Unboxed as UV
@@ -74,7 +74,7 @@ getBlock chunk x y z
   | otherwise = do
       let idx = blockIndex x y z
       val <- MV.unsafeRead (chunkBlocks chunk) idx
-      pure . toEnum . fromIntegral $ val
+      pure . word8ToBlock $ val
 {-# INLINE getBlock #-}
 
 -- | Set block at local coordinates. No-op for out-of-bounds. Marks chunk dirty.
@@ -102,7 +102,7 @@ forEachBlock chunk action = do
                 remainder = i `mod` (chunkWidth * chunkDepth)
                 z = remainder `div` chunkWidth
                 x = remainder `mod` chunkWidth
-                bt = toEnum . fromIntegral $ val
+                bt = word8ToBlock $ val
             action x y z bt
             go (i + 1)
   go 0

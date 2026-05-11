@@ -17,6 +17,7 @@ module World.Block
   , isPistonHeadBlock
   , pistonHeadForPiston
   , isFlammable
+  , word8ToBlock
   ) where
 
 import Data.Word (Word8)

@@ -165,7 +165,7 @@ meshChunk chunk = do
         | z >= chunkDepth  = go 0 (y + 1) 0
         | x >= chunkWidth  = go 0 y (z + 1)
         | otherwise = do
-            let bt = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex x y z
+            let bt = word8ToBlock $ blocksVec `UV.unsafeIndex` blockIndex x y z
             if bt == Air
               then go (x + 1) y z
               else do
@@ -212,18 +212,18 @@ meshChunkWithLight chunk lm neighbors = do
       lookupBlock nx ny nz
         | ny < 0 || ny >= chunkHeight = Air
         | nx >= chunkWidth = case ndEast neighbors of
-            Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex 0 ny nz
+            Just nv -> word8ToBlock $ nv `UV.unsafeIndex` blockIndex 0 ny nz
             Nothing -> Air
         | nx < 0 = case ndWest neighbors of
-            Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex (chunkWidth - 1) ny nz
+            Just nv -> word8ToBlock $ nv `UV.unsafeIndex` blockIndex (chunkWidth - 1) ny nz
             Nothing -> Air
         | nz >= chunkDepth = case ndNorth neighbors of
-            Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex nx ny 0
+            Just nv -> word8ToBlock $ nv `UV.unsafeIndex` blockIndex nx ny 0
             Nothing -> Air
         | nz < 0 = case ndSouth neighbors of
-            Just nv -> toEnum . fromIntegral $ nv `UV.unsafeIndex` blockIndex nx ny (chunkDepth - 1)
+            Just nv -> word8ToBlock $ nv `UV.unsafeIndex` blockIndex nx ny (chunkDepth - 1)
             Nothing -> Air
-        | otherwise = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex nx ny nz
+        | otherwise = word8ToBlock $ blocksVec `UV.unsafeIndex` blockIndex nx ny nz
       {-# INLINE lookupBlock #-}
 
       computeFaceAO :: Int -> Int -> Int -> BlockFace -> Float -> (Float, Float, Float, Float)
@@ -245,7 +245,7 @@ meshChunkWithLight chunk lm neighbors = do
         | z >= chunkDepth  = go 0 (y + 1) 0
         | x >= chunkWidth  = go 0 y (z + 1)
         | otherwise = do
-            let bt = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex x y z
+            let bt = word8ToBlock $ blocksVec `UV.unsafeIndex` blockIndex x y z
             if bt == Air
               then go (x + 1) y z
               else do
@@ -285,11 +285,11 @@ meshChunkWithLightSplit chunk lm neighbors = do
   blocksVec <- freezeBlocks chunk
   let lb nx ny nz
         | ny<0||ny>=chunkHeight = Air
-        | nx>=chunkWidth = case ndEast neighbors of {Just nv -> toEnum.fromIntegral$ nv`UV.unsafeIndex`blockIndex 0 ny nz; Nothing -> Air}
-        | nx<0 = case ndWest neighbors of {Just nv -> toEnum.fromIntegral$ nv`UV.unsafeIndex`blockIndex(chunkWidth-1)ny nz; Nothing -> Air}
-        | nz>=chunkDepth = case ndNorth neighbors of {Just nv -> toEnum.fromIntegral$ nv`UV.unsafeIndex`blockIndex nx ny 0; Nothing -> Air}
-        | nz<0 = case ndSouth neighbors of {Just nv -> toEnum.fromIntegral$ nv`UV.unsafeIndex`blockIndex nx ny(chunkDepth-1); Nothing -> Air}
-        | otherwise = toEnum.fromIntegral$ blocksVec`UV.unsafeIndex`blockIndex nx ny nz
+        | nx>=chunkWidth = case ndEast neighbors of {Just nv -> word8ToBlock $ nv`UV.unsafeIndex`blockIndex 0 ny nz; Nothing -> Air}
+        | nx<0 = case ndWest neighbors of {Just nv -> word8ToBlock $ nv`UV.unsafeIndex`blockIndex(chunkWidth-1)ny nz; Nothing -> Air}
+        | nz>=chunkDepth = case ndNorth neighbors of {Just nv -> word8ToBlock $ nv`UV.unsafeIndex`blockIndex nx ny 0; Nothing -> Air}
+        | nz<0 = case ndSouth neighbors of {Just nv -> word8ToBlock $ nv`UV.unsafeIndex`blockIndex nx ny(chunkDepth-1); Nothing -> Air}
+        | otherwise = word8ToBlock $ blocksVec`UV.unsafeIndex`blockIndex nx ny nz
       {-# INLINE lb #-}
       cAO bx by bz face lv = let ns=faceAONeighbors face; co((dx1,dy1,dz1),(dx2,dy2,dz2),(dxc,dyc,dzc))=lv*computeVertexAO(isSolid$lb(bx+dx1)(by+dy1)(bz+dz1))(isSolid$lb(bx+dx2)(by+dy2)(bz+dz2))(isSolid$lb(bx+dxc)(by+dyc)(bz+dzc)) in case ns of {[n0,n1,n2,n3]->(co n0,co n1,co n2,co n3);_->(lv,lv,lv,lv)}
       go !x !y !z
@@ -297,7 +297,7 @@ meshChunkWithLightSplit chunk lm neighbors = do
         | z>=chunkDepth = go 0(y+1)0
         | x>=chunkWidth = go 0 y(z+1)
         | otherwise = do
-            let bt = toEnum.fromIntegral$ blocksVec`UV.unsafeIndex`blockIndex x y z
+            let bt = word8ToBlock $ blocksVec`UV.unsafeIndex`blockIndex x y z
             if bt==Air then go(x+1)y z else do
               let bx=fromIntegral x; by=fromIntegral y; bz=fromIntegral z; pos=V3 bx by bz
                   (vr,ir,vc) = if isTranslucent bt then (tVR,tIR,tVC) else (oVR,oIR,oVC)
@@ -320,7 +320,7 @@ checkFaceVec :: UV.Vector Word8 -> V3 Float -> BlockFace -> BlockType
 checkFaceVec blocksVec pos face bt (nx, ny, nz) addFace = do
   let neighbor
         | not (isInBounds nx ny nz) = Air
-        | otherwise = toEnum . fromIntegral $ blocksVec `UV.unsafeIndex` blockIndex nx ny nz
+        | otherwise = word8ToBlock $ blocksVec `UV.unsafeIndex` blockIndex nx ny nz
   if isTransparent neighbor
     then addFace pos face bt
     else pure ()

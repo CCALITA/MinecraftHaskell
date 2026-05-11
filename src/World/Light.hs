@@ -10,7 +10,7 @@ module World.Light
   , maxLightLevel
   ) where
 
-import World.Block (BlockType(..), BlockProperties(..), blockProperties)
+import World.Block (word8ToBlock, BlockType(..), BlockProperties(..), blockProperties)
 import World.Chunk (Chunk(..), chunkWidth, chunkDepth, chunkHeight, getBlock, blockIndex, freezeBlocks)
 
 import Data.Word (Word8)
@@ -91,7 +91,7 @@ propagateBlockLight chunk lm = do
   let findEmitters !i !queue
         | i >= chunkSize = pure queue
         | otherwise = do
-            let bt = toEnum . fromIntegral $ blocks UV.! i :: BlockType
+            let bt = word8ToBlock $ blocks UV.! i
                 emit = bpLightEmit (blockProperties bt)
             if emit > 0
               then do
@@ -144,7 +144,7 @@ traceColumn mv blocks x z y level queue
   | level <= 0 = pure queue
   | otherwise = do
       let idx = blockIndex x y z
-          bt = toEnum . fromIntegral $ blocks UV.! idx :: BlockType
+          bt = word8ToBlock $ blocks UV.! idx
           props = blockProperties bt
       if bpSolid props && not (bpTransparent props)
         then pure queue  -- opaque block stops sky light
@@ -178,7 +178,7 @@ foldNeighbors mv blocks queue x y z newLevel = go neighbors queue
         then go ns q
         else do
           let nidx = blockIndex nx ny nz
-              bt = toEnum . fromIntegral $ blocks UV.! nidx :: BlockType
+              bt = word8ToBlock $ blocks UV.! nidx
               props = blockProperties bt
           if bpSolid props && not (bpTransparent props)
             then go ns q  -- opaque blocks block light
