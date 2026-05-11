@@ -187,6 +187,7 @@ main = hspec $ do
   attackCooldownSpec
   minimapSpec
   pickupToastSpec
+  inventoryEdgeCaseSpec
   celestialBodySpec
   crosshairColorSpec
   saveToastSpec
@@ -586,6 +587,179 @@ inventorySpec = describe "Game.Inventory" $ do
         inv' = moveToSection inv 35
     getSlot inv' 35 `shouldBe` Nothing
     getSlot inv' 0 `shouldBe` Just (ItemStack (FoodItem Apple) 10)
+
+-- =========================================================================
+-- Inventory Edge Cases
+-- =========================================================================
+inventoryEdgeCaseSpec :: Spec
+inventoryEdgeCaseSpec = describe "Game.Inventory edge cases" $ do
+  -- addItem with 0 count
+  it "addItem with 0 count is a no-op" $ do
+    let (inv, remaining) = addItem emptyInventory (BlockItem Stone) 0
+    remaining `shouldBe` 0
+    getSlot inv 0 `shouldBe` Nothing
+
+  it "addItem with negative count is a no-op" $ do
+    let (inv, remaining) = addItem emptyInventory (BlockItem Stone) (-5)
+    remaining `shouldBe` 0
+    getSlot inv 0 `shouldBe` Nothing
+
+  -- removeItem from empty inventory
+  it "removeItem from empty inventory returns 0 removed" $ do
+    let (inv, removed) = removeItem emptyInventory (BlockItem Stone) 10
+    removed `shouldBe` 0
+    inv `shouldBe` emptyInventory
+
+  it "removeItem with 0 count returns 0 removed" $ do
+    let (inv1, _) = addItem emptyInventory (BlockItem Stone) 10
+        (inv2, removed) = removeItem inv1 (BlockItem Stone) 0
+    removed `shouldBe` 0
+    getSlot inv2 0 `shouldBe` Just (ItemStack (BlockItem Stone) 10)
+
+  it "removeItem for non-existent item type returns 0" $ do
+    let (inv1, _) = addItem emptyInventory (BlockItem Stone) 10
+        (_, removed) = removeItem inv1 (BlockItem Dirt) 5
+    removed `shouldBe` 0
+
+  -- stack overflow: add exactly at and beyond stack limit
+  it "addItem overflow splits across multiple slots" $ do
+    let (inv, remaining) = addItem emptyInventory (BlockItem Stone) 150
+    remaining `shouldBe` 0
+    getSlot inv 0 `shouldBe` Just (ItemStack (BlockItem Stone) 64)
+    getSlot inv 1 `shouldBe` Just (ItemStack (BlockItem Stone) 64)
+    getSlot inv 2 `shouldBe` Just (ItemStack (BlockItem Stone) 22)
+
+  it "addItem exactly at stack limit fills one slot" $ do
+    let (inv, remaining) = addItem emptyInventory (BlockItem Stone) 64
+    remaining `shouldBe` 0
+    getSlot inv 0 `shouldBe` Just (ItemStack (BlockItem Stone) 64)
+    getSlot inv 1 `shouldBe` Nothing
+
+  -- selectHotbar out of bounds
+  it "selectHotbar with negative index is no-op" $ do
+    let inv = selectHotbar emptyInventory (-1)
+    invSelected inv `shouldBe` 0
+
+  it "selectHotbar with max int is no-op" $ do
+    let inv = selectHotbar emptyInventory maxBound
+    invSelected inv `shouldBe` 0
+
+  -- splitStack on empty
+  it "splitStack on Nothing returns (Nothing, Nothing)" $ do
+    splitStack Nothing `shouldBe` (Nothing, Nothing)
+
+  it "splitStack on single item gives (Nothing, Just 1)" $ do
+    splitStack (Just (ItemStack (BlockItem Stone) 1))
+      `shouldBe` (Nothing, Just (ItemStack (BlockItem Stone) 1))
+
+  it "splitStack on 2 items splits evenly" $ do
+    splitStack (Just (ItemStack (BlockItem Stone) 2))
+      `shouldBe` (Just (ItemStack (BlockItem Stone) 1), Just (ItemStack (BlockItem Stone) 1))
+
+  it "splitStack on odd count gives ceil to cursor" $ do
+    let (remaining, cursor) = splitStack (Just (ItemStack (BlockItem Stone) 3))
+    remaining `shouldBe` Just (ItemStack (BlockItem Stone) 1)
+    cursor `shouldBe` Just (ItemStack (BlockItem Stone) 2)
+
+  -- collectAll with full cursor (maxStack = 0)
+  it "collectAll with maxStack 0 collects nothing" $ do
+    let (inv1, _) = addItem emptyInventory (BlockItem Stone) 30
+        (inv2, collected) = collectAll inv1 (BlockItem Stone) 0
+    collected `shouldBe` 0
+    countItem inv2 (BlockItem Stone) `shouldBe` 30
+
+  it "collectAll from empty inventory collects 0" $ do
+    let (_, collected) = collectAll emptyInventory (BlockItem Stone) 64
+    collected `shouldBe` 0
+
+  it "collectAll with partial maxStack caps correctly" $ do
+    let (inv1, _) = addItem emptyInventory (BlockItem Stone) 50
+        (inv2, collected) = collectAll inv1 (BlockItem Stone) 20
+    collected `shouldBe` 20
+    countItem inv2 (BlockItem Stone) `shouldBe` 30
+
+  -- countItem accuracy
+  it "countItem on empty inventory is 0" $ do
+    countItem emptyInventory (BlockItem Stone) `shouldBe` 0
+
+  it "countItem sums across multiple slots" $ do
+    let inv0 = setSlot emptyInventory 0 (Just (ItemStack (BlockItem Stone) 64))
+        inv1 = setSlot inv0 5 (Just (ItemStack (BlockItem Stone) 30))
+        inv2 = setSlot inv1 10 (Just (ItemStack (BlockItem Stone) 10))
+    countItem inv2 (BlockItem Stone) `shouldBe` 104
+
+  it "countItem ignores different item types" $ do
+    let (inv1, _) = addItem emptyInventory (BlockItem Stone) 20
+        (inv2, _) = addItem inv1 (BlockItem Dirt) 15
+    countItem inv2 (BlockItem Stone) `shouldBe` 20
+    countItem inv2 (BlockItem Dirt) `shouldBe` 15
+
+  -- hasItem threshold
+  it "hasItem returns True when count meets threshold" $ do
+    let (inv, _) = addItem emptyInventory (BlockItem Stone) 10
+    hasItem inv (BlockItem Stone) 10 `shouldBe` True
+
+  it "hasItem returns False when count below threshold" $ do
+    let (inv, _) = addItem emptyInventory (BlockItem Stone) 5
+    hasItem inv (BlockItem Stone) 10 `shouldBe` False
+
+  it "hasItem returns True for threshold 0 on empty inv" $ do
+    hasItem emptyInventory (BlockItem Stone) 0 `shouldBe` True
+
+  it "hasItem returns False for missing item" $ do
+    hasItem emptyInventory (BlockItem Stone) 1 `shouldBe` False
+
+  -- getSlot / setSlot boundary
+  it "getSlot out of range returns Nothing" $ do
+    getSlot emptyInventory (-1) `shouldBe` Nothing
+    getSlot emptyInventory inventorySlots `shouldBe` Nothing
+
+  it "setSlot out of range is a no-op" $ do
+    let inv = setSlot emptyInventory (-1) (Just (ItemStack (BlockItem Stone) 10))
+    inv `shouldBe` emptyInventory
+
+  -- QuickCheck properties
+  describe "QuickCheck properties" $ do
+    it "addItem then countItem equals min(added, capacity)" $
+      property $ \(Positive n) ->
+        let capped = min n (inventorySlots * stackLimit)
+            (inv, leftover) = addItem emptyInventory (BlockItem Stone) n
+        in countItem inv (BlockItem Stone) === capped - leftover
+
+    it "addItem leftover is non-negative" $
+      property $ \(Positive n) ->
+        let (_, leftover) = addItem emptyInventory (BlockItem Stone) n
+        in leftover >= 0
+
+    it "removeItem never removes more than available" $
+      property $ \(Positive addN) (Positive removeN) ->
+        let (inv1, _) = addItem emptyInventory (BlockItem Stone) addN
+            (_, removed) = removeItem inv1 (BlockItem Stone) removeN
+        in removed <= min addN removeN .&&. removed >= 0
+
+    it "add then remove preserves non-negative count" $
+      property $ \(Positive addN) (Positive removeN) ->
+        let (inv1, _) = addItem emptyInventory (BlockItem Stone) addN
+            (inv2, _) = removeItem inv1 (BlockItem Stone) removeN
+        in countItem inv2 (BlockItem Stone) >= 0
+
+    it "selectHotbar always yields valid selection" $
+      property $ \n ->
+        let inv = selectHotbar emptyInventory n
+        in invSelected inv >= 0 .&&. invSelected inv < hotbarSlots
+
+    it "splitStack preserves total count" $
+      property $ \(Positive n) ->
+        let stack = Just (ItemStack (BlockItem Stone) n)
+            (remaining, cursor) = splitStack stack
+            cnt ms = case ms of Nothing -> 0; Just (ItemStack _ c) -> c
+        in cnt remaining + cnt cursor === n
+
+    it "collectAll never collects more than maxStack" $
+      property $ \(Positive addN) (NonNegative maxS) ->
+        let (inv1, _) = addItem emptyInventory (BlockItem Dirt) addN
+            (_, collected) = collectAll inv1 (BlockItem Dirt) maxS
+        in collected <= maxS .&&. collected >= 0
 
 -- =========================================================================
 -- Crafting
