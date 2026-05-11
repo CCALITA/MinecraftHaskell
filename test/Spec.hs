@@ -90,6 +90,7 @@ import UI.MiningSpeed (miningTimeText, miningProgressVerts)
 import UI.BiomeDisplay (biomeDisplayName, biomeNameFadeAlpha)
 import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
 import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
+import Game.ScreenShake (shakeOffset, shakeFromFallDamage, shakeDuration)
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -203,6 +204,7 @@ main = hspec $ do
   miningSpeedSpec
   biomeDisplaySpec
   knockbackSpec
+  screenShakeSpec
 
 -- =========================================================================
 -- Block
@@ -9966,3 +9968,39 @@ knockbackSpec = describe "Game.Knockback" $ do
 
     it "swimBobAmplitude is 0.03" $
       swimBobAmplitude `shouldBe` 0.03
+
+-- =========================================================================
+-- Screen Shake
+-- =========================================================================
+screenShakeSpec :: Spec
+screenShakeSpec = describe "Game.ScreenShake" $ do
+  it "shakeOffset returns (0,0) when time >= shakeDuration" $ do
+    shakeOffset 1.0 shakeDuration `shouldBe` (0, 0)
+    shakeOffset 1.0 (shakeDuration + 0.1) `shouldBe` (0, 0)
+
+  it "shakeOffset returns (0,0) for zero intensity" $ do
+    shakeOffset 0 0.1 `shouldBe` (0, 0)
+
+  it "shakeOffset returns (0,0) for negative time" $ do
+    shakeOffset 1.0 (-0.1) `shouldBe` (0, 0)
+
+  it "shakeOffset produces non-zero offset mid-shake" $ do
+    let (x, y) = shakeOffset 1.0 0.1
+    (abs x > 0 || abs y > 0) `shouldBe` True
+
+  it "shakeOffset magnitude decreases as time approaches duration" $ do
+    let mag t = let (x, y) = shakeOffset 1.0 t in sqrt (x * x + y * y)
+        early = mag 0.01
+        late  = mag (shakeDuration - 0.01)
+    late `shouldSatisfy` (< early)
+
+  it "shakeFromFallDamage returns 0 for non-positive damage" $ do
+    shakeFromFallDamage 0 `shouldBe` 0
+    shakeFromFallDamage (-5) `shouldBe` 0
+
+  it "shakeFromFallDamage scales linearly with damage" $ do
+    abs (shakeFromFallDamage 10 - 0.1) `shouldSatisfy` (< 1e-6)
+    abs (shakeFromFallDamage 5 - 0.05) `shouldSatisfy` (< 1e-6)
+
+  it "shakeDuration is 0.3 seconds" $ do
+    shakeDuration `shouldBe` 0.3
