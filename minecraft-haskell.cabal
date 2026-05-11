@@ -98,6 +98,7 @@ library
     Game.XP
     Game.Explosion
     Game.InteractionCooldown
+    Game.EatingAnimation
     Game.RedstoneAction
     Entity.ECS
     Entity.Component
