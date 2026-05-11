@@ -9853,6 +9853,24 @@ blockOutlineSpec = describe "UI.BlockOutline" $ do
     let verts = blockOutlineVerts (V3 5 5 5) identity
     (length verts `mod` 36) `shouldBe` 0
 
+  it "negative block coords produce same vertex count as positive" $ do
+    let vertsNeg = blockOutlineVerts (V3 (-3) (-1) (-7)) identity
+        vertsPos = blockOutlineVerts (V3 3 1 7) identity
+    length vertsNeg `shouldBe` length vertsPos
+
+  it "all x-y positions stay within NDC range for nearby blocks" $ do
+    let verts = blockOutlineVerts (V3 0 0 0) identity
+        xs = [verts !! i | i <- [0, 6 .. length verts - 6]]
+        ys = [verts !! i | i <- [1, 7 .. length verts - 5]]
+    all (\x -> x > (-3) && x < 3) xs `shouldBe` True
+    all (\y -> y > (-3) && y < 3) ys `shouldBe` True
+
+  it "partial visibility produces fewer than 12 edges" $ do
+    let partialVP = V4 (V4 1 0 0 0) (V4 0 1 0 0) (V4 0 0 1 (-0.5)) (V4 0 0 1 0)
+        verts = blockOutlineVerts (V3 0 0 0) partialVP
+    length verts < (12 * 6 * 6) `shouldBe` True
+    (length verts `mod` 36) `shouldBe` 0
+
 -- =========================================================================
 -- Mining Speed Display
 -- =========================================================================
