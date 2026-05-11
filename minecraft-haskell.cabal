@@ -93,6 +93,7 @@ library
     Game.PotionEffect
     Game.Particle
     Game.PickupToast
+    Game.Swimming
     Game.ViewBob
     Game.XP
     Game.Explosion

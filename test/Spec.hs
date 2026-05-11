@@ -73,6 +73,7 @@ import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.List (nub, isPrefixOf, isInfixOf)
 import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted, glowColor, glowThickness)
 import Game.ViewBob (bobOffset, bobSpeed, bobAmplitude, bobDecayRate, bobMovementThreshold)
+import Game.Swimming (swimmingSpeed, isSwimming, swimBobFrequency, swimBobAmplitude)
 import UI.CompassBar (compassBarVerts, yawToDirection, directionMarkers, markerNdcOffset, compassBarHeight, compassBarY)
 import UI.SaturationBar (saturationBarVerts)
 import UI.Minimap (minimapVerts, minimapSize, chunkGridForPlayer, chunkColor, playerDotColor)
@@ -9796,3 +9797,24 @@ blockOutlineSpec = describe "UI.BlockOutline" $ do
           reds   = [verts !! i | i <- [2, 8, 14, 20, 26, 32]]
       all (\g -> g > 0.5) greens `shouldBe` True
       all (\r -> r < 0.5) reds `shouldBe` True
+  describe "Game.Swimming" $ do
+    it "swimmingSpeed is 1.5" $
+      swimmingSpeed `shouldBe` 1.5
+
+    it "isSwimming returns True when in water and moving" $
+      isSwimming True True `shouldBe` True
+
+    it "isSwimming returns False when not in water" $
+      isSwimming False True `shouldBe` False
+
+    it "isSwimming returns False when not moving" $
+      isSwimming True False `shouldBe` False
+
+    it "isSwimming returns False when neither in water nor moving" $
+      isSwimming False False `shouldBe` False
+
+    it "swimBobFrequency is 6.0" $
+      swimBobFrequency `shouldBe` 6.0
+
+    it "swimBobAmplitude is 0.03" $
+      swimBobAmplitude `shouldBe` 0.03
