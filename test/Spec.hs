@@ -83,6 +83,7 @@ import UI.CrosshairColor (crosshairColor)
 import UI.StarField (starPositions, starBrightness)
 import UI.Vignette (vignetteAlpha, vignetteGrid)
 import UI.BreathBar (bubbleColor)
+import UI.ArmorBar (armorBarVerts)
 import UI.DamageDirection (damageAngle, damageArcVerts)
 import UI.HudLayout (hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hungerBarX, xpBarY, crosshairSize)
 import UI.BlockOutline (blockOutlineVerts)
@@ -10173,6 +10174,45 @@ deathScreenSpec = describe "UI.DeathScreen" $ do
     DS.buttonWidth `shouldSatisfy` (> 0)
     DS.buttonHeight `shouldSatisfy` (> 0)
 
+  describe "ArmorBar" $ do
+    it "returns empty list when armor is 0" $
+      armorBarVerts 0 0 0 `shouldBe` []
+
+    it "returns empty list when armor is negative" $
+      armorBarVerts (-3) 0.1 0.2 `shouldBe` []
+
+    it "produces one full shield (36 floats) for 2 armor points" $
+      length (armorBarVerts 2 0 0) `shouldBe` 36
+
+    it "produces half shield (36 floats) for 1 armor point" $
+      length (armorBarVerts 1 0 0) `shouldBe` 36
+
+    it "produces 5 full shields for 10 armor points" $
+      length (armorBarVerts 10 0 0) `shouldBe` 5 * 36
+
+    it "produces 5 full + 1 half shield for 11 armor points" $
+      length (armorBarVerts 11 0 0) `shouldBe` 6 * 36
+
+    it "clamps to maximum 20 armor points (10 full shields)" $
+      length (armorBarVerts 25 0 0) `shouldBe` 10 * 36
+
+    it "uses gray color (0.7, 0.7, 0.7, 0.8)" $ do
+      let verts = armorBarVerts 2 0 0
+          r = verts !! 2
+          g = verts !! 3
+          b = verts !! 4
+          a = verts !! 5
+      r `shouldBe` 0.7
+      g `shouldBe` 0.7
+      b `shouldBe` 0.7
+      a `shouldBe` 0.8
+
+    it "respects x and y position offsets" $ do
+      let verts = armorBarVerts 4 0.5 0.3
+          x0 = head verts
+          y0 = verts !! 1
+      x0 `shouldBe` 0.5
+      y0 `shouldBe` 0.3
 -- =========================================================================
 -- Fall Tracker
 -- =========================================================================

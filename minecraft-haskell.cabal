@@ -129,6 +129,7 @@ library
     UI.Vignette
     UI.BlockOutline
     UI.BreathBar
+    UI.ArmorBar
     UI.BiomeDisplay
     UI.HudLayout
     UI.MiningSpeed
