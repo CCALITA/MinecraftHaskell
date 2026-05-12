@@ -87,6 +87,7 @@ library
     Game.SaveIO
     Game.State
     Game.Bucket
+    Game.FallTracker
     Game.ItemDisplay
     Game.ItemRegistry
     Game.DroppedItem
@@ -133,6 +134,7 @@ library
     UI.HudLayout
     UI.MiningSpeed
     UI.DeathScreen
+    UI.HungerShake
   build-depends:
     , base             >= 4.17  && < 5
     , vulkan           >= 3.26

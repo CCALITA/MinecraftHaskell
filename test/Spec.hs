@@ -88,10 +88,12 @@ import UI.DamageDirection (damageAngle, damageArcVerts)
 import UI.HudLayout (hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hungerBarX, xpBarY, crosshairSize)
 import UI.BlockOutline (blockOutlineVerts)
 import UI.MiningSpeed (miningTimeText, miningProgressVerts)
+import UI.HungerShake (hungerShakeOffset)
 import UI.BiomeDisplay (biomeDisplayName, biomeNameFadeAlpha)
 import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
 import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
 import Game.ScreenShake (shakeOffset, shakeFromFallDamage, shakeDuration)
+import Game.FallTracker (wouldTakeFallDamage, fallDamageAmount, safeFallDistance)
 import qualified UI.DeathScreen as DS
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
@@ -209,6 +211,7 @@ main = hspec $ do
   knockbackSpec
   screenShakeSpec
   deathScreenSpec
+  fallTrackerSpec
 
 -- =========================================================================
 -- Block
@@ -10210,3 +10213,56 @@ deathScreenSpec = describe "UI.DeathScreen" $ do
           y0 = verts !! 1
       x0 `shouldBe` 0.5
       y0 `shouldBe` 0.3
+-- =========================================================================
+-- Fall Tracker
+-- =========================================================================
+fallTrackerSpec :: Spec
+fallTrackerSpec = describe "Game.FallTracker" $ do
+  it "safeFallDistance is 3.0" $ do
+    safeFallDistance `shouldBe` 3.0
+
+  it "wouldTakeFallDamage returns False for distances <= 3" $ do
+    wouldTakeFallDamage 0.0 `shouldBe` False
+    wouldTakeFallDamage 2.5 `shouldBe` False
+    wouldTakeFallDamage 3.0 `shouldBe` False
+
+  it "wouldTakeFallDamage returns True for distances > 3" $ do
+    wouldTakeFallDamage 3.1 `shouldBe` True
+    wouldTakeFallDamage 10.0 `shouldBe` True
+
+  it "fallDamageAmount returns 0 for safe distances" $ do
+    fallDamageAmount 0.0 `shouldBe` 0
+    fallDamageAmount 3.0 `shouldBe` 0
+
+  it "fallDamageAmount returns floor(dist) - 3 for dangerous distances" $ do
+    fallDamageAmount 4.0 `shouldBe` 1
+    fallDamageAmount 5.9 `shouldBe` 2
+    fallDamageAmount 10.0 `shouldBe` 7
+
+  it "fallDamageAmount increases with distance" $ do
+    fallDamageAmount 6.0 < fallDamageAmount 12.0 `shouldBe` True
+  describe "UI.HungerShake" $ do
+    it "returns zero offset when hunger is above 3" $ do
+      hungerShakeOffset 4 1.0 `shouldBe` (0.0, 0.0)
+      hungerShakeOffset 10 5.0 `shouldBe` (0.0, 0.0)
+      hungerShakeOffset 20 99.0 `shouldBe` (0.0, 0.0)
+
+    it "returns zero offset for negative hunger" $ do
+      hungerShakeOffset (-1) 1.0 `shouldBe` (0.0, 0.0)
+
+    it "returns non-zero offset when hunger is 3 or below" $ do
+      let (dx, dy) = hungerShakeOffset 2 1.5
+      (dx /= 0.0 || dy /= 0.0) `shouldBe` True
+
+    it "increases intensity as hunger decreases" $ do
+      let (dx1, dy1) = hungerShakeOffset 3 1.0
+          (dx0, dy0) = hungerShakeOffset 0 1.0
+      (abs dx0 + abs dy0) `shouldSatisfy` (> (abs dx1 + abs dy1))
+
+    it "returns zero offset at time zero" $ do
+      hungerShakeOffset 0 0.0 `shouldBe` (0.0, 0.0)
+
+    it "varies offset with time" $ do
+      let (dx1, dy1) = hungerShakeOffset 1 1.0
+          (dx2, dy2) = hungerShakeOffset 1 2.0
+      (dx1, dy1) /= (dx2, dy2) `shouldBe` True
