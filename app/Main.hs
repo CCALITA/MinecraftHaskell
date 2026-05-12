@@ -3632,14 +3632,17 @@ buildHudVertices inv miningProgress health hunger airSupply saturation mode curs
 
     -- Celestial bodies: sun (yellow disc, day) and moon (white disc, night)
     sunDir = getSunDirection dayNight
-    celestialVerts =
-      let sunVerts' = case sunScreenPos sunDir vpMatrix of
-            Just (sx, sy) -> celestialDiscVerts sx sy 0.05 (1.0, 0.95, 0.3, 0.9)
-            Nothing       -> []
-          moonVerts' = case moonScreenPos sunDir vpMatrix of
-            Just (mx, my) -> celestialDiscVerts mx my 0.04 (0.9, 0.9, 1.0, 0.8)
-            Nothing       -> []
-      in sunVerts' ++ moonVerts'
+    mVpMatrix = fmap snd targetInfo
+    celestialVerts = case mVpMatrix of
+      Nothing -> []
+      Just vpMat ->
+        let sunVerts' = case sunScreenPos sunDir vpMat of
+              Just (sx, sy) -> celestialDiscVerts sx sy 0.05 (1.0, 0.95, 0.3, 0.9)
+              Nothing       -> []
+            moonVerts' = case moonScreenPos sunDir vpMat of
+              Just (mx, my) -> celestialDiscVerts mx my 0.04 (0.9, 0.9, 1.0, 0.8)
+              Nothing       -> []
+        in sunVerts' ++ moonVerts'
 
     -- Achievement toast: gold text notification near top of screen
     achToastVerts = case achToastText of
