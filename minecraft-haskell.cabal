@@ -87,6 +87,7 @@ library
     Game.SaveIO
     Game.State
     Game.Bucket
+    Game.FallTracker
     Game.ItemDisplay
     Game.ItemRegistry
     Game.DroppedItem

@@ -91,6 +91,7 @@ import UI.BiomeDisplay (biomeDisplayName, biomeNameFadeAlpha)
 import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
 import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
 import Game.ScreenShake (shakeOffset, shakeFromFallDamage, shakeDuration)
+import Game.FallTracker (wouldTakeFallDamage, fallDamageAmount, safeFallDistance)
 import qualified UI.DeathScreen as DS
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
@@ -208,6 +209,7 @@ main = hspec $ do
   knockbackSpec
   screenShakeSpec
   deathScreenSpec
+  fallTrackerSpec
 
 -- =========================================================================
 -- Block
@@ -10169,3 +10171,32 @@ deathScreenSpec = describe "UI.DeathScreen" $ do
     DS.buttonY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
     DS.buttonWidth `shouldSatisfy` (> 0)
     DS.buttonHeight `shouldSatisfy` (> 0)
+
+-- =========================================================================
+-- Fall Tracker
+-- =========================================================================
+fallTrackerSpec :: Spec
+fallTrackerSpec = describe "Game.FallTracker" $ do
+  it "safeFallDistance is 3.0" $ do
+    safeFallDistance `shouldBe` 3.0
+
+  it "wouldTakeFallDamage returns False for distances <= 3" $ do
+    wouldTakeFallDamage 0.0 `shouldBe` False
+    wouldTakeFallDamage 2.5 `shouldBe` False
+    wouldTakeFallDamage 3.0 `shouldBe` False
+
+  it "wouldTakeFallDamage returns True for distances > 3" $ do
+    wouldTakeFallDamage 3.1 `shouldBe` True
+    wouldTakeFallDamage 10.0 `shouldBe` True
+
+  it "fallDamageAmount returns 0 for safe distances" $ do
+    fallDamageAmount 0.0 `shouldBe` 0
+    fallDamageAmount 3.0 `shouldBe` 0
+
+  it "fallDamageAmount returns floor(dist) - 3 for dangerous distances" $ do
+    fallDamageAmount 4.0 `shouldBe` 1
+    fallDamageAmount 5.9 `shouldBe` 2
+    fallDamageAmount 10.0 `shouldBe` 7
+
+  it "fallDamageAmount increases with distance" $ do
+    fallDamageAmount 6.0 < fallDamageAmount 12.0 `shouldBe` True
