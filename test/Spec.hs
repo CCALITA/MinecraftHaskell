@@ -95,6 +95,7 @@ import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts
 import Game.ScreenShake (shakeOffset, shakeFromFallDamage, shakeDuration)
 import Game.FallTracker (wouldTakeFallDamage, fallDamageAmount, safeFallDistance)
 import qualified UI.DeathScreen as DS
+import qualified UI.MainMenu as MM
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -211,6 +212,7 @@ main = hspec $ do
   knockbackSpec
   screenShakeSpec
   deathScreenSpec
+  mainMenuSpec
   fallTrackerSpec
 
 -- =========================================================================
@@ -10213,6 +10215,58 @@ deathScreenSpec = describe "UI.DeathScreen" $ do
           y0 = verts !! 1
       x0 `shouldBe` 0.5
       y0 `shouldBe` 0.3
+-- =========================================================================
+-- Main Menu
+-- =========================================================================
+mainMenuSpec :: Spec
+mainMenuSpec = describe "UI.MainMenu" $ do
+  it "produces non-empty vertex data" $ do
+    let verts = MM.mainMenuVerts 0 0
+    length verts `shouldSatisfy` (> 0)
+
+  it "vertex count is always a multiple of 6 (vec2 pos + vec4 color per vertex)" $ do
+    let verts = MM.mainMenuVerts 0.3 0.2
+    (length verts `mod` 6) `shouldBe` 0
+
+  it "background contributes at least 36 floats (2 triangles * 3 verts * 6 floats)" $ do
+    let verts = MM.mainMenuVerts 0 0
+    length verts `shouldSatisfy` (>= 36)
+
+  it "hover changes vertex data when mouse is over play button" $ do
+    let vertsNoHover = MM.mainMenuVerts (-0.9) (-0.9)
+        vertsHover   = MM.mainMenuVerts 0.0 (MM.playButtonY + 0.01)
+    vertsNoHover /= vertsHover `shouldBe` True
+
+  it "hover changes vertex data when mouse is over quit button" $ do
+    let vertsNoHover = MM.mainMenuVerts (-0.9) (-0.9)
+        vertsHover   = MM.mainMenuVerts 0.0 (MM.quitButtonY + 0.01)
+    vertsNoHover /= vertsHover `shouldBe` True
+
+  it "isInsidePlayButton detects center of play button" $ do
+    MM.isInsidePlayButton 0.0 (MM.playButtonY + MM.buttonHeight / 2) `shouldBe` True
+
+  it "isInsidePlayButton rejects point far outside" $ do
+    MM.isInsidePlayButton (-0.9) (-0.9) `shouldBe` False
+
+  it "isInsideQuitButton detects center of quit button" $ do
+    MM.isInsideQuitButton 0.0 (MM.quitButtonY + MM.buttonHeight / 2) `shouldBe` True
+
+  it "isInsideQuitButton rejects point far outside" $ do
+    MM.isInsideQuitButton (-0.9) (-0.9) `shouldBe` False
+
+  it "constants are within NDC range" $ do
+    MM.titleY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    MM.playButtonY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    MM.quitButtonY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    MM.buttonWidth `shouldSatisfy` (> 0)
+    MM.buttonHeight `shouldSatisfy` (> 0)
+
+  it "title text is MINECRAFT HASKELL" $ do
+    MM.titleText `shouldBe` "MINECRAFT HASKELL"
+
+  it "play button is above quit button (smaller Y in Vulkan NDC)" $ do
+    MM.playButtonY `shouldSatisfy` (< MM.quitButtonY)
+
 -- =========================================================================
 -- Fall Tracker
 -- =========================================================================
