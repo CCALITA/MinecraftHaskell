@@ -220,7 +220,6 @@ main = hspec $ do
   blockOutlineSpec
   miningSpeedSpec
   biomeDisplaySpec
-  coordinateDisplaySpec
   knockbackSpec
   screenShakeSpec
   deathScreenSpec
@@ -10674,36 +10673,96 @@ crosshairSpreadSpec = describe "UI.CrosshairSpread" $ do
     abs (leftOuterX + rightOuterX) `shouldSatisfy` (< 1.0e-6)
 
 -- =========================================================================
--- CrosshairSpread
+-- CoordinateDisplay
 -- =========================================================================
-crosshairSpreadSpec :: Spec
-crosshairSpreadSpec = describe "UI.CrosshairSpread" $ do
+coordinateDisplaySpec :: Spec
+coordinateDisplaySpec = describe "UI.CoordinateDisplay" $ do
+  it "coordText formats positive integer coordinates" $ do
+    coordText (V3 10.0 64.0 200.0) `shouldBe` "X: 10 Y: 64 Z: 200"
 
-  it "returns 0 spread when standing still on ground" $
-    crosshairSpread False False `shouldBe` 0.0
+  it "coordText truncates fractional coordinates toward negative infinity" $ do
+    coordText (V3 10.7 64.9 200.1) `shouldBe` "X: 10 Y: 64 Z: 200"
 
-  it "returns 0.01 spread when sprinting on ground" $
-    crosshairSpread True False `shouldBe` 0.01
+  it "coordText formats negative coordinates correctly" $ do
+    coordText (V3 (-45.3) 64.0 (-100.8)) `shouldBe` "X: -46 Y: 64 Z: -101"
 
-  it "returns 0.01 spread when midair but not sprinting" $
-    crosshairSpread False True `shouldBe` 0.01
+  it "coordText formats zero coordinates" $ do
+    coordText (V3 0.0 0.0 0.0) `shouldBe` "X: 0 Y: 0 Z: 0"
 
-  it "returns 0.02 spread when sprinting and midair" $
-    crosshairSpread True True `shouldBe` 0.02
+  it "coordDisplayVerts returns non-empty vertex data" $ do
+    let verts = coordDisplayVerts (V3 100.0 64.0 (-50.0)) 1.0 (-0.9)
+    null verts `shouldBe` False
 
-  it "crosshairWithSpread produces 48 floats (4 quads * 6 verts * 2 coords)" $ do
-    let verts = crosshairWithSpread 0.0 (-0.02, -0.02, 0.02, 0.02)
-    length verts `shouldBe` 48
+  it "coordDisplayVerts produces multiples of 36 floats per character quad" $ do
+    let verts = coordDisplayVerts (V3 1.0 2.0 3.0) 1.0 (-0.9)
+    length verts `mod` 36 `shouldBe` 0
 
-  it "crosshairWithSpread arms expand outward with spread" $ do
-    let verts0 = crosshairWithSpread 0.0  (-0.02, -0.02, 0.02, 0.02)
-        verts1 = crosshairWithSpread 0.01 (-0.02, -0.02, 0.02, 0.02)
-        leftArm0 = head verts0
-        leftArm1 = head verts1
-    leftArm1 `shouldSatisfy` (< leftArm0)
+  it "coordDisplayVerts produces more vertices for longer coordinate text" $ do
+    let short = coordDisplayVerts (V3 1.0 2.0 3.0) 1.0 (-0.9)
+        long  = coordDisplayVerts (V3 1000.0 2000.0 (-3000.0)) 1.0 (-0.9)
+    length long > length short `shouldBe` True
 
-  it "crosshairWithSpread with zero spread is symmetric around center" $ do
-    let verts = crosshairWithSpread 0.0 (-0.02, -0.02, 0.02, 0.02)
-        leftOuterX  = verts !! 0
-        rightOuterX = verts !! 14
-    abs (leftOuterX + rightOuterX) `shouldSatisfy` (< 1.0e-6)
+-- =========================================================================
+-- Gameplay QuickCheck Properties
+-- =========================================================================
+gameplayPropertiesSpec :: Spec
+gameplayPropertiesSpec = describe "Gameplay QuickCheck Properties" $ do
+  describe "Knockback properties" $ do
+    it "knockbackVelocity upward component is always 0.4 regardless of positions" $
+      property $ \ax az tx tz ->
+        let V3 _ vy _ = knockbackVelocity (V3 (ax :: Float) 0 az) (V3 tx 0 tz) defaultKnockback
+        in abs (vy - 0.4) < 0.001
+
+    it "knockbackVelocity horizontal magnitude equals strength when not same-pos" $
+      property $ \s ->
+        let strength = abs (s :: Float) + 0.01
+            V3 vx _ vz = knockbackVelocity (V3 0 0 0) (V3 5 0 3) strength
+            mag = sqrt (vx * vx + vz * vz)
+        in abs (mag - strength) < 0.01
+
+  describe "ScreenShake properties" $ do
+    it "shakeOffset is always (0,0) outside valid time range" $
+      property $ \intensity time ->
+        let t = abs (time :: Float) + shakeDuration
+            i = abs (intensity :: Float)
+        in shakeOffset i t == (0, 0)
+
+    it "shakeFromFallDamage result equals 0.01 * dmg for positive dmg" $
+      property $ \d ->
+        let dmg = abs (d :: Int) + 1
+        in abs (shakeFromFallDamage dmg - 0.01 * fromIntegral dmg) < 1e-6
+
+  describe "Swimming properties" $ do
+    it "isSwimming requires both conditions (conjunction)" $
+      property $ \w m ->
+        isSwimming (w :: Bool) (m :: Bool) == (w && m)
+
+  describe "EatingAnimation properties" $ do
+    it "eatingProgress is always in [0,1]" $
+      property $ \timer dur ->
+        let p = eatingProgress (timer :: Float) (abs (dur :: Float) + 0.1)
+        in p >= 0.0 && p <= 1.0
+
+    it "eatingParticleCount is always in [0,6]" $
+      property $ \p ->
+        let count = eatingParticleCount (p :: Float)
+        in count >= 0 && count <= 6
+
+  describe "MiningSpeed properties" $ do
+    it "miningTimeText never produces negative numbers in output" $
+      property $ \t ->
+        let txt = miningTimeText (t :: Float)
+        in head txt /= '-'
+
+  describe "BiomeDisplay properties" $ do
+    it "biomeNameFadeAlpha is bounded [0,1] for all timer values" $
+      property $ \t ->
+        let a = biomeNameFadeAlpha (t :: Float)
+        in a >= 0.0 && a <= 1.0
+
+  describe "InteractionCooldown properties" $ do
+    it "canInteract always True when cooldown is 0" $
+      property $ \lt now ->
+        let lastT = abs (lt :: Float)
+            n = lastT + abs (now :: Float)
+        in canInteract lastT 0.0 n
