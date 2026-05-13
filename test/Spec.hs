@@ -80,6 +80,7 @@ import UI.Minimap (minimapVerts, minimapSize, chunkGridForPlayer, chunkColor, pl
 import Game.PickupToast (PickupToast(..), addPickupToast, tickPickupToasts, formatToast, maxToasts, toastDuration, mergeToasts, emptyToasts)
 import UI.CelestialBody (sunScreenPos, moonScreenPos, celestialDiscVerts)
 import UI.CrosshairColor (crosshairColor)
+import UI.CrosshairSpread (crosshairSpread, crosshairWithSpread)
 import UI.StarField (starPositions, starBrightness)
 import UI.Vignette (vignetteAlpha, vignetteGrid)
 import UI.BreathBar (bubbleColor)
@@ -95,6 +96,7 @@ import UI.HealthRegen (regenHeartColor, isRegenerating)
 import UI.HotbarAnimation (hotbarSelectorX, selectorLerpSpeed)
 import UI.DurabilityWarning (durabilityWarning, warningFlashAlpha)
 import UI.BiomeDisplay (biomeDisplayName, biomeNameFadeAlpha)
+import UI.CoordinateDisplay (coordText, coordDisplayVerts)
 import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
 import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
 import Game.ScreenShake (shakeOffset, shakeFromFallDamage, shakeDuration)
@@ -211,11 +213,13 @@ main = hspec $ do
   celestialBodySpec
   skyRenderWiringSpec
   crosshairColorSpec
+  crosshairSpreadSpec
   saveToastSpec
   damageDirectionSpec
   blockOutlineSpec
   miningSpeedSpec
   biomeDisplaySpec
+  coordinateDisplaySpec
   knockbackSpec
   screenShakeSpec
   deathScreenSpec
@@ -10632,6 +10636,41 @@ durabilityWarningSpec = describe "UI.DurabilityWarning" $ do
           fgB = verts !! 40
       bgR `shouldSatisfy` (> bgG)  -- red > green in bg
       fgG `shouldSatisfy` (> fgR)  -- green > red in fill
+
+-- =========================================================================
+-- CrosshairSpread
+-- =========================================================================
+crosshairSpreadSpec :: Spec
+crosshairSpreadSpec = describe "UI.CrosshairSpread" $ do
+
+  it "returns 0 spread when standing still on ground" $
+    crosshairSpread False False `shouldBe` 0.0
+
+  it "returns 0.01 spread when sprinting on ground" $
+    crosshairSpread True False `shouldBe` 0.01
+
+  it "returns 0.01 spread when midair but not sprinting" $
+    crosshairSpread False True `shouldBe` 0.01
+
+  it "returns 0.02 spread when sprinting and midair" $
+    crosshairSpread True True `shouldBe` 0.02
+
+  it "crosshairWithSpread produces 48 floats (4 quads * 6 verts * 2 coords)" $ do
+    let verts = crosshairWithSpread 0.0 (-0.02, -0.02, 0.02, 0.02)
+    length verts `shouldBe` 48
+
+  it "crosshairWithSpread arms expand outward with spread" $ do
+    let verts0 = crosshairWithSpread 0.0  (-0.02, -0.02, 0.02, 0.02)
+        verts1 = crosshairWithSpread 0.01 (-0.02, -0.02, 0.02, 0.02)
+        leftArm0 = head verts0
+        leftArm1 = head verts1
+    leftArm1 `shouldSatisfy` (< leftArm0)
+
+  it "crosshairWithSpread with zero spread is symmetric around center" $ do
+    let verts = crosshairWithSpread 0.0 (-0.02, -0.02, 0.02, 0.02)
+        leftOuterX  = verts !! 0
+        rightOuterX = verts !! 14
+    abs (leftOuterX + rightOuterX) `shouldSatisfy` (< 1.0e-6)
 -- =========================================================================
 -- CoordinateDisplay
 -- =========================================================================
