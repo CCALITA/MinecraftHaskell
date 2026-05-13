@@ -97,6 +97,7 @@ import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts
 import Game.ScreenShake (shakeOffset, shakeFromFallDamage, shakeDuration)
 import Game.FallTracker (wouldTakeFallDamage, fallDamageAmount, safeFallDistance)
 import qualified UI.DeathScreen as DS
+import qualified UI.PauseScreen as PS
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -213,6 +214,7 @@ main = hspec $ do
   knockbackSpec
   screenShakeSpec
   deathScreenSpec
+  pauseScreenSpec
   fallTrackerSpec
   durabilityWarningSpec
 
@@ -10176,6 +10178,56 @@ deathScreenSpec = describe "UI.DeathScreen" $ do
     DS.buttonY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
     DS.buttonWidth `shouldSatisfy` (> 0)
     DS.buttonHeight `shouldSatisfy` (> 0)
+
+-- =========================================================================
+-- Pause Screen
+-- =========================================================================
+pauseScreenSpec :: Spec
+pauseScreenSpec = describe "UI.PauseScreen" $ do
+  it "produces non-empty vertex data" $ do
+    let verts = PS.pauseScreenVerts 0 0
+    length verts `shouldSatisfy` (> 0)
+
+  it "vertex count is always a multiple of 6 (vec2 pos + vec4 color per vertex)" $ do
+    let verts = PS.pauseScreenVerts 0.2 0.3
+    (length verts `mod` 6) `shouldBe` 0
+
+  it "overlay contributes at least 36 floats (2 triangles * 3 verts * 6 floats)" $ do
+    let verts = PS.pauseScreenVerts 0 0
+    length verts `shouldSatisfy` (>= 36)
+
+  it "hover on resume button changes vertex data" $ do
+    let vertsNoHover = PS.pauseScreenVerts (-0.9) (-0.9)
+        vertsHover   = PS.pauseScreenVerts 0.0 (PS.resumeButtonY + 0.01)
+    vertsNoHover /= vertsHover `shouldBe` True
+
+  it "hover on quit button changes vertex data" $ do
+    let vertsNoHover = PS.pauseScreenVerts (-0.9) (-0.9)
+        vertsHover   = PS.pauseScreenVerts 0.0 (PS.quitButtonY + 0.01)
+    vertsNoHover /= vertsHover `shouldBe` True
+
+  it "isInsideResumeButton detects center of resume button" $ do
+    PS.isInsideResumeButton 0.0 (PS.resumeButtonY + PS.buttonHeight / 2) `shouldBe` True
+
+  it "isInsideResumeButton rejects point far outside" $ do
+    PS.isInsideResumeButton (-0.9) (-0.9) `shouldBe` False
+
+  it "isInsideQuitButton detects center of quit button" $ do
+    PS.isInsideQuitButton 0.0 (PS.quitButtonY + PS.buttonHeight / 2) `shouldBe` True
+
+  it "isInsideQuitButton rejects point far outside" $ do
+    PS.isInsideQuitButton (-0.9) (-0.9) `shouldBe` False
+
+  it "constants are within NDC range" $ do
+    PS.titleY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    PS.resumeButtonY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    PS.quitButtonY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    PS.buttonWidth `shouldSatisfy` (> 0)
+    PS.buttonHeight `shouldSatisfy` (> 0)
+
+  it "resume and quit buttons do not overlap vertically" $ do
+    let resumeBot = PS.resumeButtonY + PS.buttonHeight
+    resumeBot `shouldSatisfy` (<= PS.quitButtonY)
 
   describe "ArmorBar" $ do
     it "returns empty list when armor is 0" $
