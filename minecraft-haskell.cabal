@@ -136,6 +136,7 @@ library
     UI.DeathScreen
     UI.HungerShake
     UI.DurabilityWarning
+    UI.EntityHealthBar
   build-depends:
     , base             >= 4.17  && < 5
     , vulkan           >= 3.26
