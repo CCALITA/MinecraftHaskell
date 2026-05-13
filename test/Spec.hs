@@ -84,6 +84,7 @@ import UI.StarField (starPositions, starBrightness)
 import UI.Vignette (vignetteAlpha, vignetteGrid)
 import UI.BreathBar (bubbleColor)
 import UI.ArmorBar (armorBarVerts)
+import UI.EntityHealthBar (entityHealthBarVerts)
 import UI.DamageDirection (damageAngle, damageArcVerts)
 import UI.HudLayout (hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hungerBarX, xpBarY, crosshairSize)
 import UI.BlockOutline (blockOutlineVerts)
@@ -10266,3 +10267,60 @@ fallTrackerSpec = describe "Game.FallTracker" $ do
       let (dx1, dy1) = hungerShakeOffset 1 1.0
           (dx2, dy2) = hungerShakeOffset 1 2.0
       (dx1, dy1) /= (dx2, dy2) `shouldBe` True
+
+-- =========================================================================
+-- Entity Health Bar
+-- =========================================================================
+  describe "UI.EntityHealthBar" $ do
+    it "returns empty list when maxHealth is 0" $
+      entityHealthBarVerts 0 0 5 0 `shouldBe` []
+
+    it "returns empty list when maxHealth is negative" $
+      entityHealthBarVerts 0.1 0.2 3 (-1) `shouldBe` []
+
+    it "produces 72 floats (two quads) for valid input" $
+      length (entityHealthBarVerts 0 0 10 20) `shouldBe` 72
+
+    it "fill bar width scales with health fraction" $ do
+      -- Full health: fill width == background width
+      let vertsFull = entityHealthBarVerts 0 0 20 20
+          bgX1Full  = vertsFull !! 6   -- second vertex x of bg quad
+          fgX1Full  = vertsFull !! 42  -- second vertex x of fill quad
+      fgX1Full `shouldBe` bgX1Full
+      -- Half health: fill width == half of background width
+      let vertsHalf = entityHealthBarVerts 0 0 10 20
+          bgX1Half  = vertsHalf !! 6
+          fgX1Half  = vertsHalf !! 42
+      abs (fgX1Half - bgX1Half / 2) < 0.001 `shouldBe` True
+
+    it "clamps health to [0, maxHealth]" $ do
+      -- Negative health behaves like 0 (fill width == 0)
+      let vertsNeg = entityHealthBarVerts 0 0 (-5) 10
+          fgX0     = vertsNeg !! 36  -- fill quad first vertex x
+          fgX1     = vertsNeg !! 42  -- fill quad second vertex x
+      fgX0 `shouldBe` fgX1  -- zero width
+      -- Over-max health behaves like maxHealth (fill == bg)
+      let vertsOver = entityHealthBarVerts 0 0 30 10
+          bgX1     = vertsOver !! 6
+          fgX1o    = vertsOver !! 42
+      fgX1o `shouldBe` bgX1
+
+    it "respects screen position offsets" $ do
+      let verts = entityHealthBarVerts 0.3 0.5 5 10
+          x0    = head verts
+          y0    = verts !! 1
+      x0 `shouldBe` 0.3
+      y0 `shouldBe` 0.5
+
+    it "background uses red color and fill uses green color" $ do
+      let verts = entityHealthBarVerts 0 0 5 10
+          -- background quad: first vertex color at indices 2..5
+          bgR = verts !! 2
+          bgG = verts !! 3
+          bgB = verts !! 4
+          -- fill quad: first vertex color at indices 38..41
+          fgR = verts !! 38
+          fgG = verts !! 39
+          fgB = verts !! 40
+      bgR `shouldSatisfy` (> bgG)  -- red > green in bg
+      fgG `shouldSatisfy` (> fgR)  -- green > red in fill
