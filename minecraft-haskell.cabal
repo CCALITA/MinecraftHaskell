@@ -135,6 +135,7 @@ library
     UI.MiningSpeed
     UI.DeathScreen
     UI.HungerShake
+    UI.WaterOverlay
     UI.HealthRegen
     UI.MainMenu
     UI.LoadingScreen
