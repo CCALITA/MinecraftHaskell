@@ -89,6 +89,7 @@ import UI.HudLayout (hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hunger
 import UI.BlockOutline (blockOutlineVerts)
 import UI.MiningSpeed (miningTimeText, miningProgressVerts)
 import UI.HungerShake (hungerShakeOffset)
+import UI.HotbarAnimation (hotbarSelectorX, selectorLerpSpeed)
 import UI.BiomeDisplay (biomeDisplayName, biomeNameFadeAlpha)
 import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
 import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
@@ -212,6 +213,7 @@ main = hspec $ do
   screenShakeSpec
   deathScreenSpec
   fallTrackerSpec
+  hotbarAnimationSpec
 
 -- =========================================================================
 -- Block
@@ -10266,3 +10268,46 @@ fallTrackerSpec = describe "Game.FallTracker" $ do
       let (dx1, dy1) = hungerShakeOffset 1 1.0
           (dx2, dy2) = hungerShakeOffset 1 2.0
       (dx1, dy1) /= (dx2, dy2) `shouldBe` True
+
+-- =========================================================================
+-- Hotbar Animation
+-- =========================================================================
+hotbarAnimationSpec :: Spec
+hotbarAnimationSpec = describe "UI.HotbarAnimation" $ do
+  it "selectorLerpSpeed is 15.0" $ do
+    selectorLerpSpeed `shouldBe` 15.0
+
+  it "returns currentX unchanged when dt is zero" $ do
+    hotbarSelectorX 4 0.5 0.0 `shouldBe` 0.5
+
+  it "returns currentX unchanged when dt is negative" $ do
+    hotbarSelectorX 4 0.5 (-1.0) `shouldBe` 0.5
+
+  it "moves toward target slot position over time" $ do
+    let current = -0.45
+        result  = hotbarSelectorX 4 current 0.1
+        target  = -0.45 + 4 * 0.1
+    result `shouldSatisfy` (> current)
+    result `shouldSatisfy` (< target)
+
+  it "converges to target with a large dt" $ do
+    let target = -0.45 + 8 * 0.1
+        result = hotbarSelectorX 8 (-0.45) 10.0
+    abs (result - target) `shouldSatisfy` (< 1.0e-4)
+
+  it "does not overshoot the target" $ do
+    let current = -0.45
+        target  = -0.45 + 3 * 0.1
+        result  = hotbarSelectorX 3 current 0.5
+    result `shouldSatisfy` (<= target)
+    result `shouldSatisfy` (>= current)
+
+  it "clamps slot index below 0 to slot 0" $ do
+    let r0 = hotbarSelectorX 0 0.0 0.1
+        rNeg = hotbarSelectorX (-5) 0.0 0.1
+    r0 `shouldBe` rNeg
+
+  it "clamps slot index above 8 to slot 8" $ do
+    let r8 = hotbarSelectorX 8 0.0 0.1
+        r99 = hotbarSelectorX 99 0.0 0.1
+    r8 `shouldBe` r99
