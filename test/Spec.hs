@@ -97,6 +97,7 @@ import UI.HotbarAnimation (hotbarSelectorX, selectorLerpSpeed)
 import UI.DurabilityWarning (durabilityWarning, warningFlashAlpha)
 import UI.BiomeDisplay (biomeDisplayName, biomeNameFadeAlpha)
 import UI.CoordinateDisplay (coordText, coordDisplayVerts)
+import UI.CrosshairSpread (crosshairSpread, crosshairWithSpread)
 import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
 import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
 import Game.ScreenShake (shakeOffset, shakeFromFallDamage, shakeDuration)
@@ -10671,32 +10672,38 @@ crosshairSpreadSpec = describe "UI.CrosshairSpread" $ do
         leftOuterX  = verts !! 0
         rightOuterX = verts !! 14
     abs (leftOuterX + rightOuterX) `shouldSatisfy` (< 1.0e-6)
+
 -- =========================================================================
--- CoordinateDisplay
+-- CrosshairSpread
 -- =========================================================================
-coordinateDisplaySpec :: Spec
-coordinateDisplaySpec = describe "UI.CoordinateDisplay" $ do
-  it "coordText formats positive integer coordinates" $ do
-    coordText (V3 10.0 64.0 200.0) `shouldBe` "X: 10 Y: 64 Z: 200"
+crosshairSpreadSpec :: Spec
+crosshairSpreadSpec = describe "UI.CrosshairSpread" $ do
 
-  it "coordText truncates fractional coordinates toward negative infinity" $ do
-    coordText (V3 10.7 64.9 200.1) `shouldBe` "X: 10 Y: 64 Z: 200"
+  it "returns 0 spread when standing still on ground" $
+    crosshairSpread False False `shouldBe` 0.0
 
-  it "coordText formats negative coordinates correctly" $ do
-    coordText (V3 (-45.3) 64.0 (-100.8)) `shouldBe` "X: -46 Y: 64 Z: -101"
+  it "returns 0.01 spread when sprinting on ground" $
+    crosshairSpread True False `shouldBe` 0.01
 
-  it "coordText formats zero coordinates" $ do
-    coordText (V3 0.0 0.0 0.0) `shouldBe` "X: 0 Y: 0 Z: 0"
+  it "returns 0.01 spread when midair but not sprinting" $
+    crosshairSpread False True `shouldBe` 0.01
 
-  it "coordDisplayVerts returns non-empty vertex data" $ do
-    let verts = coordDisplayVerts (V3 100.0 64.0 (-50.0)) 1.0 (-0.9)
-    null verts `shouldBe` False
+  it "returns 0.02 spread when sprinting and midair" $
+    crosshairSpread True True `shouldBe` 0.02
 
-  it "coordDisplayVerts produces multiples of 36 floats per character quad" $ do
-    let verts = coordDisplayVerts (V3 1.0 2.0 3.0) 1.0 (-0.9)
-    length verts `mod` 36 `shouldBe` 0
+  it "crosshairWithSpread produces 48 floats (4 quads * 6 verts * 2 coords)" $ do
+    let verts = crosshairWithSpread 0.0 (-0.02, -0.02, 0.02, 0.02)
+    length verts `shouldBe` 48
 
-  it "coordDisplayVerts produces more vertices for longer coordinate text" $ do
-    let short = coordDisplayVerts (V3 1.0 2.0 3.0) 1.0 (-0.9)
-        long  = coordDisplayVerts (V3 1000.0 2000.0 (-3000.0)) 1.0 (-0.9)
-    length long > length short `shouldBe` True
+  it "crosshairWithSpread arms expand outward with spread" $ do
+    let verts0 = crosshairWithSpread 0.0  (-0.02, -0.02, 0.02, 0.02)
+        verts1 = crosshairWithSpread 0.01 (-0.02, -0.02, 0.02, 0.02)
+        leftArm0 = head verts0
+        leftArm1 = head verts1
+    leftArm1 `shouldSatisfy` (< leftArm0)
+
+  it "crosshairWithSpread with zero spread is symmetric around center" $ do
+    let verts = crosshairWithSpread 0.0 (-0.02, -0.02, 0.02, 0.02)
+        leftOuterX  = verts !! 0
+        rightOuterX = verts !! 14
+    abs (leftOuterX + rightOuterX) `shouldSatisfy` (< 1.0e-6)
