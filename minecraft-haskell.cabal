@@ -145,7 +145,6 @@ library
     UI.PauseScreen
     UI.DurabilityWarning
     UI.EntityHealthBar
-    UI.CoordinateDisplay
   build-depends:
     , base             >= 4.17  && < 5
     , vulkan           >= 3.26
