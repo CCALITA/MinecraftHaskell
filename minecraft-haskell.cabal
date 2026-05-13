@@ -135,6 +135,7 @@ library
     UI.MiningSpeed
     UI.DeathScreen
     UI.HungerShake
+    UI.EntityHealthBar
   build-depends:
     , base             >= 4.17  && < 5
     , vulkan           >= 3.26
