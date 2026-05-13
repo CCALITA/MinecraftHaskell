@@ -124,6 +124,8 @@ library
     UI.CelestialBody
     UI.CrosshairColor
     UI.CrosshairSpread
+    UI.CoordinateDisplay
+
     UI.SaturationBar
     UI.SaveToast
     UI.StarField
