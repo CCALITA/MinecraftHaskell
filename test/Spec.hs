@@ -89,6 +89,7 @@ import UI.HudLayout (hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hunger
 import UI.BlockOutline (blockOutlineVerts)
 import UI.MiningSpeed (miningTimeText, miningProgressVerts)
 import UI.HungerShake (hungerShakeOffset)
+import UI.WaterOverlay (waterOverlayVerts)
 import UI.BiomeDisplay (biomeDisplayName, biomeNameFadeAlpha)
 import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
 import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
@@ -10266,3 +10267,34 @@ fallTrackerSpec = describe "Game.FallTracker" $ do
       let (dx1, dy1) = hungerShakeOffset 1 1.0
           (dx2, dy2) = hungerShakeOffset 1 2.0
       (dx1, dy1) /= (dx2, dy2) `shouldBe` True
+
+  describe "UI.WaterOverlay" $ do
+    it "returns empty list when not underwater" $
+      waterOverlayVerts False `shouldBe` []
+
+    it "returns 36 floats (6 verts x 6 floats) when underwater" $
+      length (waterOverlayVerts True) `shouldBe` 36
+
+    it "all alpha values are 0.3" $ do
+      let verts = waterOverlayVerts True
+          alphas = [verts !! i | i <- [5, 11, 17, 23, 29, 35]]
+      all (== 0.3) alphas `shouldBe` True
+
+    it "blue channel is 0.5 for all vertices" $ do
+      let verts = waterOverlayVerts True
+          blues = [verts !! i | i <- [4, 10, 16, 22, 28, 34]]
+      all (== 0.5) blues `shouldBe` True
+
+    it "covers full NDC range from -1 to 1" $ do
+      let verts = waterOverlayVerts True
+          xs = [verts !! i | i <- [0, 6, 12, 18, 24, 30]]
+          ys = [verts !! i | i <- [1, 7, 13, 19, 25, 31]]
+      minimum xs `shouldBe` (-1)
+      maximum xs `shouldBe` 1
+      minimum ys `shouldBe` (-1)
+      maximum ys `shouldBe` 1
+
+    it "red channel is 0.0 for all vertices" $ do
+      let verts = waterOverlayVerts True
+          reds = [verts !! i | i <- [2, 8, 14, 20, 26, 32]]
+      all (== 0.0) reds `shouldBe` True
