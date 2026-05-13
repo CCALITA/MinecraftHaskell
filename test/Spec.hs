@@ -89,6 +89,7 @@ import UI.HudLayout (hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hunger
 import UI.BlockOutline (blockOutlineVerts)
 import UI.MiningSpeed (miningTimeText, miningProgressVerts)
 import UI.HungerShake (hungerShakeOffset)
+import UI.HealthRegen (regenHeartColor, isRegenerating)
 import UI.BiomeDisplay (biomeDisplayName, biomeNameFadeAlpha)
 import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
 import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
@@ -10266,3 +10267,43 @@ fallTrackerSpec = describe "Game.FallTracker" $ do
       let (dx1, dy1) = hungerShakeOffset 1 1.0
           (dx2, dy2) = hungerShakeOffset 1 2.0
       (dx1, dy1) /= (dx2, dy2) `shouldBe` True
+
+  describe "UI.HealthRegen" $ do
+    it "isRegenerating returns True when hunger >= 18 and health < 20" $ do
+      isRegenerating 18 19 `shouldBe` True
+      isRegenerating 20 10 `shouldBe` True
+      isRegenerating 18 0  `shouldBe` True
+
+    it "isRegenerating returns False when hunger < 18" $ do
+      isRegenerating 17 10 `shouldBe` False
+      isRegenerating 0  5  `shouldBe` False
+      isRegenerating 10 15 `shouldBe` False
+
+    it "isRegenerating returns False when health is at max" $ do
+      isRegenerating 20 20 `shouldBe` False
+      isRegenerating 18 20 `shouldBe` False
+
+    it "regenHeartColor returns RGBA in valid ranges" $ do
+      let (r, g, b, a) = regenHeartColor 1.0 0
+      r `shouldBe` 1.0
+      g `shouldSatisfy` (\v -> v >= 0.3 && v <= 0.7)
+      b `shouldSatisfy` (\v -> v >= 0.4 && v <= 0.8)
+      a `shouldSatisfy` (\v -> v >= 0.8 && v <= 1.0)
+
+    it "regenHeartColor varies by time" $ do
+      let (_, g1, _, _) = regenHeartColor 0.0 0
+          (_, g2, _, _) = regenHeartColor 1.0 0
+      g1 /= g2 `shouldBe` True
+
+    it "regenHeartColor varies by heart index" $ do
+      let (_, g1, _, _) = regenHeartColor 1.0 0
+          (_, g2, _, _) = regenHeartColor 1.0 3
+      g1 /= g2 `shouldBe` True
+
+    it "regenHeartColor red channel is always 1.0" $ do
+      let (r1, _, _, _) = regenHeartColor 0.0 0
+          (r2, _, _, _) = regenHeartColor 5.0 5
+          (r3, _, _, _) = regenHeartColor 99.0 9
+      r1 `shouldBe` 1.0
+      r2 `shouldBe` 1.0
+      r3 `shouldBe` 1.0
