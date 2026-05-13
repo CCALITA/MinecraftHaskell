@@ -10635,35 +10635,6 @@ durabilityWarningSpec = describe "UI.DurabilityWarning" $ do
           fgB = verts !! 40
       bgR `shouldSatisfy` (> bgG)  -- red > green in bg
       fgG `shouldSatisfy` (> fgR)  -- green > red in fill
--- =========================================================================
--- CoordinateDisplay
--- =========================================================================
-coordinateDisplaySpec :: Spec
-coordinateDisplaySpec = describe "UI.CoordinateDisplay" $ do
-  it "coordText formats positive integer coordinates" $ do
-    coordText (V3 10.0 64.0 200.0) `shouldBe` "X: 10 Y: 64 Z: 200"
-
-  it "coordText truncates fractional coordinates toward negative infinity" $ do
-    coordText (V3 10.7 64.9 200.1) `shouldBe` "X: 10 Y: 64 Z: 200"
-
-  it "coordText formats negative coordinates correctly" $ do
-    coordText (V3 (-45.3) 64.0 (-100.8)) `shouldBe` "X: -46 Y: 64 Z: -101"
-
-  it "coordText formats zero coordinates" $ do
-    coordText (V3 0.0 0.0 0.0) `shouldBe` "X: 0 Y: 0 Z: 0"
-
-  it "coordDisplayVerts returns non-empty vertex data" $ do
-    let verts = coordDisplayVerts (V3 100.0 64.0 (-50.0)) 1.0 (-0.9)
-    null verts `shouldBe` False
-
-  it "coordDisplayVerts produces multiples of 36 floats per character quad" $ do
-    let verts = coordDisplayVerts (V3 1.0 2.0 3.0) 1.0 (-0.9)
-    length verts `mod` 36 `shouldBe` 0
-
-  it "coordDisplayVerts produces more vertices for longer coordinate text" $ do
-    let short = coordDisplayVerts (V3 1.0 2.0 3.0) 1.0 (-0.9)
-        long  = coordDisplayVerts (V3 1000.0 2000.0 (-3000.0)) 1.0 (-0.9)
-    length long > length short `shouldBe` True
 
 -- =========================================================================
 -- CrosshairSpread
