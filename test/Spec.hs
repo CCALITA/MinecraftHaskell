@@ -89,6 +89,7 @@ import UI.HudLayout (hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hunger
 import UI.BlockOutline (blockOutlineVerts)
 import UI.MiningSpeed (miningTimeText, miningProgressVerts)
 import UI.HungerShake (hungerShakeOffset)
+import UI.DurabilityWarning (durabilityWarning, warningFlashAlpha)
 import UI.BiomeDisplay (biomeDisplayName, biomeNameFadeAlpha)
 import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
 import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
@@ -212,6 +213,7 @@ main = hspec $ do
   screenShakeSpec
   deathScreenSpec
   fallTrackerSpec
+  durabilityWarningSpec
 
 -- =========================================================================
 -- Block
@@ -10266,3 +10268,47 @@ fallTrackerSpec = describe "Game.FallTracker" $ do
       let (dx1, dy1) = hungerShakeOffset 1 1.0
           (dx2, dy2) = hungerShakeOffset 1 2.0
       (dx1, dy1) /= (dx2, dy2) `shouldBe` True
+
+-- =========================================================================
+-- DurabilityWarning
+-- =========================================================================
+durabilityWarningSpec :: Spec
+durabilityWarningSpec = describe "UI.DurabilityWarning" $ do
+
+  it "returns Nothing for non-durable items (BlockItem)" $ do
+    durabilityWarning (BlockItem Stone) `shouldBe` Nothing
+
+  it "returns Nothing for tool with durability above 10%" $ do
+    -- Wood pickaxe: max 59, 10% = 5 → durability 30 is safe
+    durabilityWarning (ToolItem Pickaxe Wood 30) `shouldBe` Nothing
+
+  it "returns warning for tool at exactly 10% durability" $ do
+    -- Wood pickaxe: max 59, 10% = 5 → durability 5 triggers
+    durabilityWarning (ToolItem Pickaxe Wood 5) `shouldBe` Just "Low Durability!"
+
+  it "returns warning for tool below 10% durability" $ do
+    -- Diamond pickaxe: max 1561, 10% = 156 → durability 10 triggers
+    durabilityWarning (ToolItem Pickaxe Diamond 10) `shouldBe` Just "Low Durability!"
+
+  it "returns warning for shears below 10%" $ do
+    -- Shears: max 238, 10% = 23 → durability 5 triggers
+    durabilityWarning (ShearsItem 5) `shouldBe` Just "Low Durability!"
+
+  it "returns Nothing for shears above 10%" $ do
+    durabilityWarning (ShearsItem 200) `shouldBe` Nothing
+
+  it "returns Nothing for food items (no durability)" $ do
+    durabilityWarning (FoodItem Apple) `shouldBe` Nothing
+
+  it "warningFlashAlpha is 1.0 at time 0.25 (peak of sine)" $ do
+    let alpha = warningFlashAlpha 0.25
+    alpha `shouldSatisfy` (\a -> abs (a - 1.0) < 0.01)
+
+  it "warningFlashAlpha is 0.5 at time 0.75 (trough of sine)" $ do
+    let alpha = warningFlashAlpha 0.75
+    alpha `shouldSatisfy` (\a -> abs (a - 0.5) < 0.01)
+
+  it "warningFlashAlpha stays within [0.5, 1.0]" $
+    property $ \(t :: Float) ->
+      let a = warningFlashAlpha t
+      in a >= 0.5 - 0.001 && a <= 1.0 + 0.001
