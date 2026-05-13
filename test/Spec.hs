@@ -84,11 +84,14 @@ import UI.StarField (starPositions, starBrightness)
 import UI.Vignette (vignetteAlpha, vignetteGrid)
 import UI.BreathBar (bubbleColor)
 import UI.ArmorBar (armorBarVerts)
+import UI.EntityHealthBar (entityHealthBarVerts)
 import UI.DamageDirection (damageAngle, damageArcVerts)
 import UI.HudLayout (hotbarX0, hotbarY, slotSize, healthBarX, healthBarY, hungerBarX, xpBarY, crosshairSize)
 import UI.BlockOutline (blockOutlineVerts)
 import UI.MiningSpeed (miningTimeText, miningProgressVerts)
 import UI.HungerShake (hungerShakeOffset)
+import UI.HotbarAnimation (hotbarSelectorX, selectorLerpSpeed)
+import UI.DurabilityWarning (durabilityWarning, warningFlashAlpha)
 import UI.BiomeDisplay (biomeDisplayName, biomeNameFadeAlpha)
 import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
 import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
@@ -96,6 +99,8 @@ import Game.ScreenShake (shakeOffset, shakeFromFallDamage, shakeDuration)
 import Game.FallTracker (wouldTakeFallDamage, fallDamageAmount, safeFallDistance)
 import qualified UI.DeathScreen as DS
 import qualified UI.MainMenu as MM
+import qualified UI.LoadingScreen as LS
+import qualified UI.PauseScreen as PS
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
 import Linear (V2(..), V3(..), V4(..), identity, norm, normalize, (^-^), (^+^), (^*))
@@ -213,7 +218,11 @@ main = hspec $ do
   screenShakeSpec
   deathScreenSpec
   mainMenuSpec
+  pauseScreenSpec
   fallTrackerSpec
+  loadingScreenSpec
+  hotbarAnimationSpec
+  durabilityWarningSpec
 
 -- =========================================================================
 -- Block
@@ -10176,6 +10185,56 @@ deathScreenSpec = describe "UI.DeathScreen" $ do
     DS.buttonWidth `shouldSatisfy` (> 0)
     DS.buttonHeight `shouldSatisfy` (> 0)
 
+-- =========================================================================
+-- Pause Screen
+-- =========================================================================
+pauseScreenSpec :: Spec
+pauseScreenSpec = describe "UI.PauseScreen" $ do
+  it "produces non-empty vertex data" $ do
+    let verts = PS.pauseScreenVerts 0 0
+    length verts `shouldSatisfy` (> 0)
+
+  it "vertex count is always a multiple of 6 (vec2 pos + vec4 color per vertex)" $ do
+    let verts = PS.pauseScreenVerts 0.2 0.3
+    (length verts `mod` 6) `shouldBe` 0
+
+  it "overlay contributes at least 36 floats (2 triangles * 3 verts * 6 floats)" $ do
+    let verts = PS.pauseScreenVerts 0 0
+    length verts `shouldSatisfy` (>= 36)
+
+  it "hover on resume button changes vertex data" $ do
+    let vertsNoHover = PS.pauseScreenVerts (-0.9) (-0.9)
+        vertsHover   = PS.pauseScreenVerts 0.0 (PS.resumeButtonY + 0.01)
+    vertsNoHover /= vertsHover `shouldBe` True
+
+  it "hover on quit button changes vertex data" $ do
+    let vertsNoHover = PS.pauseScreenVerts (-0.9) (-0.9)
+        vertsHover   = PS.pauseScreenVerts 0.0 (PS.quitButtonY + 0.01)
+    vertsNoHover /= vertsHover `shouldBe` True
+
+  it "isInsideResumeButton detects center of resume button" $ do
+    PS.isInsideResumeButton 0.0 (PS.resumeButtonY + PS.buttonHeight / 2) `shouldBe` True
+
+  it "isInsideResumeButton rejects point far outside" $ do
+    PS.isInsideResumeButton (-0.9) (-0.9) `shouldBe` False
+
+  it "isInsideQuitButton detects center of quit button" $ do
+    PS.isInsideQuitButton 0.0 (PS.quitButtonY + PS.buttonHeight / 2) `shouldBe` True
+
+  it "isInsideQuitButton rejects point far outside" $ do
+    PS.isInsideQuitButton (-0.9) (-0.9) `shouldBe` False
+
+  it "constants are within NDC range" $ do
+    PS.titleY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    PS.resumeButtonY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    PS.quitButtonY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    PS.buttonWidth `shouldSatisfy` (> 0)
+    PS.buttonHeight `shouldSatisfy` (> 0)
+
+  it "resume and quit buttons do not overlap vertically" $ do
+    let resumeBot = PS.resumeButtonY + PS.buttonHeight
+    resumeBot `shouldSatisfy` (<= PS.quitButtonY)
+
   describe "ArmorBar" $ do
     it "returns empty list when armor is 0" $
       armorBarVerts 0 0 0 `shouldBe` []
@@ -10320,3 +10379,185 @@ fallTrackerSpec = describe "Game.FallTracker" $ do
       let (dx1, dy1) = hungerShakeOffset 1 1.0
           (dx2, dy2) = hungerShakeOffset 1 2.0
       (dx1, dy1) /= (dx2, dy2) `shouldBe` True
+
+-- =========================================================================
+-- LoadingScreen
+-- =========================================================================
+loadingScreenSpec :: Spec
+loadingScreenSpec = describe "UI.LoadingScreen" $ do
+  it "produces non-empty vertex data" $ do
+    let verts = LS.loadingScreenVerts 0.5 "LOADING"
+    length verts `shouldSatisfy` (> 0)
+
+  it "vertex count is always a multiple of 6 (vec2 pos + vec4 color per vertex)" $ do
+    let verts = LS.loadingScreenVerts 0.75 "TEST"
+    (length verts `mod` 6) `shouldBe` 0
+
+  it "overlay contributes at least 36 floats (2 triangles)" $ do
+    let verts = LS.loadingScreenVerts 0.0 ""
+    length verts `shouldSatisfy` (>= 36)
+
+  it "progress 0 produces fewer verts than progress 1 (no fill quad vs fill quad)" $ do
+    let verts0 = LS.loadingScreenVerts 0.0 "LOADING"
+        verts1 = LS.loadingScreenVerts 1.0 "LOADING"
+    length verts0 < length verts1 `shouldBe` True
+
+  it "clamps negative progress to 0 (same as progress 0)" $ do
+    let vertsNeg = LS.loadingScreenVerts (-0.5) "TEST"
+        verts0   = LS.loadingScreenVerts 0.0 "TEST"
+    vertsNeg `shouldBe` verts0
+
+  it "clamps progress above 1 to 1 (same as progress 1)" $ do
+    let vertsOver = LS.loadingScreenVerts 2.0 "TEST"
+        verts1    = LS.loadingScreenVerts 1.0 "TEST"
+    vertsOver `shouldBe` verts1
+
+  it "different messages produce different vertex data" $ do
+    let vertsA = LS.loadingScreenVerts 0.5 "LOADING"
+        vertsB = LS.loadingScreenVerts 0.5 "DONE"
+    vertsA /= vertsB `shouldBe` True
+
+  it "constants are within NDC range" $ do
+    LS.barY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    LS.messageY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    LS.barWidth `shouldSatisfy` (> 0)
+    LS.barHeight `shouldSatisfy` (> 0)
+    LS.barBorderThickness `shouldSatisfy` (> 0)
+-- Hotbar Animation
+-- =========================================================================
+hotbarAnimationSpec :: Spec
+hotbarAnimationSpec = describe "UI.HotbarAnimation" $ do
+  it "selectorLerpSpeed is 15.0" $ do
+    selectorLerpSpeed `shouldBe` 15.0
+
+  it "returns currentX unchanged when dt is zero" $ do
+    hotbarSelectorX 4 0.5 0.0 `shouldBe` 0.5
+
+  it "returns currentX unchanged when dt is negative" $ do
+    hotbarSelectorX 4 0.5 (-1.0) `shouldBe` 0.5
+
+  it "moves toward target slot position over time" $ do
+    let current = -0.45
+        result  = hotbarSelectorX 4 current 0.1
+        target  = -0.45 + 4 * 0.1
+    result `shouldSatisfy` (> current)
+    result `shouldSatisfy` (< target)
+
+  it "converges to target with a large dt" $ do
+    let target = -0.45 + 8 * 0.1
+        result = hotbarSelectorX 8 (-0.45) 10.0
+    abs (result - target) `shouldSatisfy` (< 1.0e-4)
+
+  it "does not overshoot the target" $ do
+    let current = -0.45
+        target  = -0.45 + 3 * 0.1
+        result  = hotbarSelectorX 3 current 0.5
+    result `shouldSatisfy` (<= target)
+    result `shouldSatisfy` (>= current)
+
+  it "clamps slot index below 0 to slot 0" $ do
+    let r0 = hotbarSelectorX 0 0.0 0.1
+        rNeg = hotbarSelectorX (-5) 0.0 0.1
+    r0 `shouldBe` rNeg
+
+  it "clamps slot index above 8 to slot 8" $ do
+    let r8 = hotbarSelectorX 8 0.0 0.1
+        r99 = hotbarSelectorX 99 0.0 0.1
+    r8 `shouldBe` r99
+-- DurabilityWarning
+-- =========================================================================
+durabilityWarningSpec :: Spec
+durabilityWarningSpec = describe "UI.DurabilityWarning" $ do
+
+  it "returns Nothing for non-durable items (BlockItem)" $ do
+    durabilityWarning (BlockItem Stone) `shouldBe` Nothing
+
+  it "returns Nothing for tool with durability above 10%" $ do
+    -- Wood pickaxe: max 59, 10% = 5 → durability 30 is safe
+    durabilityWarning (ToolItem Pickaxe Wood 30) `shouldBe` Nothing
+
+  it "returns warning for tool at exactly 10% durability" $ do
+    -- Wood pickaxe: max 59, 10% = 5 → durability 5 triggers
+    durabilityWarning (ToolItem Pickaxe Wood 5) `shouldBe` Just "Low Durability!"
+
+  it "returns warning for tool below 10% durability" $ do
+    -- Diamond pickaxe: max 1561, 10% = 156 → durability 10 triggers
+    durabilityWarning (ToolItem Pickaxe Diamond 10) `shouldBe` Just "Low Durability!"
+
+  it "returns warning for shears below 10%" $ do
+    -- Shears: max 238, 10% = 23 → durability 5 triggers
+    durabilityWarning (ShearsItem 5) `shouldBe` Just "Low Durability!"
+
+  it "returns Nothing for shears above 10%" $ do
+    durabilityWarning (ShearsItem 200) `shouldBe` Nothing
+
+  it "returns Nothing for food items (no durability)" $ do
+    durabilityWarning (FoodItem Apple) `shouldBe` Nothing
+
+  it "warningFlashAlpha is 1.0 at time 0.25 (peak of sine)" $ do
+    let alpha = warningFlashAlpha 0.25
+    alpha `shouldSatisfy` (\a -> abs (a - 1.0) < 0.01)
+
+  it "warningFlashAlpha is 0.5 at time 0.75 (trough of sine)" $ do
+    let alpha = warningFlashAlpha 0.75
+    alpha `shouldSatisfy` (\a -> abs (a - 0.5) < 0.01)
+
+  it "warningFlashAlpha stays within [0.5, 1.0]" $
+    property $ \(t :: Float) ->
+      let a = warningFlashAlpha t
+      in a >= 0.5 - 0.001 && a <= 1.0 + 0.001
+-- Entity Health Bar
+-- =========================================================================
+  describe "UI.EntityHealthBar" $ do
+    it "returns empty list when maxHealth is 0" $
+      entityHealthBarVerts 0 0 5 0 `shouldBe` []
+
+    it "returns empty list when maxHealth is negative" $
+      entityHealthBarVerts 0.1 0.2 3 (-1) `shouldBe` []
+
+    it "produces 72 floats (two quads) for valid input" $
+      length (entityHealthBarVerts 0 0 10 20) `shouldBe` 72
+
+    it "fill bar width scales with health fraction" $ do
+      -- Full health: fill width == background width
+      let vertsFull = entityHealthBarVerts 0 0 20 20
+          bgX1Full  = vertsFull !! 6   -- second vertex x of bg quad
+          fgX1Full  = vertsFull !! 42  -- second vertex x of fill quad
+      fgX1Full `shouldBe` bgX1Full
+      -- Half health: fill width == half of background width
+      let vertsHalf = entityHealthBarVerts 0 0 10 20
+          bgX1Half  = vertsHalf !! 6
+          fgX1Half  = vertsHalf !! 42
+      abs (fgX1Half - bgX1Half / 2) < 0.001 `shouldBe` True
+
+    it "clamps health to [0, maxHealth]" $ do
+      -- Negative health behaves like 0 (fill width == 0)
+      let vertsNeg = entityHealthBarVerts 0 0 (-5) 10
+          fgX0     = vertsNeg !! 36  -- fill quad first vertex x
+          fgX1     = vertsNeg !! 42  -- fill quad second vertex x
+      fgX0 `shouldBe` fgX1  -- zero width
+      -- Over-max health behaves like maxHealth (fill == bg)
+      let vertsOver = entityHealthBarVerts 0 0 30 10
+          bgX1     = vertsOver !! 6
+          fgX1o    = vertsOver !! 42
+      fgX1o `shouldBe` bgX1
+
+    it "respects screen position offsets" $ do
+      let verts = entityHealthBarVerts 0.3 0.5 5 10
+          x0    = head verts
+          y0    = verts !! 1
+      x0 `shouldBe` 0.3
+      y0 `shouldBe` 0.5
+
+    it "background uses red color and fill uses green color" $ do
+      let verts = entityHealthBarVerts 0 0 5 10
+          -- background quad: first vertex color at indices 2..5
+          bgR = verts !! 2
+          bgG = verts !! 3
+          bgB = verts !! 4
+          -- fill quad: first vertex color at indices 38..41
+          fgR = verts !! 38
+          fgG = verts !! 39
+          fgB = verts !! 40
+      bgR `shouldSatisfy` (> bgG)  -- red > green in bg
+      fgG `shouldSatisfy` (> fgR)  -- green > red in fill
