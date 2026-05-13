@@ -123,6 +123,7 @@ library
     UI.Minimap
     UI.CelestialBody
     UI.CrosshairColor
+    UI.CrosshairSpread
     UI.SaturationBar
     UI.SaveToast
     UI.StarField
