@@ -135,6 +135,7 @@ library
     UI.MiningSpeed
     UI.DeathScreen
     UI.HungerShake
+    UI.MainMenu
     UI.LoadingScreen
     UI.HotbarAnimation
     UI.PauseScreen
