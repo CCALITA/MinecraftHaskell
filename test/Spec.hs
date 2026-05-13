@@ -98,6 +98,7 @@ import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts
 import Game.ScreenShake (shakeOffset, shakeFromFallDamage, shakeDuration)
 import Game.FallTracker (wouldTakeFallDamage, fallDamageAmount, safeFallDistance)
 import qualified UI.DeathScreen as DS
+import qualified UI.LoadingScreen as LS
 import qualified UI.PauseScreen as PS
 import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word8)
@@ -217,6 +218,7 @@ main = hspec $ do
   deathScreenSpec
   pauseScreenSpec
   fallTrackerSpec
+  loadingScreenSpec
   hotbarAnimationSpec
   durabilityWarningSpec
 
@@ -10325,6 +10327,48 @@ fallTrackerSpec = describe "Game.FallTracker" $ do
       (dx1, dy1) /= (dx2, dy2) `shouldBe` True
 
 -- =========================================================================
+-- LoadingScreen
+-- =========================================================================
+loadingScreenSpec :: Spec
+loadingScreenSpec = describe "UI.LoadingScreen" $ do
+  it "produces non-empty vertex data" $ do
+    let verts = LS.loadingScreenVerts 0.5 "LOADING"
+    length verts `shouldSatisfy` (> 0)
+
+  it "vertex count is always a multiple of 6 (vec2 pos + vec4 color per vertex)" $ do
+    let verts = LS.loadingScreenVerts 0.75 "TEST"
+    (length verts `mod` 6) `shouldBe` 0
+
+  it "overlay contributes at least 36 floats (2 triangles)" $ do
+    let verts = LS.loadingScreenVerts 0.0 ""
+    length verts `shouldSatisfy` (>= 36)
+
+  it "progress 0 produces fewer verts than progress 1 (no fill quad vs fill quad)" $ do
+    let verts0 = LS.loadingScreenVerts 0.0 "LOADING"
+        verts1 = LS.loadingScreenVerts 1.0 "LOADING"
+    length verts0 < length verts1 `shouldBe` True
+
+  it "clamps negative progress to 0 (same as progress 0)" $ do
+    let vertsNeg = LS.loadingScreenVerts (-0.5) "TEST"
+        verts0   = LS.loadingScreenVerts 0.0 "TEST"
+    vertsNeg `shouldBe` verts0
+
+  it "clamps progress above 1 to 1 (same as progress 1)" $ do
+    let vertsOver = LS.loadingScreenVerts 2.0 "TEST"
+        verts1    = LS.loadingScreenVerts 1.0 "TEST"
+    vertsOver `shouldBe` verts1
+
+  it "different messages produce different vertex data" $ do
+    let vertsA = LS.loadingScreenVerts 0.5 "LOADING"
+        vertsB = LS.loadingScreenVerts 0.5 "DONE"
+    vertsA /= vertsB `shouldBe` True
+
+  it "constants are within NDC range" $ do
+    LS.barY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    LS.messageY `shouldSatisfy` (\y -> y >= -1.0 && y <= 1.0)
+    LS.barWidth `shouldSatisfy` (> 0)
+    LS.barHeight `shouldSatisfy` (> 0)
+    LS.barBorderThickness `shouldSatisfy` (> 0)
 -- Hotbar Animation
 -- =========================================================================
 hotbarAnimationSpec :: Spec
