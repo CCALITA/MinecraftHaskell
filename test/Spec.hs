@@ -74,7 +74,7 @@ import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
 import Data.Binary (encode, decode)
 import Data.IORef (newIORef, readIORef, writeIORef, modifyIORef')
 import Data.IORef (newIORef, readIORef, modifyIORef')
-import Data.List (nub, isPrefixOf, isInfixOf)
+import Data.List (nub, isPrefixOf, isInfixOf, sort)
 import UI.EnchantGlow (enchantGlowBorder, isSlotEnchanted, glowColor, glowThickness)
 import Game.ViewBob (bobOffset, bobSpeed, bobAmplitude, bobDecayRate, bobMovementThreshold)
 import Game.Swimming (swimmingSpeed, isSwimming, swimBobFrequency, swimBobAmplitude)
@@ -108,6 +108,7 @@ import Game.TickLimiter (shouldTick, ticksThisFrame, maxTicksPerFrame)
 import Game.ScreenShake (shakeOffset, shakeFromFallDamage, shakeDuration)
 import Game.FallTracker (wouldTakeFallDamage, fallDamageAmount, safeFallDistance)
 import Engine.FrameProfile (FrameProfile(..), emptyProfile, addSample, averageProfile, formatProfile)
+import Engine.RenderBatch (batchChunks, optimalBatchSize)
 import qualified UI.DeathScreen as DS
 import qualified UI.MainMenu as MM
 import qualified UI.LoadingScreen as LS
@@ -235,6 +236,7 @@ main = hspec $ do
   loadingScreenSpec
   hotbarAnimationSpec
   durabilityWarningSpec
+  renderBatchSpec
   skyGradientSpec
   tickLimiterSpec
   chunkPrioritySpec
@@ -11039,3 +11041,38 @@ chunkStatsSpec = describe "World.ChunkStats" $ do
     txt `shouldSatisfy` isInfixOf "dirty"
     txt `shouldSatisfy` isInfixOf "Meshes:"
     txt `shouldSatisfy` isInfixOf "verts"
+
+-- =========================================================================
+-- RenderBatch
+-- =========================================================================
+renderBatchSpec :: Spec
+renderBatchSpec = describe "Engine.RenderBatch" $ do
+  it "optimalBatchSize is 8" $
+    optimalBatchSize `shouldBe` 8
+
+  it "empty input produces empty batches" $
+    batchChunks [] `shouldBe` []
+
+  it "single chunk produces one batch with one element" $
+    batchChunks [(V2 0 0, 100)] `shouldBe` [[V2 0 0]]
+
+  it "batches never exceed optimalBatchSize" $
+    property $ \xs ->
+      let pairs = [(V2 x z, 1) | (x, z) <- take 50 (xs :: [(Int, Int)])]
+          batches = batchChunks pairs
+      in all (\b -> length b <= optimalBatchSize) batches
+
+  it "all input chunks appear exactly once in output" $
+    property $ \xs ->
+      let unique = nub [(V2 x z, 1) | (x, z) <- take 30 (xs :: [(Int, Int)])]
+          inputPositions = map fst unique
+          outputPositions = concat (batchChunks unique)
+      in sort (nub outputPositions) == sort (nub inputPositions)
+
+  it "exactly 8 chunks produce a single batch" $
+    let chunks = [(V2 i 0, 1) | i <- [0..7]]
+    in length (batchChunks chunks) `shouldBe` 1
+
+  it "9 chunks produce exactly 2 batches" $
+    let chunks = [(V2 i 0, 1) | i <- [0..8]]
+    in length (batchChunks chunks) `shouldBe` 2
