@@ -5,6 +5,7 @@ import Test.QuickCheck
 
 import World.Block
 import World.Chunk
+import World.ChunkPriority (chunkPriority, sortChunksByPriority)
 import World.Noise
 import World.World (worldToChunkLocal, World(..), worldGetBlock, worldSetBlock, triggerGravityAbove, settleGravityBlock, settleChunkGravity)
 import World.Structure
@@ -45,6 +46,7 @@ import UI.SaveToast
 
 import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts, cursorIconSize)
 import Engine.BitmapFont (renderText, charSpacing)
+import Engine.MemoryPool (PoolStats(..), emptyPoolStats, trackAllocation, trackFree, poolUtilization)
 import Engine.Camera (Camera(..), defaultCamera, cameraViewMatrix, thirdPersonOffset, thirdPersonViewMatrix, smoothFOV, baseFOV, sprintFOV, damageFOV)
 import Engine.EntityRender (entitySize)
 
@@ -64,6 +66,7 @@ import Game.Creative (creativePalette, creativePaletteSize, creativeClickSlot, c
 import Game.ItemDisplay (durabilityFraction, durabilityBarColor)
 import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
 import Game.InteractionCooldown (canInteract, placeCooldown, doorCooldown)
+import World.ChunkStats (ChunkCacheStats(..), emptyChunkStats, formatChunkStats)
 
 import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
 
@@ -103,6 +106,7 @@ import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts
 import Game.TickLimiter (shouldTick, ticksThisFrame, maxTicksPerFrame)
 import Game.ScreenShake (shakeOffset, shakeFromFallDamage, shakeDuration)
 import Game.FallTracker (wouldTakeFallDamage, fallDamageAmount, safeFallDistance)
+import Engine.FrameProfile (FrameProfile(..), emptyProfile, addSample, averageProfile, formatProfile)
 import qualified UI.DeathScreen as DS
 import qualified UI.MainMenu as MM
 import qualified UI.LoadingScreen as LS
@@ -231,6 +235,10 @@ main = hspec $ do
   hotbarAnimationSpec
   durabilityWarningSpec
   tickLimiterSpec
+  chunkPrioritySpec
+  frameProfileSpec
+  memoryPoolSpec
+  chunkStatsSpec
 
 -- =========================================================================
 -- Block
@@ -10791,3 +10799,186 @@ tickLimiterSpec = describe "TickLimiter" $ do
 
   it "maxTicksPerFrame equals 10" $
     maxTicksPerFrame `shouldBe` 10
+-- =========================================================================
+-- ChunkPriority
+-- =========================================================================
+chunkPrioritySpec :: Spec
+chunkPrioritySpec = describe "World.ChunkPriority" $ do
+
+  it "distance is zero when player is at chunk center" $ do
+    -- Chunk (0,0) center is at (8, 128, 8) in world coords
+    let d = chunkPriority (V3 8.0 128.0 8.0) (V2 0 0)
+    d `shouldSatisfy` (< 0.001)
+
+  it "distance is non-negative for any position" $
+    property $ \(px, py, pz, cx, cz) ->
+      let d = chunkPriority (V3 (px :: Float) (py :: Float) (pz :: Float)) (V2 (cx :: Int) (cz :: Int))
+      in d >= 0.0
+
+  it "nearer chunk has lower priority value" $ do
+    let playerPos = V3 0.0 64.0 0.0
+        near = V2 0 0     -- center at (8, 128, 8)
+        far  = V2 10 10   -- center at (168, 128, 168)
+    chunkPriority playerPos near `shouldSatisfy` (< chunkPriority playerPos far)
+
+  it "sortChunksByPriority returns nearest chunk first" $ do
+    let playerPos = V3 0.0 64.0 0.0
+        chunks = [V2 5 5, V2 0 0, V2 10 10]
+        sorted = sortChunksByPriority playerPos chunks
+    head sorted `shouldBe` V2 0 0
+
+  it "sortChunksByPriority preserves list length" $
+    property $ \(px, py, pz) ->
+      let playerPos = V3 (px :: Float) (py :: Float) (pz :: Float)
+          chunks = [V2 0 0, V2 1 1, V2 (-1) (-1), V2 2 0]
+      in length (sortChunksByPriority playerPos chunks) == length chunks
+
+  it "sortChunksByPriority of empty list is empty" $ do
+    sortChunksByPriority (V3 0.0 0.0 0.0) [] `shouldBe` []
+
+  it "symmetric chunks have equal priority" $ do
+    let playerPos = V3 8.0 128.0 8.0  -- center of chunk (0,0)
+        d1 = chunkPriority playerPos (V2 1 0)
+        d2 = chunkPriority playerPos (V2 (-1) 0)
+    -- Both chunks are one chunk away in opposite X directions
+    -- d1 center = (24, 128, 8), d2 center = (-8, 128, 8)
+    abs (d1 - d2) `shouldSatisfy` (< 0.001)
+
+  it "priority increases with distance along one axis" $ do
+    let playerPos = V3 8.0 128.0 8.0
+        ds = [chunkPriority playerPos (V2 i 0) | i <- [0..5]]
+    -- Each successive chunk should be farther away
+    and (zipWith (<=) ds (tail ds)) `shouldBe` True
+-- FrameProfile
+-- =========================================================================
+frameProfileSpec :: Spec
+frameProfileSpec = describe "Engine.FrameProfile" $ do
+  it "emptyProfile has all zero fields" $ do
+    fpPhysicsTime emptyProfile `shouldBe` 0
+    fpMeshTime emptyProfile `shouldBe` 0
+    fpRenderTime emptyProfile `shouldBe` 0
+    fpHudTime emptyProfile `shouldBe` 0
+
+  it "addSample sums corresponding fields" $ do
+    let a = FrameProfile 1.0 2.0 3.0 4.0
+        b = FrameProfile 0.5 1.5 2.5 3.5
+        c = addSample a b
+    fpPhysicsTime c `shouldBe` 1.5
+    fpMeshTime c `shouldBe` 3.5
+    fpRenderTime c `shouldBe` 5.5
+    fpHudTime c `shouldBe` 7.5
+
+  it "addSample with emptyProfile is identity" $ do
+    let p = FrameProfile 1.0 2.0 3.0 4.0
+    addSample p emptyProfile `shouldBe` p
+    addSample emptyProfile p `shouldBe` p
+
+  it "averageProfile of empty list returns emptyProfile" $ do
+    averageProfile [] `shouldBe` emptyProfile
+
+  it "averageProfile of a single element returns that element" $ do
+    let p = FrameProfile 2.0 4.0 6.0 8.0
+    averageProfile [p] `shouldBe` p
+
+  it "averageProfile computes correct mean" $ do
+    let a = FrameProfile 1.0 2.0 3.0 4.0
+        b = FrameProfile 3.0 6.0 9.0 12.0
+        avg = averageProfile [a, b]
+    fpPhysicsTime avg `shouldBe` 2.0
+    fpMeshTime avg `shouldBe` 4.0
+    fpRenderTime avg `shouldBe` 6.0
+    fpHudTime avg `shouldBe` 8.0
+
+  it "formatProfile includes all subsystem labels" $ do
+    let s = formatProfile (FrameProfile 1.0 2.0 3.0 4.0)
+    s `shouldSatisfy` isInfixOf "phys"
+    s `shouldSatisfy` isInfixOf "mesh"
+    s `shouldSatisfy` isInfixOf "render"
+    s `shouldSatisfy` isInfixOf "hud"
+
+  it "formatProfile renders values with two decimal places" $ do
+    let s = formatProfile (FrameProfile 1.0 0.5 2.25 0.0)
+    s `shouldSatisfy` isInfixOf "1.00"
+    s `shouldSatisfy` isInfixOf "0.50"
+    s `shouldSatisfy` isInfixOf "2.25"
+    s `shouldSatisfy` isInfixOf "0.00"
+-- MemoryPool
+-- =========================================================================
+memoryPoolSpec :: Spec
+memoryPoolSpec = describe "Engine.MemoryPool" $ do
+  it "emptyPoolStats has zero counts and bytes" $ do
+    allocCount emptyPoolStats `shouldBe` 0
+    freeCount emptyPoolStats `shouldBe` 0
+    totalBytes emptyPoolStats `shouldBe` 0
+
+  it "trackAllocation increments allocCount and totalBytes" $ do
+    let ps = trackAllocation 1024 emptyPoolStats
+    allocCount ps `shouldBe` 1
+    totalBytes ps `shouldBe` 1024
+    freeCount ps `shouldBe` 0
+
+  it "trackFree increments freeCount and decrements totalBytes" $ do
+    let ps = trackFree 512 (trackAllocation 1024 emptyPoolStats)
+    freeCount ps `shouldBe` 1
+    totalBytes ps `shouldBe` 512
+
+  it "poolUtilization is 0 for empty pool" $ do
+    poolUtilization emptyPoolStats `shouldBe` 0.0
+
+  it "poolUtilization is 1.0 when all allocations are live" $ do
+    let ps = trackAllocation 256 (trackAllocation 128 emptyPoolStats)
+    poolUtilization ps `shouldBe` 1.0
+
+  it "poolUtilization is 0.5 when half are freed" $ do
+    let ps = trackFree 128 (trackAllocation 256 (trackAllocation 128 emptyPoolStats))
+    poolUtilization ps `shouldBe` 0.5
+
+  it "multiple alloc/free round-trip keeps consistent totalBytes" $ do
+    let ps = trackFree 100
+           . trackFree 200
+           . trackAllocation 100
+           . trackAllocation 200
+           . trackAllocation 300
+           $ emptyPoolStats
+    totalBytes ps `shouldBe` 300
+    allocCount ps `shouldBe` 3
+    freeCount ps `shouldBe` 2
+-- ChunkStats
+-- =========================================================================
+chunkStatsSpec :: Spec
+chunkStatsSpec = describe "World.ChunkStats" $ do
+  it "emptyChunkStats has all zeroes" $ do
+    loadedChunks emptyChunkStats `shouldBe` 0
+    dirtyChunks emptyChunkStats `shouldBe` 0
+    totalMeshes emptyChunkStats `shouldBe` 0
+    totalVertices emptyChunkStats `shouldBe` 0
+
+  it "formatChunkStats includes all field values" $ do
+    let s = ChunkCacheStats 42 3 40 12345
+        txt = formatChunkStats s
+    txt `shouldSatisfy` isInfixOf "42"
+    txt `shouldSatisfy` isInfixOf "3"
+    txt `shouldSatisfy` isInfixOf "40"
+    txt `shouldSatisfy` isInfixOf "12345"
+
+  it "formatChunkStats of emptyChunkStats contains 0" $ do
+    let txt = formatChunkStats emptyChunkStats
+    txt `shouldSatisfy` isInfixOf "0 loaded"
+    txt `shouldSatisfy` isInfixOf "0 dirty"
+    txt `shouldSatisfy` isInfixOf "0 verts"
+
+  it "ChunkCacheStats Eq instance works" $ do
+    emptyChunkStats `shouldBe` ChunkCacheStats 0 0 0 0
+    emptyChunkStats `shouldNotBe` ChunkCacheStats 1 0 0 0
+
+  it "ChunkCacheStats Show instance roundtrips via read" $ do
+    let s = ChunkCacheStats 10 2 8 5000
+    (read (show s) :: ChunkCacheStats) `shouldBe` s
+
+  it "formatChunkStats contains expected labels" $ do
+    let txt = formatChunkStats (ChunkCacheStats 1 2 3 4)
+    txt `shouldSatisfy` isInfixOf "Chunks:"
+    txt `shouldSatisfy` isInfixOf "loaded"
+    txt `shouldSatisfy` isInfixOf "dirty"
+    txt `shouldSatisfy` isInfixOf "Meshes:"
+    txt `shouldSatisfy` isInfixOf "verts"
