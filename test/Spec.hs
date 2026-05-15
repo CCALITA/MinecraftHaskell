@@ -5,6 +5,7 @@ import Test.QuickCheck
 
 import World.Block
 import World.Chunk
+import World.ChunkPriority (chunkPriority, sortChunksByPriority)
 import World.Noise
 import World.World (worldToChunkLocal, World(..), worldGetBlock, worldSetBlock, triggerGravityAbove, settleGravityBlock, settleChunkGravity)
 import World.Structure
@@ -232,6 +233,7 @@ main = hspec $ do
   loadingScreenSpec
   hotbarAnimationSpec
   durabilityWarningSpec
+  chunkPrioritySpec
   frameProfileSpec
   memoryPoolSpec
   chunkStatsSpec
@@ -10774,6 +10776,55 @@ gameplayPropertiesSpec = describe "Gameplay QuickCheck Properties" $ do
         in canInteract lastT 0.0 n
 
 -- =========================================================================
+-- ChunkPriority
+-- =========================================================================
+chunkPrioritySpec :: Spec
+chunkPrioritySpec = describe "World.ChunkPriority" $ do
+
+  it "distance is zero when player is at chunk center" $ do
+    -- Chunk (0,0) center is at (8, 128, 8) in world coords
+    let d = chunkPriority (V3 8.0 128.0 8.0) (V2 0 0)
+    d `shouldSatisfy` (< 0.001)
+
+  it "distance is non-negative for any position" $
+    property $ \(px, py, pz, cx, cz) ->
+      let d = chunkPriority (V3 (px :: Float) (py :: Float) (pz :: Float)) (V2 (cx :: Int) (cz :: Int))
+      in d >= 0.0
+
+  it "nearer chunk has lower priority value" $ do
+    let playerPos = V3 0.0 64.0 0.0
+        near = V2 0 0     -- center at (8, 128, 8)
+        far  = V2 10 10   -- center at (168, 128, 168)
+    chunkPriority playerPos near `shouldSatisfy` (< chunkPriority playerPos far)
+
+  it "sortChunksByPriority returns nearest chunk first" $ do
+    let playerPos = V3 0.0 64.0 0.0
+        chunks = [V2 5 5, V2 0 0, V2 10 10]
+        sorted = sortChunksByPriority playerPos chunks
+    head sorted `shouldBe` V2 0 0
+
+  it "sortChunksByPriority preserves list length" $
+    property $ \(px, py, pz) ->
+      let playerPos = V3 (px :: Float) (py :: Float) (pz :: Float)
+          chunks = [V2 0 0, V2 1 1, V2 (-1) (-1), V2 2 0]
+      in length (sortChunksByPriority playerPos chunks) == length chunks
+
+  it "sortChunksByPriority of empty list is empty" $ do
+    sortChunksByPriority (V3 0.0 0.0 0.0) [] `shouldBe` []
+
+  it "symmetric chunks have equal priority" $ do
+    let playerPos = V3 8.0 128.0 8.0  -- center of chunk (0,0)
+        d1 = chunkPriority playerPos (V2 1 0)
+        d2 = chunkPriority playerPos (V2 (-1) 0)
+    -- Both chunks are one chunk away in opposite X directions
+    -- d1 center = (24, 128, 8), d2 center = (-8, 128, 8)
+    abs (d1 - d2) `shouldSatisfy` (< 0.001)
+
+  it "priority increases with distance along one axis" $ do
+    let playerPos = V3 8.0 128.0 8.0
+        ds = [chunkPriority playerPos (V2 i 0) | i <- [0..5]]
+    -- Each successive chunk should be farther away
+    and (zipWith (<=) ds (tail ds)) `shouldBe` True
 -- FrameProfile
 -- =========================================================================
 frameProfileSpec :: Spec
