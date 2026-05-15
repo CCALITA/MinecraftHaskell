@@ -49,6 +49,7 @@ import Engine.BitmapFont (renderText, charSpacing)
 import Engine.MemoryPool (PoolStats(..), emptyPoolStats, trackAllocation, trackFree, poolUtilization)
 import Engine.Camera (Camera(..), defaultCamera, cameraViewMatrix, thirdPersonOffset, thirdPersonViewMatrix, smoothFOV, baseFOV, sprintFOV, damageFOV)
 import Engine.EntityRender (entitySize)
+import Engine.TerrainColor (biomeGrassColor, biomeFoliageColor, biomeWaterColor)
 import Engine.SkyGradient (skyGradientColor, horizonHaze)
 
 import Game.PotionEffect
@@ -235,6 +236,7 @@ main = hspec $ do
   loadingScreenSpec
   hotbarAnimationSpec
   durabilityWarningSpec
+  terrainColorSpec
   skyGradientSpec
   tickLimiterSpec
   chunkPrioritySpec
@@ -11039,3 +11041,64 @@ chunkStatsSpec = describe "World.ChunkStats" $ do
     txt `shouldSatisfy` isInfixOf "dirty"
     txt `shouldSatisfy` isInfixOf "Meshes:"
     txt `shouldSatisfy` isInfixOf "verts"
+
+
+-- =========================================================================
+-- Engine.TerrainColor
+-- =========================================================================
+
+inUnitRange :: (Float, Float, Float) -> Bool
+inUnitRange (r, g, b) = all (\c -> c >= 0.0 && c <= 1.0) [r, g, b]
+
+terrainColorSpec :: Spec
+terrainColorSpec = describe "Engine.TerrainColor" $ do
+
+  describe "biomeGrassColor" $ do
+    it "Plains grass is bright green (G > R and G > B)" $ do
+      let (r, g, b) = biomeGrassColor Plains
+      g > r `shouldBe` True
+      g > b `shouldBe` True
+
+    it "Desert grass is yellow-green (R close to G)" $ do
+      let (r, g, _) = biomeGrassColor Desert
+      abs (r - g) < 0.15 `shouldBe` True
+
+    it "Taiga grass is dark green (G < 0.6)" $ do
+      let (_, g, _) = biomeGrassColor Taiga
+      g < 0.6 `shouldBe` True
+
+    it "all biome grass colors are in [0,1]" $
+      all (\bt -> inUnitRange (biomeGrassColor bt)) [minBound .. maxBound]
+        `shouldBe` True
+
+  describe "biomeFoliageColor" $ do
+    it "Swamp foliage is darkest (G < 0.5)" $ do
+      let (_, g, _) = biomeFoliageColor Swamp
+      g < 0.5 `shouldBe` True
+
+    it "all biome foliage colors are in [0,1]" $
+      all (\bt -> inUnitRange (biomeFoliageColor bt)) [minBound .. maxBound]
+        `shouldBe` True
+
+  describe "biomeWaterColor" $ do
+    it "Ocean water has strongest blue component" $ do
+      let (r, _, b) = biomeWaterColor Ocean
+      b > r `shouldBe` True
+
+    it "Swamp water is greenish (G >= B)" $ do
+      let (_, g, b) = biomeWaterColor Swamp
+      g >= b `shouldBe` True
+
+    it "all biome water colors are in [0,1]" $
+      all (\bt -> inUnitRange (biomeWaterColor bt)) [minBound .. maxBound]
+        `shouldBe` True
+
+  describe "cross-function consistency" $ do
+    it "grass is greener than foliage for Plains" $ do
+      let (_, gg, _) = biomeGrassColor Plains
+          (_, fg, _) = biomeFoliageColor Plains
+      gg > fg `shouldBe` True
+
+    it "every biome has distinct grass and water colors" $
+      all (\bt -> biomeGrassColor bt /= biomeWaterColor bt) [minBound .. maxBound]
+        `shouldBe` True
