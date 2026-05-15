@@ -45,6 +45,7 @@ import UI.SaveToast
 
 import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts, cursorIconSize)
 import Engine.BitmapFont (renderText, charSpacing)
+import Engine.MemoryPool (PoolStats(..), emptyPoolStats, trackAllocation, trackFree, poolUtilization)
 import Engine.Camera (Camera(..), defaultCamera, cameraViewMatrix, thirdPersonOffset, thirdPersonViewMatrix, smoothFOV, baseFOV, sprintFOV, damageFOV)
 import Engine.EntityRender (entitySize)
 
@@ -230,6 +231,7 @@ main = hspec $ do
   loadingScreenSpec
   hotbarAnimationSpec
   durabilityWarningSpec
+  memoryPoolSpec
   chunkStatsSpec
 
 -- =========================================================================
@@ -10770,6 +10772,47 @@ gameplayPropertiesSpec = describe "Gameplay QuickCheck Properties" $ do
         in canInteract lastT 0.0 n
 
 -- =========================================================================
+-- MemoryPool
+-- =========================================================================
+memoryPoolSpec :: Spec
+memoryPoolSpec = describe "Engine.MemoryPool" $ do
+  it "emptyPoolStats has zero counts and bytes" $ do
+    allocCount emptyPoolStats `shouldBe` 0
+    freeCount emptyPoolStats `shouldBe` 0
+    totalBytes emptyPoolStats `shouldBe` 0
+
+  it "trackAllocation increments allocCount and totalBytes" $ do
+    let ps = trackAllocation 1024 emptyPoolStats
+    allocCount ps `shouldBe` 1
+    totalBytes ps `shouldBe` 1024
+    freeCount ps `shouldBe` 0
+
+  it "trackFree increments freeCount and decrements totalBytes" $ do
+    let ps = trackFree 512 (trackAllocation 1024 emptyPoolStats)
+    freeCount ps `shouldBe` 1
+    totalBytes ps `shouldBe` 512
+
+  it "poolUtilization is 0 for empty pool" $ do
+    poolUtilization emptyPoolStats `shouldBe` 0.0
+
+  it "poolUtilization is 1.0 when all allocations are live" $ do
+    let ps = trackAllocation 256 (trackAllocation 128 emptyPoolStats)
+    poolUtilization ps `shouldBe` 1.0
+
+  it "poolUtilization is 0.5 when half are freed" $ do
+    let ps = trackFree 128 (trackAllocation 256 (trackAllocation 128 emptyPoolStats))
+    poolUtilization ps `shouldBe` 0.5
+
+  it "multiple alloc/free round-trip keeps consistent totalBytes" $ do
+    let ps = trackFree 100
+           . trackFree 200
+           . trackAllocation 100
+           . trackAllocation 200
+           . trackAllocation 300
+           $ emptyPoolStats
+    totalBytes ps `shouldBe` 300
+    allocCount ps `shouldBe` 3
+    freeCount ps `shouldBe` 2
 -- ChunkStats
 -- =========================================================================
 chunkStatsSpec :: Spec

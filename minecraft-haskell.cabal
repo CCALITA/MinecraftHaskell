@@ -45,6 +45,7 @@ library
     Engine.ChunkMesh
     Engine.BitmapFont
     Engine.EntityRender
+    Engine.MemoryPool
     Engine.Sound
     Engine.Vulkan.Init
     Engine.Vulkan.Swapchain
