@@ -48,6 +48,7 @@ library
     Engine.SkyGradient
     Engine.FrameProfile
     Engine.MemoryPool
+    Engine.RenderStats
     Engine.Sound
     Engine.Vulkan.Init
     Engine.Vulkan.Swapchain

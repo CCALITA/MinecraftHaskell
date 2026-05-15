@@ -104,6 +104,7 @@ import UI.CoordinateDisplay (coordText, coordDisplayVerts)
 import UI.CrosshairSpread (crosshairSpread, crosshairWithSpread)
 import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
 import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
+import Engine.RenderStats (RenderStats(..), emptyRenderStats, formatRenderStats, addDrawCall)
 import Game.TickLimiter (shouldTick, ticksThisFrame, maxTicksPerFrame)
 import Game.ScreenShake (shakeOffset, shakeFromFallDamage, shakeDuration)
 import Game.FallTracker (wouldTakeFallDamage, fallDamageAmount, safeFallDistance)
@@ -235,6 +236,7 @@ main = hspec $ do
   loadingScreenSpec
   hotbarAnimationSpec
   durabilityWarningSpec
+  renderStatsSpec
   skyGradientSpec
   tickLimiterSpec
   chunkPrioritySpec
@@ -11039,3 +11041,47 @@ chunkStatsSpec = describe "World.ChunkStats" $ do
     txt `shouldSatisfy` isInfixOf "dirty"
     txt `shouldSatisfy` isInfixOf "Meshes:"
     txt `shouldSatisfy` isInfixOf "verts"
+
+-- =========================================================================
+-- RenderStats
+-- =========================================================================
+renderStatsSpec :: Spec
+renderStatsSpec = describe "Engine.RenderStats" $ do
+  it "emptyRenderStats has all zeros" $ do
+    rsDrawCalls emptyRenderStats `shouldBe` 0
+    rsTriangleCount emptyRenderStats `shouldBe` 0
+    rsVertexCount emptyRenderStats `shouldBe` 0
+    rsFps emptyRenderStats `shouldBe` 0
+
+  it "addDrawCall increments draw call count by 1" $ do
+    let stats = addDrawCall 10 30 emptyRenderStats
+    rsDrawCalls stats `shouldBe` 1
+
+  it "addDrawCall accumulates triangle and vertex counts" $ do
+    let stats = addDrawCall 10 30 (addDrawCall 5 15 emptyRenderStats)
+    rsTriangleCount stats `shouldBe` 15
+    rsVertexCount stats `shouldBe` 45
+
+  it "addDrawCall preserves fps" $ do
+    let base = emptyRenderStats { rsFps = 60 }
+        stats = addDrawCall 10 30 base
+    rsFps stats `shouldBe` 60
+
+  it "formatRenderStats contains FPS label" $ do
+    let s = formatRenderStats emptyRenderStats { rsFps = 60 }
+    s `shouldSatisfy` isInfixOf "FPS: 60"
+
+  it "formatRenderStats contains draw call count" $ do
+    let stats = addDrawCall 12 36 emptyRenderStats
+        s = formatRenderStats stats
+    s `shouldSatisfy` isInfixOf "Draw calls: 1"
+    s `shouldSatisfy` isInfixOf "Tris: 12"
+    s `shouldSatisfy` isInfixOf "Verts: 36"
+
+  it "multiple addDrawCall calls accumulate correctly" $
+    property $ \n ->
+      let count = abs (n :: Int) `mod` 100
+          stats = foldr (\_ acc -> addDrawCall 2 6 acc) emptyRenderStats [1..count]
+      in rsDrawCalls stats == count
+         && rsTriangleCount stats == count * 2
+         && rsVertexCount stats == count * 6
