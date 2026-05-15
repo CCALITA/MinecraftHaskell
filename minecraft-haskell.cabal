@@ -68,6 +68,7 @@ library
     World.Redstone
     World.Fluid
     World.Weather
+    World.ChunkStats
     Game.Physics
     Game.Player
     Game.BlockEntity
