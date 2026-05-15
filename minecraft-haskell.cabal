@@ -56,6 +56,7 @@ library
     World.Block
     World.BlockRegistry
     World.Chunk
+    World.ChunkPriority
     World.Noise
     World.Biome
     World.BiomeFeatures
