@@ -47,6 +47,7 @@ import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts, cursorIc
 import Engine.BitmapFont (renderText, charSpacing)
 import Engine.Camera (Camera(..), defaultCamera, cameraViewMatrix, thirdPersonOffset, thirdPersonViewMatrix, smoothFOV, baseFOV, sprintFOV, damageFOV)
 import Engine.EntityRender (entitySize)
+import Engine.SkyGradient (skyGradientColor, horizonHaze)
 
 import Game.PotionEffect
 import Game.Particle (WeatherParticle(..), WeatherParticleType(..), spawnWeatherParticles, tickWeatherParticles, renderWeatherParticles, weatherParticleRadius, weatherParticleHeight, weatherParticleCount, rainFallSpeed, snowFallSpeed, isSnowBiome, clampParticleXZ, clampParticleY, spawnBlockBreakParticles, spawnSprintParticles)
@@ -229,6 +230,7 @@ main = hspec $ do
   loadingScreenSpec
   hotbarAnimationSpec
   durabilityWarningSpec
+  skyGradientSpec
 
 -- =========================================================================
 -- Block
@@ -10766,3 +10768,60 @@ gameplayPropertiesSpec = describe "Gameplay QuickCheck Properties" $ do
         let lastT = abs (lt :: Float)
             n = lastT + abs (now :: Float)
         in canInteract lastT 0.0 n
+
+-- =========================================================================
+-- SkyGradient
+-- =========================================================================
+skyGradientSpec :: Spec
+skyGradientSpec = describe "Engine.SkyGradient" $ do
+  it "skyGradientColor returns alpha 1.0 for any input" $ do
+    let (_r, _g, _b, a) = skyGradientColor 0.5 0.0 1.0
+    a `shouldBe` 1.0
+
+  it "horizonHaze is 1-ish at horizon (elevation 0) in full daylight" $ do
+    let h = horizonHaze 0.0 1.0
+    h `shouldSatisfy` (> 0.8)
+    h `shouldSatisfy` (<= 1.0)
+
+  it "horizonHaze decays to near 0 at zenith (elevation 1)" $ do
+    let h = horizonHaze 1.0 1.0
+    h `shouldSatisfy` (< 0.02)
+
+  it "skyGradientColor zenith at night is very dark" $ do
+    let (r, g, b, _a) = skyGradientColor 1.0 0.0 0.0
+    r `shouldSatisfy` (< 0.1)
+    g `shouldSatisfy` (< 0.1)
+    b `shouldSatisfy` (< 0.15)
+
+  it "skyGradientColor zenith at full day is bright blue" $ do
+    let (r, g, b, _a) = skyGradientColor 1.0 0.0 1.0
+    -- Blue channel should dominate
+    b `shouldSatisfy` (> g)
+    g `shouldSatisfy` (> r)
+    -- Reasonably bright
+    b `shouldSatisfy` (> 0.5)
+
+  it "horizonHaze is dimmer at night (low ambient)" $ do
+    let dayHaze   = horizonHaze 0.0 1.0
+        nightHaze = horizonHaze 0.0 0.0
+    dayHaze `shouldSatisfy` (> nightHaze)
+
+  it "skyGradientColor RGBA channels are all in [0,1]" $
+    property $ \elev az amb ->
+      let e = abs (elev :: Float)
+          a = abs (amb :: Float)
+          (r, g, b, alpha) = skyGradientColor e az a
+      in r >= 0.0 && r <= 1.5  -- haze can push slightly above base
+         && g >= 0.0 && g <= 1.5
+         && b >= 0.0 && b <= 1.5
+         && alpha == 1.0
+
+  it "horizonHaze clamps negative elevation to 0" $ do
+    let h = horizonHaze (-5.0) 1.0
+    h `shouldSatisfy` (> 0.8)
+
+  it "horizonHaze clamps elevation above 1 to 1" $ do
+    let h1 = horizonHaze 1.0 1.0
+        h2 = horizonHaze 100.0 1.0
+    abs (h1 - h2) `shouldSatisfy` (< 0.001)
+
