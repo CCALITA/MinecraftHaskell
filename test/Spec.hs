@@ -48,6 +48,7 @@ import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts, cursorIc
 import Engine.BitmapFont (renderText, charSpacing)
 import Engine.MemoryPool (PoolStats(..), emptyPoolStats, trackAllocation, trackFree, poolUtilization)
 import Engine.Camera (Camera(..), defaultCamera, cameraViewMatrix, thirdPersonOffset, thirdPersonViewMatrix, smoothFOV, baseFOV, sprintFOV, damageFOV)
+import Engine.Specular (specularIntensity)
 import Engine.EntityRender (entitySize)
 import Engine.SkyGradient (skyGradientColor, horizonHaze)
 
@@ -241,6 +242,7 @@ main = hspec $ do
   frameProfileSpec
   memoryPoolSpec
   chunkStatsSpec
+  specularSpec
 
 -- =========================================================================
 -- Block
@@ -11039,3 +11041,46 @@ chunkStatsSpec = describe "World.ChunkStats" $ do
     txt `shouldSatisfy` isInfixOf "dirty"
     txt `shouldSatisfy` isInfixOf "Meshes:"
     txt `shouldSatisfy` isInfixOf "verts"
+
+-- =========================================================================
+-- Specular
+-- =========================================================================
+specularSpec :: Spec
+specularSpec = describe "Engine.Specular" $ do
+  it "perfect specular reflection yields intensity 1.0 with shininess 1" $ do
+    let lightDir = V3 0 1 0
+        viewDir  = V3 0 1 0
+        normal   = V3 0 1 0
+    specularIntensity lightDir viewDir normal 1.0 `shouldSatisfy` (\v -> abs (v - 1.0) < 1e-5)
+
+  it "perpendicular light yields zero specular" $ do
+    let lightDir = V3 1 0 0
+        viewDir  = V3 0 1 0
+        normal   = V3 0 1 0
+    specularIntensity lightDir viewDir normal 32.0 `shouldSatisfy` (< 0.01)
+
+  it "higher shininess produces sharper (lower off-axis) highlights" $ do
+    let lightDir = normalize (V3 0.1 1 0)
+        viewDir  = normalize (V3 (-0.1) 1 0)
+        normal   = V3 0 1 0
+        lowShine  = specularIntensity lightDir viewDir normal 2.0
+        highShine = specularIntensity lightDir viewDir normal 64.0
+    highShine `shouldSatisfy` (<= lowShine)
+
+  it "result is always non-negative" $
+    property $ \lx ly lz vx vy vz nx ny nz s ->
+      let lightDir = normalize (V3 (lx :: Float) ly lz)
+          viewDir  = normalize (V3 (vx :: Float) vy vz)
+          normal   = normalize (V3 (nx :: Float) ny nz)
+          shininess = abs (s :: Float) + 1.0
+          result = specularIntensity lightDir viewDir normal shininess
+      in not (isNaN result) ==> result >= 0.0
+
+  it "result is at most 1.0 for unit vectors" $
+    property $ \lx ly lz vx vy vz nx ny nz s ->
+      let lightDir = normalize (V3 (lx :: Float) ly lz)
+          viewDir  = normalize (V3 (vx :: Float) vy vz)
+          normal   = normalize (V3 (nx :: Float) ny nz)
+          shininess = abs (s :: Float) + 1.0
+          result = specularIntensity lightDir viewDir normal shininess
+      in not (isNaN result) ==> result <= 1.0 + 1e-5

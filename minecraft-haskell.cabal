@@ -49,6 +49,7 @@ library
     Engine.FrameProfile
     Engine.MemoryPool
     Engine.Sound
+    Engine.Specular
     Engine.Vulkan.Init
     Engine.Vulkan.Swapchain
     Engine.Vulkan.Pipeline
