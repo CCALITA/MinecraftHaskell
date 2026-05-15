@@ -100,6 +100,7 @@ import UI.CoordinateDisplay (coordText, coordDisplayVerts)
 import UI.CrosshairSpread (crosshairSpread, crosshairWithSpread)
 import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
 import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
+import Game.TickLimiter (shouldTick, ticksThisFrame, maxTicksPerFrame)
 import Game.ScreenShake (shakeOffset, shakeFromFallDamage, shakeDuration)
 import Game.FallTracker (wouldTakeFallDamage, fallDamageAmount, safeFallDistance)
 import qualified UI.DeathScreen as DS
@@ -229,6 +230,7 @@ main = hspec $ do
   loadingScreenSpec
   hotbarAnimationSpec
   durabilityWarningSpec
+  tickLimiterSpec
 
 -- =========================================================================
 -- Block
@@ -10766,3 +10768,26 @@ gameplayPropertiesSpec = describe "Gameplay QuickCheck Properties" $ do
         let lastT = abs (lt :: Float)
             n = lastT + abs (now :: Float)
         in canInteract lastT 0.0 n
+
+tickLimiterSpec :: Spec
+tickLimiterSpec = describe "TickLimiter" $ do
+  it "shouldTick returns True when accum >= rate" $
+    shouldTick 0.05 0.05 `shouldBe` True
+
+  it "shouldTick returns False when accum < rate" $
+    shouldTick 0.04 0.05 `shouldBe` False
+
+  it "ticksThisFrame returns 0 when accum < rate" $
+    ticksThisFrame 0.03 0.05 `shouldBe` 0
+
+  it "ticksThisFrame returns correct count for multiple ticks" $
+    ticksThisFrame 0.15 0.05 `shouldBe` 3
+
+  it "ticksThisFrame is capped at maxTicksPerFrame" $
+    ticksThisFrame 1.0 0.05 `shouldBe` maxTicksPerFrame
+
+  it "ticksThisFrame returns 0 for non-positive rate" $
+    ticksThisFrame 1.0 0.0 `shouldBe` 0
+
+  it "maxTicksPerFrame equals 10" $
+    maxTicksPerFrame `shouldBe` 10

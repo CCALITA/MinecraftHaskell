@@ -103,6 +103,7 @@ library
     Game.InteractionCooldown
     Game.EatingAnimation
     Game.RedstoneAction
+    Game.TickLimiter
     Entity.ECS
     Entity.Component
     Entity.Mob
