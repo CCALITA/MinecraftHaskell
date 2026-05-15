@@ -48,6 +48,7 @@ import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts, cursorIc
 import Engine.BitmapFont (renderText, charSpacing)
 import Engine.MemoryPool (PoolStats(..), emptyPoolStats, trackAllocation, trackFree, poolUtilization)
 import Engine.Camera (Camera(..), defaultCamera, cameraViewMatrix, thirdPersonOffset, thirdPersonViewMatrix, smoothFOV, baseFOV, sprintFOV, damageFOV)
+import Engine.ColorGrade (contrastAdjust, saturationAdjust, brightnessAdjust)
 import Engine.EntityRender (entitySize)
 import Engine.SkyGradient (skyGradientColor, horizonHaze)
 
@@ -235,6 +236,7 @@ main = hspec $ do
   loadingScreenSpec
   hotbarAnimationSpec
   durabilityWarningSpec
+  colorGradeSpec
   skyGradientSpec
   tickLimiterSpec
   chunkPrioritySpec
@@ -11039,3 +11041,46 @@ chunkStatsSpec = describe "World.ChunkStats" $ do
     txt `shouldSatisfy` isInfixOf "dirty"
     txt `shouldSatisfy` isInfixOf "Meshes:"
     txt `shouldSatisfy` isInfixOf "verts"
+
+-- =========================================================================
+-- ColorGrade
+-- =========================================================================
+colorGradeSpec :: Spec
+colorGradeSpec = describe "Engine.ColorGrade" $ do
+  describe "contrastAdjust" $ do
+    it "midpoint 0.5 is unchanged regardless of factor" $
+      contrastAdjust 2.0 0.5 `shouldBe` 0.5
+
+    it "factor 1.0 returns the original value" $
+      contrastAdjust 1.0 0.3 `shouldBe` 0.3
+
+    it "clamps output to [0,1] when contrast pushes above 1" $
+      contrastAdjust 5.0 0.9 `shouldBe` 1.0
+
+    it "clamps output to [0,1] when contrast pushes below 0" $
+      contrastAdjust 5.0 0.1 `shouldBe` 0.0
+
+  describe "saturationAdjust" $ do
+    it "factor 1.0 preserves the original color within float precision" $ do
+      let (r', g', b') = saturationAdjust (0.8, 0.4, 0.2) 1.0
+      abs (r' - 0.8) < 1e-6 `shouldBe` True
+      abs (g' - 0.4) < 1e-6 `shouldBe` True
+      abs (b' - 0.2) < 1e-6 `shouldBe` True
+
+    it "factor 0.0 returns greyscale (all channels equal to luminance)" $ do
+      let (r', g', b') = saturationAdjust (0.8, 0.4, 0.2) 0.0
+      r' `shouldBe` g'
+      g' `shouldBe` b'
+
+  describe "brightnessAdjust" $ do
+    it "offset 0 returns the original value" $
+      brightnessAdjust 0.0 0.6 `shouldBe` 0.6
+
+    it "positive offset increases brightness" $
+      brightnessAdjust 0.2 0.6 `shouldBe` 0.8
+
+    it "clamps to 1.0 when offset overshoots" $
+      brightnessAdjust 0.5 0.8 `shouldBe` 1.0
+
+    it "clamps to 0.0 when offset undershoots" $
+      brightnessAdjust (-0.5) 0.2 `shouldBe` 0.0

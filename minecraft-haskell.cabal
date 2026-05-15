@@ -41,6 +41,7 @@ library
     Engine.Types
     Engine.Window
     Engine.Camera
+    Engine.ColorGrade
     Engine.Mesh
     Engine.ChunkMesh
     Engine.BitmapFont
