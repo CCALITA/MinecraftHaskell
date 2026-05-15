@@ -45,6 +45,7 @@ library
     Engine.ChunkMesh
     Engine.BitmapFont
     Engine.EntityRender
+    Engine.SkyGradient
     Engine.FrameProfile
     Engine.MemoryPool
     Engine.Sound
