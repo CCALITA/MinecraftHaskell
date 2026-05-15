@@ -104,6 +104,7 @@ import Game.Knockback (knockbackVelocity, defaultKnockback, sprintKnockback)
 import Game.EatingAnimation (eatingProgress, eatingParticleCount, eatingBarVerts)
 import Game.ScreenShake (shakeOffset, shakeFromFallDamage, shakeDuration)
 import Game.FallTracker (wouldTakeFallDamage, fallDamageAmount, safeFallDistance)
+import Engine.FrameProfile (FrameProfile(..), emptyProfile, addSample, averageProfile, formatProfile)
 import qualified UI.DeathScreen as DS
 import qualified UI.MainMenu as MM
 import qualified UI.LoadingScreen as LS
@@ -231,6 +232,7 @@ main = hspec $ do
   loadingScreenSpec
   hotbarAnimationSpec
   durabilityWarningSpec
+  frameProfileSpec
   memoryPoolSpec
   chunkStatsSpec
 
@@ -10772,6 +10774,59 @@ gameplayPropertiesSpec = describe "Gameplay QuickCheck Properties" $ do
         in canInteract lastT 0.0 n
 
 -- =========================================================================
+-- FrameProfile
+-- =========================================================================
+frameProfileSpec :: Spec
+frameProfileSpec = describe "Engine.FrameProfile" $ do
+  it "emptyProfile has all zero fields" $ do
+    fpPhysicsTime emptyProfile `shouldBe` 0
+    fpMeshTime emptyProfile `shouldBe` 0
+    fpRenderTime emptyProfile `shouldBe` 0
+    fpHudTime emptyProfile `shouldBe` 0
+
+  it "addSample sums corresponding fields" $ do
+    let a = FrameProfile 1.0 2.0 3.0 4.0
+        b = FrameProfile 0.5 1.5 2.5 3.5
+        c = addSample a b
+    fpPhysicsTime c `shouldBe` 1.5
+    fpMeshTime c `shouldBe` 3.5
+    fpRenderTime c `shouldBe` 5.5
+    fpHudTime c `shouldBe` 7.5
+
+  it "addSample with emptyProfile is identity" $ do
+    let p = FrameProfile 1.0 2.0 3.0 4.0
+    addSample p emptyProfile `shouldBe` p
+    addSample emptyProfile p `shouldBe` p
+
+  it "averageProfile of empty list returns emptyProfile" $ do
+    averageProfile [] `shouldBe` emptyProfile
+
+  it "averageProfile of a single element returns that element" $ do
+    let p = FrameProfile 2.0 4.0 6.0 8.0
+    averageProfile [p] `shouldBe` p
+
+  it "averageProfile computes correct mean" $ do
+    let a = FrameProfile 1.0 2.0 3.0 4.0
+        b = FrameProfile 3.0 6.0 9.0 12.0
+        avg = averageProfile [a, b]
+    fpPhysicsTime avg `shouldBe` 2.0
+    fpMeshTime avg `shouldBe` 4.0
+    fpRenderTime avg `shouldBe` 6.0
+    fpHudTime avg `shouldBe` 8.0
+
+  it "formatProfile includes all subsystem labels" $ do
+    let s = formatProfile (FrameProfile 1.0 2.0 3.0 4.0)
+    s `shouldSatisfy` isInfixOf "phys"
+    s `shouldSatisfy` isInfixOf "mesh"
+    s `shouldSatisfy` isInfixOf "render"
+    s `shouldSatisfy` isInfixOf "hud"
+
+  it "formatProfile renders values with two decimal places" $ do
+    let s = formatProfile (FrameProfile 1.0 0.5 2.25 0.0)
+    s `shouldSatisfy` isInfixOf "1.00"
+    s `shouldSatisfy` isInfixOf "0.50"
+    s `shouldSatisfy` isInfixOf "2.25"
+    s `shouldSatisfy` isInfixOf "0.00"
 -- MemoryPool
 -- =========================================================================
 memoryPoolSpec :: Spec
