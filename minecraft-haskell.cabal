@@ -46,6 +46,8 @@ library
     Engine.BitmapFont
     Engine.EntityRender
     Engine.SkyGradient
+    Engine.FrameProfile
+    Engine.MemoryPool
     Engine.Sound
     Engine.Vulkan.Init
     Engine.Vulkan.Swapchain
@@ -57,6 +59,7 @@ library
     World.Block
     World.BlockRegistry
     World.Chunk
+    World.ChunkPriority
     World.Noise
     World.Biome
     World.BiomeFeatures
@@ -68,6 +71,7 @@ library
     World.Redstone
     World.Fluid
     World.Weather
+    World.ChunkStats
     Game.Physics
     Game.Player
     Game.BlockEntity
@@ -104,6 +108,7 @@ library
     Game.InteractionCooldown
     Game.EatingAnimation
     Game.RedstoneAction
+    Game.TickLimiter
     Entity.ECS
     Entity.Component
     Entity.Mob
