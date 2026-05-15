@@ -45,6 +45,7 @@ import UI.SaveToast
 
 import Game.ItemDisplay (itemColor, itemMiniIcon, buildCursorItemVerts, cursorIconSize)
 import Engine.BitmapFont (renderText, charSpacing)
+import Engine.MemoryPool (PoolStats(..), emptyPoolStats, trackAllocation, trackFree, poolUtilization)
 import Engine.Camera (Camera(..), defaultCamera, cameraViewMatrix, thirdPersonOffset, thirdPersonViewMatrix, smoothFOV, baseFOV, sprintFOV, damageFOV)
 import Engine.EntityRender (entitySize)
 
@@ -64,6 +65,7 @@ import Game.Creative (creativePalette, creativePaletteSize, creativeClickSlot, c
 import Game.ItemDisplay (durabilityFraction, durabilityBarColor)
 import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
 import Game.InteractionCooldown (canInteract, placeCooldown, doorCooldown)
+import World.ChunkStats (ChunkCacheStats(..), emptyChunkStats, formatChunkStats)
 
 import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
 
@@ -231,6 +233,8 @@ main = hspec $ do
   hotbarAnimationSpec
   durabilityWarningSpec
   frameProfileSpec
+  memoryPoolSpec
+  chunkStatsSpec
 
 -- =========================================================================
 -- Block
@@ -10823,3 +10827,83 @@ frameProfileSpec = describe "Engine.FrameProfile" $ do
     s `shouldSatisfy` isInfixOf "0.50"
     s `shouldSatisfy` isInfixOf "2.25"
     s `shouldSatisfy` isInfixOf "0.00"
+-- MemoryPool
+-- =========================================================================
+memoryPoolSpec :: Spec
+memoryPoolSpec = describe "Engine.MemoryPool" $ do
+  it "emptyPoolStats has zero counts and bytes" $ do
+    allocCount emptyPoolStats `shouldBe` 0
+    freeCount emptyPoolStats `shouldBe` 0
+    totalBytes emptyPoolStats `shouldBe` 0
+
+  it "trackAllocation increments allocCount and totalBytes" $ do
+    let ps = trackAllocation 1024 emptyPoolStats
+    allocCount ps `shouldBe` 1
+    totalBytes ps `shouldBe` 1024
+    freeCount ps `shouldBe` 0
+
+  it "trackFree increments freeCount and decrements totalBytes" $ do
+    let ps = trackFree 512 (trackAllocation 1024 emptyPoolStats)
+    freeCount ps `shouldBe` 1
+    totalBytes ps `shouldBe` 512
+
+  it "poolUtilization is 0 for empty pool" $ do
+    poolUtilization emptyPoolStats `shouldBe` 0.0
+
+  it "poolUtilization is 1.0 when all allocations are live" $ do
+    let ps = trackAllocation 256 (trackAllocation 128 emptyPoolStats)
+    poolUtilization ps `shouldBe` 1.0
+
+  it "poolUtilization is 0.5 when half are freed" $ do
+    let ps = trackFree 128 (trackAllocation 256 (trackAllocation 128 emptyPoolStats))
+    poolUtilization ps `shouldBe` 0.5
+
+  it "multiple alloc/free round-trip keeps consistent totalBytes" $ do
+    let ps = trackFree 100
+           . trackFree 200
+           . trackAllocation 100
+           . trackAllocation 200
+           . trackAllocation 300
+           $ emptyPoolStats
+    totalBytes ps `shouldBe` 300
+    allocCount ps `shouldBe` 3
+    freeCount ps `shouldBe` 2
+-- ChunkStats
+-- =========================================================================
+chunkStatsSpec :: Spec
+chunkStatsSpec = describe "World.ChunkStats" $ do
+  it "emptyChunkStats has all zeroes" $ do
+    loadedChunks emptyChunkStats `shouldBe` 0
+    dirtyChunks emptyChunkStats `shouldBe` 0
+    totalMeshes emptyChunkStats `shouldBe` 0
+    totalVertices emptyChunkStats `shouldBe` 0
+
+  it "formatChunkStats includes all field values" $ do
+    let s = ChunkCacheStats 42 3 40 12345
+        txt = formatChunkStats s
+    txt `shouldSatisfy` isInfixOf "42"
+    txt `shouldSatisfy` isInfixOf "3"
+    txt `shouldSatisfy` isInfixOf "40"
+    txt `shouldSatisfy` isInfixOf "12345"
+
+  it "formatChunkStats of emptyChunkStats contains 0" $ do
+    let txt = formatChunkStats emptyChunkStats
+    txt `shouldSatisfy` isInfixOf "0 loaded"
+    txt `shouldSatisfy` isInfixOf "0 dirty"
+    txt `shouldSatisfy` isInfixOf "0 verts"
+
+  it "ChunkCacheStats Eq instance works" $ do
+    emptyChunkStats `shouldBe` ChunkCacheStats 0 0 0 0
+    emptyChunkStats `shouldNotBe` ChunkCacheStats 1 0 0 0
+
+  it "ChunkCacheStats Show instance roundtrips via read" $ do
+    let s = ChunkCacheStats 10 2 8 5000
+    (read (show s) :: ChunkCacheStats) `shouldBe` s
+
+  it "formatChunkStats contains expected labels" $ do
+    let txt = formatChunkStats (ChunkCacheStats 1 2 3 4)
+    txt `shouldSatisfy` isInfixOf "Chunks:"
+    txt `shouldSatisfy` isInfixOf "loaded"
+    txt `shouldSatisfy` isInfixOf "dirty"
+    txt `shouldSatisfy` isInfixOf "Meshes:"
+    txt `shouldSatisfy` isInfixOf "verts"
