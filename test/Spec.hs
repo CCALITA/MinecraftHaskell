@@ -64,6 +64,7 @@ import Game.Creative (creativePalette, creativePaletteSize, creativeClickSlot, c
 import Game.ItemDisplay (durabilityFraction, durabilityBarColor)
 import Entity.Spawn (SpawnRules(..), defaultSpawnRules)
 import Game.InteractionCooldown (canInteract, placeCooldown, doorCooldown)
+import World.ChunkStats (ChunkCacheStats(..), emptyChunkStats, formatChunkStats)
 
 import TestHelpers (airHeightQuery, airQuery, waterQuery, withTestWorld)
 
@@ -229,6 +230,7 @@ main = hspec $ do
   loadingScreenSpec
   hotbarAnimationSpec
   durabilityWarningSpec
+  chunkStatsSpec
 
 -- =========================================================================
 -- Block
@@ -10766,3 +10768,44 @@ gameplayPropertiesSpec = describe "Gameplay QuickCheck Properties" $ do
         let lastT = abs (lt :: Float)
             n = lastT + abs (now :: Float)
         in canInteract lastT 0.0 n
+
+-- =========================================================================
+-- ChunkStats
+-- =========================================================================
+chunkStatsSpec :: Spec
+chunkStatsSpec = describe "World.ChunkStats" $ do
+  it "emptyChunkStats has all zeroes" $ do
+    loadedChunks emptyChunkStats `shouldBe` 0
+    dirtyChunks emptyChunkStats `shouldBe` 0
+    totalMeshes emptyChunkStats `shouldBe` 0
+    totalVertices emptyChunkStats `shouldBe` 0
+
+  it "formatChunkStats includes all field values" $ do
+    let s = ChunkCacheStats 42 3 40 12345
+        txt = formatChunkStats s
+    txt `shouldSatisfy` isInfixOf "42"
+    txt `shouldSatisfy` isInfixOf "3"
+    txt `shouldSatisfy` isInfixOf "40"
+    txt `shouldSatisfy` isInfixOf "12345"
+
+  it "formatChunkStats of emptyChunkStats contains 0" $ do
+    let txt = formatChunkStats emptyChunkStats
+    txt `shouldSatisfy` isInfixOf "0 loaded"
+    txt `shouldSatisfy` isInfixOf "0 dirty"
+    txt `shouldSatisfy` isInfixOf "0 verts"
+
+  it "ChunkCacheStats Eq instance works" $ do
+    emptyChunkStats `shouldBe` ChunkCacheStats 0 0 0 0
+    emptyChunkStats `shouldNotBe` ChunkCacheStats 1 0 0 0
+
+  it "ChunkCacheStats Show instance roundtrips via read" $ do
+    let s = ChunkCacheStats 10 2 8 5000
+    (read (show s) :: ChunkCacheStats) `shouldBe` s
+
+  it "formatChunkStats contains expected labels" $ do
+    let txt = formatChunkStats (ChunkCacheStats 1 2 3 4)
+    txt `shouldSatisfy` isInfixOf "Chunks:"
+    txt `shouldSatisfy` isInfixOf "loaded"
+    txt `shouldSatisfy` isInfixOf "dirty"
+    txt `shouldSatisfy` isInfixOf "Meshes:"
+    txt `shouldSatisfy` isInfixOf "verts"
